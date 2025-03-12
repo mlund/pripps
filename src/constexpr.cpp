@@ -8,6 +8,7 @@
 #include <cmath>
 #include <array>
 #include <numeric>
+#include <algorithm>
 
 constexpr double myfunc(double q, double a, double b, double c) {
   // sqrt() is constexpr since C++26
@@ -27,6 +28,6 @@ int main() {
   // it is customary to CAPITALIZE constexpr variables
   constexpr auto Q = std::array{10.0, 20.0, 3.0, 4.0, 5.0, -2.0};
   constexpr auto I = calc_intensities(Q);
-  constexpr auto SUM = std::accumulate(I.begin(), I.end(), 0.0);
+  constexpr auto SUM = std::ranges::fold_left(I, 0.0, std::plus<>());
   return int(SUM);
 }
