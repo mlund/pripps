@@ -25,7 +25,7 @@ constexpr std::array<double, N> calc_intensities(const std::array<double, N>& q)
 }
 int main() {
   // it is customary to CAPITALIZE constexpr variables
-  constexpr std::array<double, 6> Q = {10.0, 20.0, 3.0, 4.0, 5.0, -2.0};
+  constexpr auto Q = std::array{10.0, 20.0, 3.0, 4.0, 5.0, -2.0};
   constexpr auto I = calc_intensities(Q);
   constexpr auto SUM = std::accumulate(I.begin(), I.end(), 0.0);
   return int(SUM);
