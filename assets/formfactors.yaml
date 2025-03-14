@@ -1,3 +1,3 @@
-ARG: !Constant 1.0
-LYS: !Table [[0.0, 7.4], [1.0, 7.4]]
+LYS: !Constant 1.0
 HIS: !Polynomial [1.0, 2.0, 3.0, 4.0, 5.0]
+# VAL: !Table [[0.0, 7.4], [1.0, 7.4]]

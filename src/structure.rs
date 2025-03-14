@@ -1,4 +1,4 @@
-// Copyright 2024 Mikael Lund
+// Copyright 2025 Mikael Lund
 //
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
@@ -28,7 +28,7 @@ pub struct Structure {
     /// Particle positions
     pub pos: Vec<Vector3>,
     /// Atom kind ids
-    pub kinds: Vec<AtomKind>,
+    pub ids: Vec<usize>,
 }
 
 impl Structure {
@@ -46,15 +46,14 @@ impl Structure {
             .map(|(name, _)| {
                 atomkinds
                     .find_name(name)
-                    .map(|kind| kind.clone())
+                    .map(|kind| kind.id())
                     .context(format!("Unknown atom name in structure file: {name}"))
             })
             .try_collect()?;
 
         let structure = Self {
             pos: nxyz.iter().map(|(_, pos)| *pos).collect(),
-            kinds: atom_ids,
-            ..Default::default()
+            ids: atom_ids,
         };
         debug!("Read {}: {}", path.display(), structure);
         Ok(structure)
