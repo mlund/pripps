@@ -8,7 +8,7 @@ description = "Partial Rust Implementation of PePSi"
 anyhow = "1.0.97"
 approx = "0.5.1"
 clap = { version = "4.5.32", features = ["derive"] }
-faunus = { path = "../faunus-rs/faunus" }
+faunus = { git = "https://github.com/mlund/faunus-rs" }
 itertools = "0.14.0"
 log = "0.4.26"
 nalgebra = "0.33.2"
