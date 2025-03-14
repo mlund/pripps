@@ -1,4 +1,4 @@
-// Copyright 2025 Mikael Lund
+// Copyright 2025 Isabel Vinterbladh, Sergei Grudinin and Mikael Lund
 //
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
@@ -16,7 +16,7 @@ use crate::{AtomKind, FormFactor, Structure, Vector3, formfactor};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
-/// Calculate distance matrix and store in N x N matrix
+/// Calculate N x N distance matrix
 fn distance_matrix(positions: &[Vector3]) -> nalgebra::DMatrix<f64> {
     let n = positions.len();
     let mut matrix = nalgebra::DMatrix::<f64>::zeros(n, n);

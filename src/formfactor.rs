@@ -34,16 +34,12 @@ impl FormFactor {
     pub fn eval(&self, q: f64) -> f64 {
         match self {
             FormFactor::Constant(c) => *c,
-            FormFactor::Polynomial(p) => {
-                let mut i = 0;
-                let mut sum = 0.0;
-                while i < p.len() {
-                    sum += p[i] * q.powi(i as i32);
-                    i += 1;
-                }
-                sum
-            }
-            FormFactor::Table(_t) => {
+            FormFactor::Polynomial(coeff) => coeff
+                .iter()
+                .enumerate()
+                .map(|(i, c)| c * q.powi(i as i32))
+                .sum(),
+            FormFactor::Table(_table) => {
                 todo!("interpolation of form factor table")
             }
         }
@@ -54,8 +50,10 @@ impl FormFactor {
 pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, FormFactor>> {
     let file = std::fs::File::open(path)
         .or_else(|e| anyhow::bail!("error opening formfactor file: {e}"))?;
+
     let name_formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
+
     let kind_formfactor: BTreeMap<AtomKind, FormFactor> = name_formfactor
         .into_iter()
         .enumerate()
@@ -68,6 +66,7 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
             (kind, formfactor)
         })
         .collect();
+
     assert!(kind_formfactor.keys().map(|kind| kind.id()).is_sorted());
     Ok(kind_formfactor)
 }

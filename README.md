@@ -5,7 +5,7 @@ Multiple form factor models are supported, including constant, polynomial, gauss
 
 ## Usage
 
-```bash
+```sh
 pripps --atomfile assets/formfactors.yaml debye --input structure.xyz
 ```
 
