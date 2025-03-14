@@ -1,1 +1,2 @@
-Examples of compile-time coding in Rust and C++.
+# Partial Rust Implementation of PePSi (Pripps)
+

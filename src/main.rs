@@ -1,33 +1,48 @@
-// workaround since sqrt() is not const in std
-use const_soft_float::soft_f64::SoftF64;
+use anyhow::Result;
+use clap::Parser;
+use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
+use pripps::{AtomKind, Structure, cli};
 
-const fn myfunc(q: f64, a: f64, b: f64, c: f64) -> f64 {
-    a * q * q + b * q + c * SoftF64(b).sqrt().to_f64()
-}
+use std::process::ExitCode;
+extern crate pretty_env_logger;
 
-const fn calc_intensities<const N: usize>(q: &[f64; N]) -> [f64; N] {
-    // using while since for loops are not const in Rust
-    let mut result = [0.0; N];
-    let mut index = 0;
-    while index < N {
-        result[index] = myfunc(q[index], 2.3, 4.2, -0.5);
-        index += 1;
+// Wrapper for main function to handle errors
+#[allow(unused)]
+fn do_main() -> Result<()> {
+    let args = cli::Args::parse();
+    // Configure logging
+    if args.verbose {
+        unsafe { std::env::set_var(DEFAULT_FILTER_ENV, "Debug") };
+    } else if std::env::var(DEFAULT_FILTER_ENV).is_err() {
+        unsafe { std::env::set_var(DEFAULT_FILTER_ENV, "Info") };
     }
-    result
+    pretty_env_logger::init();
+
+    // load form factor models
+    let formfactors = match &args.atoms {
+        Some(atompath) => pripps::read_formfactors(&atompath)?,
+        None => anyhow::bail!("No atom definition file provided"),
+    };
+    let atomkinds = formfactors.keys().cloned().collect::<Vec<AtomKind>>();
+
+    match args.command {
+        cli::Commands::Debye {
+            input,
+            qmin,
+            qmax,
+            nq,
+        } => {
+            let structure = Structure::from_xyz(&input, &atomkinds)?;
+        }
+    };
+    Ok(())
 }
 
-const fn sum(intensities: &[f64]) -> f64 {
-    let mut sum = 0.0;
-    let mut index = 0;
-    while index < intensities.len() {
-        sum += intensities[index];
-        index += 1;
+fn main() -> ExitCode {
+    if let Err(err) = do_main() {
+        eprintln!("Error: {}", &err);
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
-    sum
-}
-
-fn main() {
-    const I: &[f64] = calc_intensities(&[10.0, 20.0, 3.0, 4.0, 5.0, -2.0]).as_slice();
-    const SUM: f64 = sum(&I);
-    println!("{}", SUM);
 }
