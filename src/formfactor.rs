@@ -40,7 +40,10 @@ impl FormFactor {
                 .map(|(i, c)| c * q.powi(i as i32))
                 .sum(),
             FormFactor::Table(_table) => {
-                todo!("interpolation of form factor table")
+                // TODO: implement linear interpolation
+                // _table is a sorted list of (q, I) pairs so we can use *binary search*
+                log::warn!("interpolation not yet implemented");
+                1.0
             }
         }
     }
