@@ -3,4 +3,4 @@ a.out
 target/
 Cargo.lock
 .vscode
-
+*.dat
