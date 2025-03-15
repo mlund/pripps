@@ -93,18 +93,12 @@ pub fn formfactor_product_at_q(
     formfactors: &BTreeMap<AtomKind, FormFactor>,
     q: f64,
 ) -> Result<nalgebra::DMatrix<f64>> {
-    let formfactors: Vec<_> = formfactors.values().collect();
-    let n = formfactors.len();
-    let mut matrix = nalgebra::DMatrix::<f64>::zeros(n, n);
-    for i in 0..n {
-        let f1 = formfactors[i].eval(q)?;
-        for j in i..n {
-            let f2 = formfactors[j].eval(q)?;
-            matrix[(i, j)] = f1 * f2;
-            matrix[(j, i)] = f1 * f2;
-        }
-    }
-    Ok(matrix)
+    let f_vec = formfactors
+        .values()
+        .map(|f| f.eval(q))
+        .collect::<Result<Vec<f64>>>()?;
+    let f = nalgebra::DVector::from_vec(f_vec);
+    Ok(&f * f.transpose())
 }
 
 #[cfg(test)]
