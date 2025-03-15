@@ -50,7 +50,7 @@ fn do_main() -> Result<()> {
         } => {
             let structure = Structure::from_xyz(&input, &atomkinds)?;
             let intensity =
-                pripps::debye::calc_intensity(&structure, &formfactors, (qmin, qmax), nq);
+                pripps::debye::calc_intensity(&structure, &formfactors, (qmin, qmax), nq)?;
             let mut output = std::fs::File::create(output)?;
             writeln!(output, "# q/Å I(q)")?;
             for (q, i) in intensity {

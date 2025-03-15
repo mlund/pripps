@@ -23,29 +23,43 @@ use std::collections::BTreeMap;
 pub enum FormFactor {
     /// F(q)=constant for all q values
     Constant(f64),
-    /// F(q) given by a polynomial
-    Polynomial([f64; 5]),
+    /// F(q) given by a polynomial within an inclusive q range
+    Polynomial { qrange: (f64, f64), coeff: [f64; 5] },
     /// F(q) given by a table of 10 q and F(q) values
     Table(Vec<(f64, f64)>),
 }
 
 impl FormFactor {
-    /// Evaluate the form factor, F(q)
-    pub fn eval(&self, q: f64) -> f64 {
+    /// Determine if a q value is within valid q-range
+    pub fn in_qrange(&self, q: f64) -> bool {
+        use FormFactor::*;
         match self {
+            Constant(_) => true,
+            Polynomial { qrange, .. } => q >= qrange.0 && q <= qrange.1,
+            Table(table) => q >= table[0].0 && q <= table[table.len() - 1].0,
+        }
+    }
+
+    /// Evaluate the form factor, F(q)
+    pub fn eval(&self, q: f64) -> Result<f64> {
+        if !self.in_qrange(q) {
+            anyhow::bail!("q value outside of form factor range");
+        }
+        let f = match self {
             FormFactor::Constant(c) => *c,
-            FormFactor::Polynomial(coeff) => coeff
+            FormFactor::Polynomial { coeff, .. } => coeff
                 .iter()
                 .enumerate()
                 .map(|(i, c)| c * q.powi(i as i32))
                 .sum(),
-            FormFactor::Table(_table) => {
+            FormFactor::Table(..) => {
                 // TODO: implement linear interpolation
                 // _table is a sorted list of (q, I) pairs so we can use *binary search*
                 log::warn!("interpolation not yet implemented - assuming unity");
                 1.0
             }
-        }
+        };
+        Ok(f)
     }
 }
 
@@ -78,19 +92,19 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
 pub fn formfactor_product_at_q(
     formfactors: &BTreeMap<AtomKind, FormFactor>,
     q: f64,
-) -> nalgebra::DMatrix<f64> {
+) -> Result<nalgebra::DMatrix<f64>> {
     let formfactors: Vec<_> = formfactors.values().collect();
     let n = formfactors.len();
     let mut matrix = nalgebra::DMatrix::<f64>::zeros(n, n);
     for i in 0..n {
-        let f1 = formfactors[i].eval(q);
+        let f1 = formfactors[i].eval(q)?;
         for j in i..n {
-            let f2 = formfactors[j].eval(q);
+            let f2 = formfactors[j].eval(q)?;
             matrix[(i, j)] = f1 * f2;
             matrix[(j, i)] = f1 * f2;
         }
     }
-    matrix
+    Ok(matrix)
 }
 
 #[cfg(test)]
@@ -101,9 +115,12 @@ mod tests {
 
     #[test]
     fn test_formfactor_eval() {
-        let ff = FormFactor::Polynomial([1.0, 2.0, 3.0, 4.0, 5.0]);
-        assert_relative_eq!(ff.eval(0.0), 1.0);
-        assert_relative_eq!(ff.eval(1.0), 15.0);
+        let ff = FormFactor::Polynomial {
+            qrange: (0.0, 1.0),
+            coeff: [1.0, 2.0, 3.0, 4.0, 5.0],
+        };
+        assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
+        assert_relative_eq!(ff.eval(1.0).unwrap(), 15.0);
     }
 
     #[test]
@@ -120,7 +137,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let matrix = formfactor_product_at_q(&formfactors, 1.0);
+        let matrix = formfactor_product_at_q(&formfactors, 1.0).unwrap();
         assert_relative_eq!(matrix[(0, 0)], 1.0);
         assert_relative_eq!(matrix[(0, 1)], 2.0);
         assert_relative_eq!(matrix[(1, 1)], 4.0);
