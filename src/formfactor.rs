@@ -42,7 +42,7 @@ impl FormFactor {
             FormFactor::Table(_table) => {
                 // TODO: implement linear interpolation
                 // _table is a sorted list of (q, I) pairs so we can use *binary search*
-                log::warn!("interpolation not yet implemented");
+                log::warn!("interpolation not yet implemented - assuming unity");
                 1.0
             }
         }
