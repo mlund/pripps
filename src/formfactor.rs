@@ -54,11 +54,22 @@ impl FormFactor {
                 .enumerate()
                 .map(|(i, c)| c * q.powi(i as i32))
                 .sum(),
-            Table(..) => {
+            Table(tab) => {
                 // TODO: implement linear interpolation
-                // _table is a sorted list of (q, I) pairs so we can use *binary search*
-                log::warn!("interpolation not yet implemented - assuming unity");
-                1.0
+                // `tab` is a sorted list of (q, I) pairs so we can use *binary search*
+                if q == tab[0].0 {
+                    tab[0].1
+                } else if q >= tab[tab.len() - 1].0 {
+                    tab[tab.len() - 1].1
+                } else {
+                    tab.binary_search_by(|(q_i, _)| q.partial_cmp(q_i).unwrap())
+                        .map(|i| tab[i].1)
+                        .unwrap_or_else(|i| {
+                            let (q1, f1) = tab[i - 1];
+                            let (q2, f2) = tab[i];
+                            f1 + (f2 - f1) * (q - q1) / (q2 - q1)
+                        })
+                }
             }
         };
         Ok(f)

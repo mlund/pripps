@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use faunus::topology::{AtomKind, FindByName};
 use itertools::Itertools;
 use log::debug;
+use nalgebra::DMatrix;
 use std::{
     fmt::{self, Display, Formatter},
     path::PathBuf,
@@ -57,6 +58,20 @@ impl Structure {
         };
         debug!("Read {}: {}", path.display(), structure);
         Ok(structure)
+    }
+
+    /// Calculate N x N distance matrix
+    pub fn distance_matrix(&self) -> DMatrix<f64> {
+        let n = self.pos.len();
+        let mut matrix = DMatrix::<f64>::zeros(n, n);
+        for i in 0..n - 1 {
+            for j in i + 1..n {
+                let r = (self.pos[i] - self.pos[j]).norm();
+                matrix[(i, j)] = r;
+                matrix[(j, i)] = r;
+            }
+        }
+        matrix
     }
 }
 

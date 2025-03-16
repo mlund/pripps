@@ -7,7 +7,14 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 
 ```sh
 # I(q) using the Debye formula
-pripps --atomfile assets/single_bead.yaml debye --input structure.xyz
+pripps --atomfile assets/single_bead.yaml debye --input protein.xyz
+```
+
+You may also compile and run directly from the source code (requires a Rust installation):
+
+```sh
+cd pripps/
+cargo run --release -- --atomfile assets/single_bead.yaml debye --input protein.xyz
 ```
 
 ## Features

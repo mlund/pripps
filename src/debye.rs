@@ -12,25 +12,11 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::{AtomKind, FormFactor, Structure, Vector3, formfactor};
+use crate::{AtomKind, FormFactor, Structure, formfactor};
 use anyhow::Result;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
-
-/// Calculate N x N distance matrix
-fn distance_matrix(positions: &[Vector3]) -> DMatrix<f64> {
-    let n = positions.len();
-    let mut matrix = DMatrix::<f64>::zeros(n, n);
-    for i in 0..n - 1 {
-        for j in i + 1..n {
-            let r = (positions[i] - positions[j]).norm();
-            matrix[(i, j)] = r;
-            matrix[(j, i)] = r;
-        }
-    }
-    matrix
-}
 
 /// Calculate I(q) over a range of q values using the Debye formula
 pub fn calc_intensity(
@@ -43,7 +29,7 @@ pub fn calc_intensity(
         .map(|i| q_range.0 + (q_range.1 - q_range.0) * i as f64 / (nq - 1) as f64)
         .collect();
 
-    let distance_matrix = distance_matrix(&structure.pos);
+    let distance_matrix = structure.distance_matrix();
 
     let intensities = q_values
         .par_iter()
@@ -88,6 +74,10 @@ fn intensity_sum(
             let ff = ff_products[(atom_ids[i], atom_ids[j])];
             intensity += ff * func(qr);
         }
+    }
+    // TODO: add contributions from diagonal elements
+    for i in 0..n_atoms {
+        intensity += ff_products[(atom_ids[i], atom_ids[i])];
     }
     Ok(intensity)
 }

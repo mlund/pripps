@@ -18,6 +18,7 @@ use crate::{Pripps, cli};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
+use std::env::set_var;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -66,9 +67,9 @@ pub fn do_main() -> Result<()> {
 
     // Configure logging
     if args.verbose {
-        unsafe { std::env::set_var(DEFAULT_FILTER_ENV, "Debug") };
+        unsafe { set_var(DEFAULT_FILTER_ENV, "Debug") };
     } else if std::env::var(DEFAULT_FILTER_ENV).is_err() {
-        unsafe { std::env::set_var(DEFAULT_FILTER_ENV, "Info") };
+        unsafe { set_var(DEFAULT_FILTER_ENV, "Info") };
     }
     pretty_env_logger::init();
 
@@ -79,13 +80,13 @@ pub fn do_main() -> Result<()> {
 
     match args.command {
         cli::Commands::Debye {
-            input,
+            input: xyzfile,
             qmin,
             qmax,
             nq,
             output,
         } => {
-            let intensity = pripps.debye_intensities(&input, (qmin, qmax), nq)?;
+            let intensity = pripps.debye_intensities(&xyzfile, (qmin, qmax), nq)?;
             let mut output = std::fs::File::create(output)?;
             writeln!(output, "# q/Å I(q)")?;
             for (q, i) in intensity {
