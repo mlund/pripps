@@ -33,10 +33,9 @@ impl Pripps {
     pub fn debye_intensities(
         &self,
         xyzfile: &std::path::PathBuf,
-        q_range: (f64, f64),
-        num_q: usize,
+        qrange: &[f64],
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
-        debye::calc_intensity(&structure, &self.formfactors, q_range, num_q)
+        debye::calc_intensity(&structure, &self.formfactors, qrange)
     }
 }

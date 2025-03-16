@@ -1,4 +1,4 @@
-// Copyright 2025 Isabel Vinterbladh, Sergei Grudinin and Mikael Lund
+// Copyright 2025 Isabel Vinterbladh, Rémi Vuillemot, Sergei Grudinin and Mikael Lund
 //
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
@@ -22,13 +22,8 @@ use std::collections::BTreeMap;
 pub fn calc_intensity(
     structure: &Structure,
     formfactors: &BTreeMap<AtomKind, FormFactor>,
-    q_range: (f64, f64),
-    nq: usize,
+    q_values: &[f64],
 ) -> Result<Vec<(f64, f64)>> {
-    let q_values: Vec<_> = (0..nq)
-        .map(|i| q_range.0 + (q_range.1 - q_range.0) * i as f64 / (nq - 1) as f64)
-        .collect();
-
     let distance_matrix = structure.distance_matrix();
 
     let intensities = q_values
@@ -36,7 +31,7 @@ pub fn calc_intensity(
         .map(|q| intensity_at_q(&structure.ids, formfactors, &distance_matrix, *q))
         .collect::<Result<Vec<f64>>>()?;
 
-    Ok(q_values.into_iter().zip(intensities).collect())
+    Ok(q_values.iter().cloned().zip(intensities).collect())
 }
 
 /// Calculate I(q) using the Debye formula

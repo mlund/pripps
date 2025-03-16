@@ -1,4 +1,4 @@
-// Copyright 2025 Isabel Vinterbladh, Sergei Grudinin and Mikael Lund
+// Copyright 2025 Isabel Vinterbladh, Rémi Vuillemot, Sergei Grudinin and Mikael Lund
 //
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
@@ -86,7 +86,10 @@ pub fn do_main() -> Result<()> {
             nq,
             output,
         } => {
-            let intensity = pripps.debye_intensities(&xyzfile, (qmin, qmax), nq)?;
+            let qrange: Vec<_> = (0..nq)
+                .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
+                .collect();
+            let intensity = pripps.debye_intensities(&xyzfile, &qrange)?;
             let mut output = std::fs::File::create(output)?;
             writeln!(output, "# q/Å I(q)")?;
             for (q, i) in intensity {
