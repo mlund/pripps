@@ -97,21 +97,24 @@ pub fn calc_intensity_xtc(
     );
     let mut reader = XTCReader::open(xtc_path)?;
     let mut frame = Frame::default();
-    let mut avg_intensity: Vec<(f64, f64)> = q_values.iter().map(|&q| (q, 0.0)).collect();
+    let mut mean: Vec<(f64, f64)> = q_values.iter().map(|&q| (q, 0.0)).collect();
     let mut structure = structure.clone();
+
+    // count number of frames
     let mut num_frames = 0;
+    while reader.read_frame(&mut frame).is_ok() {
+        num_frames += 1;
+    }
+    reader.home()?;
 
     while reader.read_frame(&mut frame).is_ok() {
         num_frames += 1;
         structure.update_from_trajectory(&frame)?;
         let intensity = calc_intensity(&structure, formfactors, q_values)?;
         for (index, (_, i)) in intensity.iter().enumerate() {
-            avg_intensity[index].1 += i;
+            mean[index].1 += i / num_frames as f64;
         }
     }
     log::info!("Successfully processed {} frame(s)", num_frames);
-    Ok(avg_intensity
-        .iter()
-        .map(|(q, i)| (*q, i / num_frames as f64))
-        .collect())
+    Ok(mean)
 }

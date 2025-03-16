@@ -1,9 +1,9 @@
 pub mod cli;
 pub mod debye;
 mod structure;
-pub mod trajectory;
 use anyhow::Result;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 pub use structure::Structure;
 pub mod formfactor;
@@ -21,7 +21,7 @@ pub struct Pripps {
 
 impl Pripps {
     /// Create a new a YAML file with form factors
-    pub fn from_yaml(path: &std::path::PathBuf) -> Result<Self> {
+    pub fn from_yaml(path: &PathBuf) -> Result<Self> {
         let formfactors = formfactor::read_formfactors(path)?;
         let atomkinds = formfactors.keys().cloned().collect::<Vec<AtomKind>>();
         Ok(Self {
@@ -36,9 +36,9 @@ impl Pripps {
     /// (the original structure is not part of the average).
     pub fn debye_intensities(
         &self,
-        xyzfile: &std::path::PathBuf,
+        xyzfile: &PathBuf,
         qrange: &[f64],
-        xtcfile: Option<&std::path::PathBuf>,
+        xtcfile: Option<&PathBuf>,
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
         if let Some(xtcfile) = xtcfile {

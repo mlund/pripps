@@ -28,6 +28,15 @@ pub enum FormFactor {
     Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
     /// F(q) given by a list of `(q, F)` pairs
     Table(Vec<(f64, f64)>),
+    /// Nine-coefficient exponential model (Guo 1995, doi:10.1107/s0108767395010038, Eq. 3)
+    NineCoeff {
+        /// Valid q range, inclusive
+        qrange: (f64, f64),
+        /// (a, b) pairs for each of the four exponential terms
+        ab: [(f64, f64); 4],
+        /// Offset
+        c: f64,
+    },
 }
 
 impl FormFactor {
@@ -36,6 +45,7 @@ impl FormFactor {
         use FormFactor::*;
         match self {
             Constant(_) => true,
+            NineCoeff { qrange, .. } => q >= qrange.0 && q <= qrange.1,
             Polynomial { qrange, .. } => q >= qrange.0 && q <= qrange.1,
             Table(table) => q >= table[0].0 && q <= table[table.len() - 1].0,
         }
@@ -55,7 +65,7 @@ impl FormFactor {
                 .map(|(i, c)| c * q.powi(i as i32))
                 .sum(),
             Table(table) => {
-                // `tab` is a sorted list of (q, I) pairs so we can use *binary search*
+                // Linear interpolation using binary search; requires sorted table
                 if q == table[0].0 {
                     table[0].1
                 } else if q >= table[table.len() - 1].0 {
@@ -68,6 +78,14 @@ impl FormFactor {
                     let (q2, f2) = table[i + 1];
                     f1 + (f2 - f1) * (q - q1) / (q2 - q1)
                 }
+            }
+            NineCoeff { ab, c, .. } => {
+                // https://doi.org/10.1107/s0108767395010038, Eq. 3
+                // TODO: Should c be inside or outside the sum?
+                ab.iter()
+                    .map(|(a, b)| a * f64::exp(-b * q * q))
+                    .sum::<f64>()
+                    + c
             }
         };
         Ok(formfactor)
