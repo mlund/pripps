@@ -23,7 +23,7 @@ cargo run --release -- --atomfile assets/single_bead.yaml debye --input protein.
 - File formats: `xyz`
 - Multithreaded
 - Unit tested
-- Overindulgent error handling and memory safetiness
+- Excessive error handling and memory safetiness
 
 ## Form Factor Models
 
@@ -31,9 +31,9 @@ Atom definitions, which may be atomic or coarse grained, are defined in a separa
 see e.g. `assets/single_bead.yaml`.
 An input structure may use arbitrary combinations of the following form factor models:
 
-Keyword      | F(q) calculation
+Keyword      | Description
 ------------ | ----------------------------------------------
-`Constant`   | `F(q) = c`
-`Polynomial` | `F(q) = a + b * q + ...`
+`Constant`   | 𝐹(𝑞) = 𝑐
+`Polynomial` | 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...
 `Gaussian`   | Five gaussian approximation
-`Table`      | Array of (q, F(q)) pairs used for interpolation
+`Table`      | Array of `[𝑞, 𝐹(𝑞)]` pairs used for interpolation

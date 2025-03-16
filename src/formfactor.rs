@@ -24,13 +24,9 @@ use std::collections::BTreeMap;
 pub enum FormFactor {
     /// F(q)=constant for all q values
     Constant(f64),
-    /// F(q) given by a polynomial valid within an inclusive q range
-    Polynomial {
-        // tuple: first must be less than or equal to second
-        qrange: (f64, f64),
-        coeff: [f64; 5],
-    },
-    /// F(q) given by a table of q and F(q) pairs
+    /// F(q) given by an arbitrary length polynomial valid within an inclusive q range
+    Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
+    /// F(q) given by a list of `(q, F)` pairs
     Table(Vec<(f64, f64)>),
 }
 
@@ -131,7 +127,7 @@ mod tests {
     fn test_formfactor_eval() {
         let ff = FormFactor::Polynomial {
             qrange: (0.0, 1.0),
-            coeff: [1.0, 2.0, 3.0, 4.0, 5.0],
+            coeff: vec![1.0, 2.0, 3.0, 4.0, 5.0],
         };
         assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
         assert_relative_eq!(ff.eval(1.0).unwrap(), 15.0);
