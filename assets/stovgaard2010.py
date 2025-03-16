@@ -10,7 +10,7 @@ for residue in df.columns.to_list():
     if residue == "q" or residue == "Unnamed: 0":
         continue
     print(f"{residue}: !Table [", end="")
-    for q, I in zip(df["q"], df["ALA"]):
+    for q, I in zip(df["q"], df[residue]):
         print(f"[{q}, {I}], ", end="")
     print("]")
 
