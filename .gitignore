@@ -4,3 +4,7 @@ target/
 Cargo.lock
 .vscode
 *.dat
+.ipynb_checkpoints
+*.xtc
+*.trr
+\#*

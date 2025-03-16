@@ -14,10 +14,11 @@
 
 use crate::{AtomKind, FormFactor, Structure, formfactor};
 use anyhow::Result;
+use indicatif::ProgressBar;
 use molly::{Frame, XTCReader};
 use nalgebra::DMatrix;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, ops::Div};
+use std::{collections::BTreeMap, ops::Div, path};
 
 /// Calculate I(q) over a range of q values using the Debye formula
 pub fn calc_intensity(
@@ -89,12 +90,8 @@ pub fn calc_intensity_xtc(
     structure: &Structure,
     formfactors: &BTreeMap<AtomKind, FormFactor>,
     q_values: &[f64],
-    xtc_path: &std::path::Path,
+    xtc_path: &path::Path,
 ) -> Result<Vec<(f64, f64)>> {
-    log::info!(
-        "Averaging I(q) over XTC trajectory {} - PBC information is ignored",
-        xtc_path.display(),
-    );
     let mut reader = XTCReader::open(xtc_path)?;
     let mut frame = Frame::default();
     let mut mean: Vec<(f64, f64)> = q_values.iter().map(|&q| (q, 0.0)).collect();
@@ -107,14 +104,16 @@ pub fn calc_intensity_xtc(
     }
     reader.home()?;
 
+    log::info!("Averaging 𝐼(𝑞) over {num_frames} frames, ignoring PBC information");
+
+    let pb = ProgressBar::new(num_frames as u64);
     while reader.read_frame(&mut frame).is_ok() {
-        num_frames += 1;
         structure.update_from_trajectory(&frame)?;
         let intensity = calc_intensity(&structure, formfactors, q_values)?;
         for (index, (_, i)) in intensity.iter().enumerate() {
             mean[index].1 += i / num_frames as f64;
         }
+        pb.inc(1);
     }
-    log::info!("Successfully processed {} frame(s)", num_frames);
     Ok(mean)
 }
