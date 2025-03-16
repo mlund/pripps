@@ -53,11 +53,28 @@ pub fn calc_intensity(
 }
 
 /// Calculate I(q) for a given q value
-fn intensity_at_q(
+pub fn intensity_at_q(
     atom_ids: &[usize],
     formfactors: &BTreeMap<AtomKind, FormFactor>,
     distance_matrix: &nalgebra::DMatrix<f64>,
     q: f64,
+) -> Result<f64> {
+    if q.abs() < 1e-10 {
+        // avoid division by zero: sin(x)/x -> 1 as x -> 0
+        intensity_at_q_with(atom_ids, formfactors, distance_matrix, q, |_| 1.0)
+    } else {
+        intensity_at_q_with(atom_ids, formfactors, distance_matrix, q, |qr| {
+            qr.sin() / qr
+        })
+    }
+}
+
+fn intensity_at_q_with(
+    atom_ids: &[usize],
+    formfactors: &BTreeMap<AtomKind, FormFactor>,
+    distance_matrix: &nalgebra::DMatrix<f64>,
+    q: f64,
+    func: impl Fn(f64) -> f64,
 ) -> Result<f64> {
     let ff_products = formfactor::formfactor_product_at_q(formfactors, q)?;
     let mut intensity = 0.0;
@@ -66,7 +83,7 @@ fn intensity_at_q(
         for j in i + 1..n_atoms {
             let qr = q * distance_matrix[(i, j)];
             let ff = ff_products[(atom_ids[i], atom_ids[j])];
-            intensity += ff * qr.sin() / qr;
+            intensity += ff * func(qr);
         }
     }
     Ok(intensity)

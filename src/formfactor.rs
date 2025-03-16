@@ -23,9 +23,9 @@ use std::collections::BTreeMap;
 pub enum FormFactor {
     /// F(q)=constant for all q values
     Constant(f64),
-    /// F(q) given by a polynomial within an inclusive q range
+    /// F(q) given by a polynomial valid within an inclusive q range
     Polynomial { qrange: (f64, f64), coeff: [f64; 5] },
-    /// F(q) given by a table of 10 q and F(q) values
+    /// F(q) given by a table of q and F(q) pairs
     Table(Vec<(f64, f64)>),
 }
 
@@ -96,7 +96,7 @@ pub fn formfactor_product_at_q(
     let f_vec = formfactors
         .values()
         .map(|f| f.eval(q))
-        .collect::<Result<Vec<f64>>>()?;
+        .collect::<Result<Vec<_>>>()?;
     let f = nalgebra::DVector::from_vec(f_vec);
     Ok(&f * f.transpose())
 }

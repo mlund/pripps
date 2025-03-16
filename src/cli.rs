@@ -14,7 +14,11 @@
 
 //! Definition of command line interfaces (CLI)
 
+use crate::{Pripps, cli};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
+use std::io::Write;
 use std::path::PathBuf;
 
 /// LASR - Labbot Application Server
@@ -54,4 +58,40 @@ pub struct Args {
     /// Verbose output. See more with e.g. RUST_LOG=Trace
     #[clap(long, short = 'v', action)]
     pub verbose: bool,
+}
+
+// Wrapper for main function to handle errors
+pub fn do_main() -> Result<()> {
+    let args = cli::Args::parse();
+
+    // Configure logging
+    if args.verbose {
+        unsafe { std::env::set_var(DEFAULT_FILTER_ENV, "Debug") };
+    } else if std::env::var(DEFAULT_FILTER_ENV).is_err() {
+        unsafe { std::env::set_var(DEFAULT_FILTER_ENV, "Info") };
+    }
+    pretty_env_logger::init();
+
+    let pripps = match &args.atomfile {
+        Some(atompath) => Pripps::from_yaml(atompath)?,
+        None => anyhow::bail!("missing formfactor file"),
+    };
+
+    match args.command {
+        cli::Commands::Debye {
+            input,
+            qmin,
+            qmax,
+            nq,
+            output,
+        } => {
+            let intensity = pripps.debye_intensities(&input, (qmin, qmax), nq)?;
+            let mut output = std::fs::File::create(output)?;
+            writeln!(output, "# q/Å I(q)")?;
+            for (q, i) in intensity {
+                writeln!(output, "{:.6} {:.6}", q, i)?;
+            }
+        }
+    };
+    Ok(())
 }

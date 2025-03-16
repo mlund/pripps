@@ -1,12 +1,13 @@
 # Partial Rust Implementation of PePSi (Pripps)
 
 This is a tool to calculate the scattering intensity of molecular structures.
-Multiple form factor models are supported, including constant, polynomial, gaussian, and table-based models.
+Multiple models are supported, including constant, polynomial, gaussian, and table-based models.
 
 ## Usage
 
 ```sh
-pripps --atomfile assets/formfactors.yaml debye --input structure.xyz
+# I(q) using the Debye formula
+pripps --atomfile assets/single_bead.yaml debye --input structure.xyz
 ```
 
 ## Features
@@ -20,7 +21,7 @@ pripps --atomfile assets/formfactors.yaml debye --input structure.xyz
 ## Form Factor Models
 
 Atom definitions, which may be atomic or coarse grained, are defined in a separate YAML file,
-see e.g. `assets/formfactors.yaml`.
+see e.g. `assets/single_bead.yaml`.
 An input structure may use arbitrary combinations of the following form factor models:
 
 Keyword      | F(q) calculation
