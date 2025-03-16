@@ -86,6 +86,7 @@ pub fn do_main() -> Result<()> {
             nq,
             output,
         } => {
+            log::info!("Calculating 𝐼(𝑞) using Debye formula for interval {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
             let qrange: Vec<_> = (0..nq)
                 .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
                 .collect();

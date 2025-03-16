@@ -16,7 +16,6 @@ use crate::Vector3;
 use anyhow::{Context, Result};
 use faunus::topology::{AtomKind, FindByName};
 use itertools::Itertools;
-use log::debug;
 use nalgebra::DMatrix;
 use std::{
     fmt::{self, Display, Formatter},
@@ -56,7 +55,7 @@ impl Structure {
             pos: nxyz.iter().map(|(_, pos)| *pos).collect(),
             ids: atom_ids,
         };
-        debug!("Read {}: {}", path.display(), structure);
+        log::info!("Read structure {}: {}", path.display(), structure);
         Ok(structure)
     }
 

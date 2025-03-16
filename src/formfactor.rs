@@ -25,7 +25,11 @@ pub enum FormFactor {
     /// F(q)=constant for all q values
     Constant(f64),
     /// F(q) given by a polynomial valid within an inclusive q range
-    Polynomial { qrange: (f64, f64), coeff: [f64; 5] },
+    Polynomial {
+        // tuple: first must be less than or equal to second
+        qrange: (f64, f64),
+        coeff: [f64; 5],
+    },
     /// F(q) given by a table of q and F(q) pairs
     Table(Vec<(f64, f64)>),
 }
@@ -47,7 +51,7 @@ impl FormFactor {
         if !self.in_qrange(q) {
             anyhow::bail!("q value outside of form factor range");
         }
-        let f = match self {
+        let formfactor = match self {
             Constant(c) => *c,
             Polynomial { coeff, .. } => coeff
                 .iter()
@@ -70,7 +74,7 @@ impl FormFactor {
                 }
             }
         };
-        Ok(f)
+        Ok(formfactor)
     }
 }
 
@@ -82,7 +86,7 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
     let name_formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
 
-    let kind_formfactor: BTreeMap<AtomKind, FormFactor> = name_formfactor
+    let formfactor: BTreeMap<AtomKind, FormFactor> = name_formfactor
         .into_iter()
         .enumerate()
         .map(|(id, (name, formfactor))| {
@@ -95,8 +99,13 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
         })
         .collect();
 
-    assert!(kind_formfactor.keys().map(|kind| kind.id()).is_sorted());
-    Ok(kind_formfactor)
+    assert!(formfactor.keys().map(|kind| kind.id()).is_sorted());
+    log::info!(
+        "Read form-factor definitions from {} for {} species",
+        path.display(),
+        formfactor.len(),
+    );
+    Ok(formfactor)
 }
 
 /// Create S x S matrix of form factor products at a given q value (S = atom id)
