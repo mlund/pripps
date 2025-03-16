@@ -27,6 +27,7 @@ pub fn calc_intensity(
     q_values: &[f64],
 ) -> Result<Vec<(f64, f64)>> {
     let distance_matrix = structure.distance_matrix();
+
     let intensities = q_values
         .par_iter()
         .map(|q| intensity_at_q(&structure.ids, formfactors, &distance_matrix, *q))
@@ -91,6 +92,7 @@ pub fn calc_intensity_xtc(
     formfactors: &BTreeMap<AtomKind, FormFactor>,
     q_values: &[f64],
     xtc_path: &path::Path,
+    weights: Option<Vec<f64>>,
 ) -> Result<Vec<(f64, f64)>> {
     let mut reader = XTCReader::open(xtc_path)?;
     let mut frame = Frame::default();
@@ -104,14 +106,31 @@ pub fn calc_intensity_xtc(
     }
     reader.home()?;
 
+    // if not defined, set all weights to 1
+    let weights = match weights {
+        Some(w) => {
+            if w.len() != num_frames {
+                anyhow::bail!("number of weights does not match number of frames in trajectory");
+            }
+            w.to_vec()
+        }
+        None => vec![1.0; num_frames],
+    };
+
     log::info!("Averaging 𝐼(𝑞) over {num_frames} frames, ignoring PBC information");
 
+    let mut weight = weights.iter();
     let pb = ProgressBar::new(num_frames as u64);
+
     while reader.read_frame(&mut frame).is_ok() {
         structure.update_from_trajectory(&frame)?;
+
         let intensity = calc_intensity(&structure, formfactors, q_values)?;
+        let w = weight.next().ok_or_else(|| {
+            anyhow::anyhow!("number of weights does not match number of frames in trajectory")
+        })?;
         for (index, (_, i)) in intensity.iter().enumerate() {
-            mean[index].1 += i / num_frames as f64;
+            mean[index].1 += w * i / num_frames as f64;
         }
         pb.inc(1);
     }

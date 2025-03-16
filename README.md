@@ -7,7 +7,7 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 
 - Multiple form factor models
 - Multithreaded
-- Trajectory averaging
+- Weighted trajectory averaging
 - File formats: `xyz`, `xtc`
 - Unit tested
 - Excessive error handling and memory safetiness
