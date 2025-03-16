@@ -12,8 +12,9 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::AtomKind;
+use crate::{AtomKind, AtomKindBuilder};
 use anyhow::Result;
+use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::collections::BTreeMap;
@@ -42,17 +43,18 @@ impl FormFactor {
 
     /// Evaluate the form factor, F(q)
     pub fn eval(&self, q: f64) -> Result<f64> {
+        use FormFactor::*;
         if !self.in_qrange(q) {
             anyhow::bail!("q value outside of form factor range");
         }
         let f = match self {
-            FormFactor::Constant(c) => *c,
-            FormFactor::Polynomial { coeff, .. } => coeff
+            Constant(c) => *c,
+            Polynomial { coeff, .. } => coeff
                 .iter()
                 .enumerate()
                 .map(|(i, c)| c * q.powi(i as i32))
                 .sum(),
-            FormFactor::Table(..) => {
+            Table(..) => {
                 // TODO: implement linear interpolation
                 // _table is a sorted list of (q, I) pairs so we can use *binary search*
                 log::warn!("interpolation not yet implemented - assuming unity");
@@ -75,7 +77,7 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
         .into_iter()
         .enumerate()
         .map(|(id, (name, formfactor))| {
-            let kind = crate::AtomKindBuilder::default()
+            let kind = AtomKindBuilder::default()
                 .name(name)
                 .id(id)
                 .build()
@@ -89,15 +91,15 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
 }
 
 /// Create S x S matrix of form factor products at a given q value (S = atom id)
-pub fn formfactor_product_at_q(
+pub fn formfactor_product(
     formfactors: &BTreeMap<AtomKind, FormFactor>,
     q: f64,
-) -> Result<nalgebra::DMatrix<f64>> {
+) -> Result<DMatrix<f64>> {
     let f_vec = formfactors
         .values()
         .map(|f| f.eval(q))
         .collect::<Result<Vec<_>>>()?;
-    let f = nalgebra::DVector::from_vec(f_vec);
+    let f = DVector::from_vec(f_vec);
     Ok(&f * f.transpose())
 }
 
@@ -131,7 +133,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let matrix = formfactor_product_at_q(&formfactors, 1.0).unwrap();
+        let matrix = formfactor_product(&formfactors, 1.0).unwrap();
         assert_relative_eq!(matrix[(0, 0)], 1.0);
         assert_relative_eq!(matrix[(0, 1)], 2.0);
         assert_relative_eq!(matrix[(1, 1)], 4.0);
