@@ -75,9 +75,6 @@ fn intensity_sum(
             intensity += ff * func(qr);
         }
     }
-    // TODO: add contributions from diagonal elements
-    for i in 0..n_atoms {
-        intensity += ff_products[(atom_ids[i], atom_ids[i])];
-    }
-    Ok(intensity)
+    // TODO: add contributions from diagonal elements?
+    Ok(intensity / n_atoms as f64)
 }

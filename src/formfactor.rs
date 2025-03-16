@@ -54,21 +54,19 @@ impl FormFactor {
                 .enumerate()
                 .map(|(i, c)| c * q.powi(i as i32))
                 .sum(),
-            Table(tab) => {
-                // TODO: implement linear interpolation
+            Table(table) => {
                 // `tab` is a sorted list of (q, I) pairs so we can use *binary search*
-                if q == tab[0].0 {
-                    tab[0].1
-                } else if q >= tab[tab.len() - 1].0 {
-                    tab[tab.len() - 1].1
+                if q == table[0].0 {
+                    table[0].1
+                } else if q >= table[table.len() - 1].0 {
+                    table[table.len() - 1].1
                 } else {
-                    tab.binary_search_by(|(q_i, _)| q.partial_cmp(q_i).unwrap())
-                        .map(|i| tab[i].1)
-                        .unwrap_or_else(|i| {
-                            let (q1, f1) = tab[i - 1];
-                            let (q2, f2) = tab[i];
-                            f1 + (f2 - f1) * (q - q1) / (q2 - q1)
-                        })
+                    let i = table
+                        .binary_search_by(|(q_i, _)| q.partial_cmp(q_i).unwrap())
+                        .unwrap_or(table.len() - 2);
+                    let (q1, f1) = table[i];
+                    let (q2, f2) = table[i + 1];
+                    f1 + (f2 - f1) * (q - q1) / (q2 - q1)
                 }
             }
         };
@@ -128,6 +126,19 @@ mod tests {
         };
         assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
         assert_relative_eq!(ff.eval(1.0).unwrap(), 15.0);
+    }
+
+    // Test Table and linear interpolation
+    #[test]
+    fn test_formfactor_eval_table() {
+        let ff = FormFactor::Table(vec![(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]);
+        assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
+        assert_relative_eq!(ff.eval(0.1).unwrap(), 1.1);
+        assert_relative_eq!(ff.eval(0.5).unwrap(), 1.5);
+        assert_relative_eq!(ff.eval(1.0).unwrap(), 2.0);
+        assert_relative_eq!(ff.eval(1.5).unwrap(), 2.5);
+        assert_relative_eq!(ff.eval(1.9).unwrap(), 2.9);
+        assert_relative_eq!(ff.eval(2.0).unwrap(), 3.0);
     }
 
     #[test]
