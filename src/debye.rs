@@ -14,6 +14,7 @@
 
 use crate::{AtomKind, FormFactor, Structure, formfactor};
 use anyhow::Result;
+use molly::{Frame, XTCReader};
 use nalgebra::DMatrix;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, ops::Div};
@@ -81,4 +82,36 @@ fn intensity_sum(
         .sum();
 
     Ok((2.0 * off_diagonal + trace).div(n_atoms as f64))
+}
+
+/// Average I(q) over a trajectory of structures
+pub fn calc_intensity_xtc(
+    structure: &Structure,
+    formfactors: &BTreeMap<AtomKind, FormFactor>,
+    q_values: &[f64],
+    xtc_path: &std::path::Path,
+) -> Result<Vec<(f64, f64)>> {
+    log::info!(
+        "Averaging I(q) over XTC trajectory {} - PBC information is ignored",
+        xtc_path.display(),
+    );
+    let mut reader = XTCReader::open(xtc_path)?;
+    let mut frame = Frame::default();
+    let mut avg_intensity: Vec<(f64, f64)> = q_values.iter().map(|&q| (q, 0.0)).collect();
+    let mut structure = structure.clone();
+    let mut num_frames = 0;
+
+    while reader.read_frame(&mut frame).is_ok() {
+        num_frames += 1;
+        structure.update_from_trajectory(&frame)?;
+        let intensity = calc_intensity(&structure, formfactors, q_values)?;
+        for (index, (_, i)) in intensity.iter().enumerate() {
+            avg_intensity[index].1 += i;
+        }
+    }
+    log::info!("Successfully processed {} frame(s)", num_frames);
+    Ok(avg_intensity
+        .iter()
+        .map(|(q, i)| (*q, i / num_frames as f64))
+        .collect())
 }

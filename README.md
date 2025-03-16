@@ -20,9 +20,10 @@ cargo run --release -- --atomfile assets/single_bead.yaml debye --input protein.
 ## Features
 
 - Multiple form factor models
-- File formats: `xyz`
+- File formats: `xyz`, `xtc`
 - Multithreaded
 - Unit tested
+- Trajectory averaging
 - Excessive error handling and memory safetiness
 
 ## Form Factor Models

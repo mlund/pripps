@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod debye;
 mod structure;
+pub mod trajectory;
 use anyhow::Result;
 use std::collections::BTreeMap;
 
@@ -30,12 +31,20 @@ impl Pripps {
     }
 
     /// Calculate I(q) for a given structure using the Debye formula
+    ///
+    /// If `xtcfile` is provided, the intensity is averaged over all frames in the trajectory
+    /// (the original structure is not part of the average).
     pub fn debye_intensities(
         &self,
         xyzfile: &std::path::PathBuf,
         qrange: &[f64],
+        xtcfile: Option<&std::path::PathBuf>,
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
-        debye::calc_intensity(&structure, &self.formfactors, qrange)
+        if let Some(xtcfile) = xtcfile {
+            debye::calc_intensity_xtc(&structure, &self.formfactors, qrange, xtcfile)
+        } else {
+            debye::calc_intensity(&structure, &self.formfactors, qrange)
+        }
     }
 }

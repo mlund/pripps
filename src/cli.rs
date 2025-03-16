@@ -43,6 +43,9 @@ pub enum Commands {
         /// Output file with I(q)
         #[clap(short = 'o', long, default_value = "intensity.dat")]
         output: PathBuf,
+        /// Optional XTC trajectory file with structures to average over
+        #[clap(short = 'x', long)]
+        xtcfile: Option<PathBuf>,
     },
 }
 
@@ -85,12 +88,13 @@ pub fn do_main() -> Result<()> {
             qmax,
             nq,
             output,
+            xtcfile,
         } => {
             log::info!("Calculating 𝐼(𝑞) using Debye formula for interval {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
             let qrange: Vec<_> = (0..nq)
                 .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
                 .collect();
-            let intensity = pripps.debye_intensities(&xyzfile, &qrange)?;
+            let intensity = pripps.debye_intensities(&xyzfile, &qrange, xtcfile.as_ref())?;
             let mut output = std::fs::File::create(output)?;
             writeln!(output, "# q/Å I(q)")?;
             for (q, i) in intensity {

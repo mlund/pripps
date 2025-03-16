@@ -16,6 +16,7 @@ use crate::Vector3;
 use anyhow::{Context, Result};
 use faunus::topology::{AtomKind, FindByName};
 use itertools::Itertools;
+use molly::Frame;
 use nalgebra::DMatrix;
 use std::{
     fmt::{self, Display, Formatter},
@@ -71,6 +72,17 @@ impl Structure {
             }
         }
         matrix
+    }
+
+    /// Set positions from a trajectory frame
+    pub fn update_from_trajectory(&mut self, frame: &Frame) -> Result<()> {
+        if frame.natoms() != self.pos.len() {
+            anyhow::bail!("number of atoms in structure does not match trajectory frame");
+        }
+        for (i, pos) in frame.coords().enumerate() {
+            self.pos[i] = Vector3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
+        }
+        Ok(())
     }
 }
 
