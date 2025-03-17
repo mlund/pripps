@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod debye;
+pub mod explicit;
 mod structure;
 mod trajectory;
 use anyhow::Result;

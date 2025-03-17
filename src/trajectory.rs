@@ -1,3 +1,17 @@
+// Copyright 2025 Isabel Vinterbladh, Rémi Vuillemot, Sergei Grudinin and Mikael Lund
+//
+// Licensed under the Apache license, version 2.0 (the "license");
+// you may not use this file except in compliance with the license.
+// You may obtain a copy of the license at
+//
+//     http://www.apache.org/licenses/license-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the license is distributed on an "as is" basis,
+// without warranties or conditions of any kind, either express or implied.
+// See the license for the specific language governing permissions and
+// limitations under the license.
+
 use anyhow::{Result, bail};
 use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
@@ -66,13 +80,29 @@ impl Iterator for XtcIterator {
 fn read_weights(path: &path::Path) -> Result<Vec<f64>> {
     let read_error = |e| bail!("error reading weights: {e}");
 
-    let weights: Vec<_> = std::fs::read_to_string(path)
+    let mut weights: Vec<_> = std::fs::read_to_string(path)
         .or_else(read_error)?
         .lines()
         .map(|w| w.parse())
         .try_collect()
         .map_err(|e| anyhow::anyhow!("weight error: {e}"))?;
 
+    normalize_vector(weights.as_mut_slice())?;
+
     log::info!("Read {} weights from {}", weights.len(), path.display());
     Ok(weights)
+}
+
+/// Normalize a vector so that the sum of its elements is 1
+fn normalize_vector(v: &mut [f64]) -> Result<()> {
+    let sum: f64 = v.iter().sum();
+
+    if sum.abs() < 1e-6 {
+        bail!("sum of weights is zero");
+    }
+
+    for w in v.iter_mut() {
+        *w /= sum;
+    }
+    Ok(())
 }

@@ -48,7 +48,7 @@ impl Structure {
                 atomkinds
                     .find_name(name)
                     .map(|kind| kind.id())
-                    .context("Unknown atom name in structure file: {name}")
+                    .context(format!("Unknown atom name in structure file: {name}"))
             })
             .try_collect()?;
 
@@ -75,7 +75,7 @@ impl Structure {
     }
 
     /// Set positions from a trajectory frame
-    pub fn set_frame(&mut self, frame: &Frame) -> Result<()> {
+    pub fn set_positions(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
             bail!("number of atoms in structure does not match trajectory frame");
         }

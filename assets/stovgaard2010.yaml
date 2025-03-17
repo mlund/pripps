@@ -4,6 +4,13 @@
 # Scattering form factor centroids for the one-body model.
 # Form factor centroids for each amino acid in the q-range [0, 0.750] Å-1.
 #
+na: !Constant 1.0
+cl: !Constant 1.0
+NTR: !Constant 1.0
+CTR: !Constant 1.0
+HLYS: !Alias LYS
+HTYR: !Alias TYR
+
 ALA:
   !Table [
     [0.0, 8.983],
