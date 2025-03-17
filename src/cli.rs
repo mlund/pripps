@@ -57,8 +57,8 @@ pub enum Commands {
 #[command(styles=clap::builder::Styles::styled()
     .header(AnsiColor::Green.on_default().bold())
     .usage(AnsiColor::Green.on_default().bold())
-    .literal(AnsiColor::Blue.on_default().bold())
-    .placeholder(AnsiColor::Blue.on_default()))]
+    .literal(AnsiColor::Cyan.on_default().bold())
+    .placeholder(AnsiColor::Cyan.on_default()))]
 pub struct Args {
     #[clap(subcommand)]
     pub command: Commands,
@@ -75,7 +75,6 @@ pub struct Args {
 // Wrapper for main function to handle errors
 pub fn do_main() -> Result<()> {
     let args = cli::Args::parse();
-
     // Configure logging
     if args.verbose {
         unsafe { set_var(DEFAULT_FILTER_ENV, "Debug") };
