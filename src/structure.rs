@@ -13,7 +13,7 @@
 // limitations under the license.
 
 use crate::Vector3;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use faunus::topology::{AtomKind, FindByName};
 use itertools::Itertools;
 use molly::Frame;
@@ -48,7 +48,7 @@ impl Structure {
                 atomkinds
                     .find_name(name)
                     .map(|kind| kind.id())
-                    .context(format!("Unknown atom name in structure file: {name}"))
+                    .context("Unknown atom name in structure file: {name}")
             })
             .try_collect()?;
 
@@ -77,7 +77,7 @@ impl Structure {
     /// Set positions from a trajectory frame
     pub fn set_frame(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
-            anyhow::bail!("number of atoms in structure does not match trajectory frame");
+            bail!("number of atoms in structure does not match trajectory frame");
         }
         for (pos, new_pos) in self.pos.iter_mut().zip(frame.coords()) {
             *pos = Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
@@ -101,6 +101,6 @@ fn from_xyz_line(line: &str) -> Result<(String, Vector3)> {
             Vector3::new(x.parse()?, y.parse()?, z.parse()?),
         ))
     } else {
-        anyhow::bail!("'name x y z' expected in XYZ record: {}", line);
+        bail!("'name x y z' expected in XYZ record: {}", line);
     }
 }
