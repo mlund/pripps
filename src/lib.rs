@@ -52,4 +52,15 @@ impl Pripps {
             debye::calc_intensity(&structure, &self.formfactors, qrange)
         }
     }
+
+    pub fn direct_intensities(
+        &self,
+        xyzfile: &std::path::Path,
+        pmax: usize,
+        side_lengths: &Vector3,
+    ) -> Result<Vec<(f64, f64)>> {
+        let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
+        let direct = explicit::DirectTransform::new(pmax);
+        Ok(direct.eval(&structure.pos, side_lengths))
+    }
 }

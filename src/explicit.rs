@@ -17,7 +17,8 @@
 use crate::Vector3;
 use num_complex::Complex;
 use rayon::prelude::*;
-use std::f64::consts::PI;
+use std::collections::HashMap;
+use std::{cmp::Ordering, f64::consts::PI};
 
 /// Sample directions (h,k,l)
 ///
@@ -69,12 +70,14 @@ impl DirectTransform {
     }
 
     /// Calculate I(q) for a given structure inside cuboidal box
-    pub fn eval(&self, positions: &[Vector3], cuboid: &Vector3) -> Vec<(f64, f64)> {
-        self.directions
+    pub fn eval(&self, positions: &[Vector3], side_lengths: &Vector3) -> Vec<(f64, f64)> {
+        let table = self
+            .directions
             .par_iter()
-            .map(|dir| dir.component_div(cuboid))
+            .map(|dir| dir.component_div(side_lengths))
             .map(|q| (q.norm(), calc_intensity(&q, positions)))
-            .collect()
+            .collect::<Vec<_>>();
+        average_duplicates(table)
     }
 }
 
@@ -84,4 +87,30 @@ fn calc_intensity(q: &Vector3, positions: &[Vector3]) -> f64 {
     let sum_cos = qr.iter().fold(0.0, |acc, qr| acc + qr.cos());
     let sum_sin = qr.iter().fold(0.0, |acc, qr| acc + qr.sin());
     Complex::new(sum_cos, sum_sin).norm_sqr() / positions.len() as f64
+}
+
+/// Average duplicate q values, then sort by q
+fn average_duplicates(v: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    let mut map: HashMap<i64, (f64, usize)> = HashMap::new();
+
+    // Function to round f64 to a certain number of decimal places (e.g., 6 places)
+    fn round_to_precision(x: f64, precision: usize) -> i64 {
+        (x * 10f64.powi(precision as i32)).round() as i64
+    }
+
+    // Iterate over the vector and populate the map with sums and counts
+    for (x, y) in v {
+        let rounded_x = round_to_precision(x, 6); // Round x to 6 decimal places
+        let entry = map.entry(rounded_x).or_insert((0.0, 0));
+        entry.0 += y; // Sum of y
+        entry.1 += 1; // Count of occurrences
+    }
+
+    // Create a new vector with averaged results
+    let mut table = map
+        .into_iter()
+        .map(|(rounded_x, (sum_y, count))| (rounded_x as f64 / 10f64.powi(6), sum_y / count as f64))
+        .collect::<Vec<_>>();
+    table.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    table
 }

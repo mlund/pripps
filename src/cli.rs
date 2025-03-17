@@ -51,6 +51,18 @@ pub enum Commands {
         #[clap(short = 'w', long, requires = "xtcfile")]
         weights: Option<PathBuf>,
     },
+    /// Calculate scattering intensity using explicit q vectors
+    Direct {
+        /// XYZ structure file
+        #[clap(short, long)]
+        input: PathBuf,
+        /// Maximum Miller index
+        #[clap(short = 'p', long, default_value = "6")]
+        pmax: usize,
+        /// Output file with I(q)
+        #[clap(short = 'o', long, default_value = "intensity.dat")]
+        output: PathBuf,
+    },
 }
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
@@ -108,6 +120,15 @@ pub fn do_main() -> Result<()> {
                 weights.as_deref(),
             )?;
             write_table(&intensity_path, &intensity, Some("# q/Å I(q)"))?;
+        }
+        cli::Commands::Direct {
+            input,
+            pmax,
+            output,
+        } => {
+            let side_lengths = crate::Vector3::new(50.0, 50.0, 50.0);
+            let intensity = pripps.direct_intensities(&input, pmax, &side_lengths)?;
+            write_table(&output, &intensity, Some("# q/Å I(q)"))?;
         }
     };
     Ok(())
