@@ -20,7 +20,7 @@ use molly::Frame;
 use nalgebra::DMatrix;
 use std::{
     fmt::{self, Display, Formatter},
-    path::PathBuf,
+    path::Path,
 };
 
 /// Ad hoc molecular structure containing atoms with positions, masses, charges, and radii
@@ -34,9 +34,9 @@ pub struct Structure {
 
 impl Structure {
     /// Constructs a new structure from an XYZ file, centering the structure at the origin
-    pub fn from_xyz(path: &PathBuf, atomkinds: &[AtomKind]) -> Result<Self> {
-        let nxyz: Vec<(String, Vector3)> = std::fs::read_to_string(path)
-            .context(format!("Could not read XYZ file {}", path.display()))?
+    pub fn from_xyz(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
+        let nxyz: Vec<_> = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("couldn't read XYZ file {}: {e}", path.display()))?
             .lines()
             .skip(2) // skip header
             .map(from_xyz_line)
@@ -75,12 +75,12 @@ impl Structure {
     }
 
     /// Set positions from a trajectory frame
-    pub fn update_from_frame(&mut self, frame: &Frame) -> Result<()> {
+    pub fn set_frame(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
             anyhow::bail!("number of atoms in structure does not match trajectory frame");
         }
-        for (i, pos) in frame.coords().enumerate() {
-            self.pos[i] = Vector3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
+        for (pos, new_pos) in self.pos.iter_mut().zip(frame.coords()) {
+            *pos = Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
         }
         Ok(())
     }

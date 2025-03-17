@@ -90,11 +90,11 @@ pub fn do_main() -> Result<()> {
 
     match args.command {
         cli::Commands::Debye {
-            input: xyzfile,
+            input: xyz_path,
             qmin,
             qmax,
             nq,
-            output,
+            output: intensity_path,
             xtcfile,
             weights,
         } => {
@@ -102,12 +102,12 @@ pub fn do_main() -> Result<()> {
 
             let q_values = make_q_values(qmin, qmax, nq);
             let intensity = pripps.debye_intensities(
-                &xyzfile,
+                &xyz_path,
                 &q_values,
                 xtcfile.as_deref(),
                 weights.as_deref(),
             )?;
-            write_table(&output, &intensity, Some("# q/Å I(q)"))?;
+            write_table(&intensity_path, &intensity, Some("# q/Å I(q)"))?;
         }
     };
     Ok(())

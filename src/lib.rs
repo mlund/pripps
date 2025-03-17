@@ -38,7 +38,7 @@ impl Pripps {
     /// (the original structure is not part of the average).
     pub fn debye_intensities(
         &self,
-        xyzfile: &PathBuf,
+        xyzfile: &std::path::Path,
         qrange: &[f64],
         xtcfile: Option<&path::Path>,
         weight_path: Option<&path::Path>,
