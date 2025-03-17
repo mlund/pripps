@@ -16,7 +16,8 @@
 
 use crate::{Pripps, cli};
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, builder::styling::AnsiColor};
+
 use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
 use std::env::set_var;
 use std::io::Write;
@@ -28,7 +29,7 @@ pub enum Commands {
     /// Calculate scattering intensity using the Debye formula
     #[clap()]
     Debye {
-        /// XYZ input file
+        /// XYZ structure file
         #[clap(short, long)]
         input: PathBuf,
         /// Minimum q value (1/Å)
@@ -51,9 +52,13 @@ pub enum Commands {
         weights: Option<PathBuf>,
     },
 }
-
 #[derive(Parser)]
-#[clap(version, about, long_about = None)]
+#[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
+#[command(styles=clap::builder::Styles::styled()
+    .header(AnsiColor::Green.on_default().bold())
+    .usage(AnsiColor::Green.on_default().bold())
+    .literal(AnsiColor::Blue.on_default().bold())
+    .placeholder(AnsiColor::Blue.on_default()))]
 pub struct Args {
     #[clap(subcommand)]
     pub command: Commands,

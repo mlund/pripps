@@ -89,7 +89,7 @@ impl FormFactor {
                     .sum::<f64>()
                     + c
             }
-            Alias(name) => bail!("Invalid SameAs form factor {}", name),
+            Alias(name) => bail!("Unexpected alias form factor {}", name),
         };
         Ok(formfactor)
     }
