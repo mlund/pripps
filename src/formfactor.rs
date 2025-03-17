@@ -13,7 +13,7 @@
 // limitations under the license.
 
 use crate::{AtomKind, AtomKindBuilder};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
@@ -28,7 +28,7 @@ pub enum FormFactor {
     Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
     /// F(q) given by a list of `(q, F)` pairs
     Table(Vec<(f64, f64)>),
-    /// Nine-coefficient exponential model (Guo 1995, doi:10.1107/s0108767395010038, Eq. 3)
+    /// Nine-coefficient exponential (Guo 1995, doi:10.1107/s0108767395010038, Eq. 3)
     NineCoeff {
         /// Valid q range, inclusive
         qrange: (f64, f64),
@@ -55,7 +55,7 @@ impl FormFactor {
     pub fn eval(&self, q: f64) -> Result<f64> {
         use FormFactor::*;
         if !self.in_qrange(q) {
-            anyhow::bail!("q value outside of form factor range");
+            bail!("q value outside of form factor range");
         }
         let formfactor = match self {
             Constant(c) => *c,
@@ -94,8 +94,8 @@ impl FormFactor {
 
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
 pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, FormFactor>> {
-    let file = std::fs::File::open(path)
-        .or_else(|e| anyhow::bail!("error opening formfactor file: {e}"))?;
+    let file =
+        std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
 
     let name_formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;

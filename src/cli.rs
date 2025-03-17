@@ -46,7 +46,7 @@ pub enum Commands {
         /// Optional .xtc trajectory file with structures to average over
         #[clap(short = 'x', long)]
         xtcfile: Option<PathBuf>,
-        /// Optional weight file with weights for each frame in XTC file (one weight per line)
+        /// Optional file with weights for each frame in XTC file (one weight per line)
         #[clap(short = 'w', long, requires = "xtcfile")]
         weights: Option<PathBuf>,
     },
@@ -95,12 +95,18 @@ pub fn do_main() -> Result<()> {
             weights,
         } => {
             log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
+
             let q_values: Vec<_> = (0..nq)
                 .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
                 .collect();
-            let intensity =
-                pripps.debye_intensities(&xyzfile, &q_values, xtcfile.as_ref(), weights)?;
+            let intensity = pripps.debye_intensities(
+                &xyzfile,
+                &q_values,
+                xtcfile.as_deref(),
+                weights.as_deref(),
+            )?;
             let mut output = std::fs::File::create(output)?;
+
             writeln!(output, "# q/Å I(q)")?;
             for (q, i) in intensity {
                 writeln!(output, "{:.6} {:.6}", q, i)?;
