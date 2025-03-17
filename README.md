@@ -14,16 +14,13 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 
 ## Usage
 
-```sh
-# I(q) using the Debye formula
-pripps --atomfile assets/single_bead.yaml debye --input protein.xyz
-```
-
-Compile and run directly from the source repository (requires a Rust installation):
+Compile and run directly from the source repository
+[(requires a Rust installation)](https://www.rust-lang.org/tools/install):
 
 ```sh
+git clone git@github.com:mlund/pripps.git
 cd pripps/
-cargo run --release -- --atomfile assets/single_bead.yaml debye --input protein.xyz
+cargo run --release -- -h
 ```
 
 ## Form Factor Models
@@ -34,8 +31,8 @@ An input structure may use arbitrary combinations of the following form factor m
 
 Description                                | YAML example
 ------------------------------------------ | ----------------------------------
+𝐹(𝑞) = 𝑐                                    | `!Constant 1.0`
+𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                   | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, ...] }`
+Array of `[𝑞, 𝐹(𝑞)]` pairs                 | `!Table [ [0.0, 8.9], ...]`
 Alias for a previously defined form factor | `!Alias LYS`
-𝐹(𝑞) = 𝑐                                   |  `!Constant 1.0`
 [Nine coefficient approximation](https://doi.org/10.1107/S0108767395010038) (four a-b pairs + c) | `!NineCoeff { qrange: [0.0, 1.0], ab: [ [0.5, 0.7], .. ], c = 2.0 }`
-𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                          | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, 4.0, 5.0] }`
-Array of `[𝑞, 𝐹(𝑞)]` pairs used for interpolation | `!Table [ [0.0, 8.983], ...]`

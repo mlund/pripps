@@ -63,7 +63,7 @@ pub struct Args {
     #[clap(subcommand)]
     pub command: Commands,
 
-    /// Atom definition file for form factors
+    /// Form factor definitions for species (atoms, residues, etc.)
     #[clap(long, short = 'a')]
     pub atomfile: Option<PathBuf>,
 
