@@ -37,6 +37,8 @@ pub enum FormFactor {
         /// Offset
         c: f64,
     },
+    /// F(q) is the same an another defined form factor
+    Alias(String),
 }
 
 impl FormFactor {
@@ -44,7 +46,7 @@ impl FormFactor {
     pub fn in_qrange(&self, q: f64) -> bool {
         use FormFactor::*;
         match self {
-            Constant(_) => true,
+            Constant(_) | Alias(_) => true,
             NineCoeff { qrange, .. } => q >= qrange.0 && q <= qrange.1,
             Polynomial { qrange, .. } => q >= qrange.0 && q <= qrange.1,
             Table(table) => q >= table[0].0 && q <= table[table.len() - 1].0,
@@ -87,6 +89,7 @@ impl FormFactor {
                     .sum::<f64>()
                     + c
             }
+            Alias(name) => bail!("Invalid SameAs form factor {}", name),
         };
         Ok(formfactor)
     }
@@ -97,8 +100,25 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
     let file =
         std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
 
-    let name_formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
+    let mut name_formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
+
+    // Map of form without aliases
+    let no_alias = &name_formfactor
+        .iter()
+        .filter(|(_, ff)| !matches!(ff, FormFactor::Alias(_)))
+        .map(|(name, ff)| (name.clone(), ff.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    // Convert all alias variants to the actual form factor variant that they refer to
+    for (_, formfactor) in name_formfactor.iter_mut() {
+        if let FormFactor::Alias(name) = formfactor {
+            match no_alias.get(name) {
+                Some(ff) => *formfactor = ff.clone(),
+                None => bail!("Aliased form factor {} is not defined", name),
+            }
+        }
+    }
 
     let formfactor: BTreeMap<AtomKind, FormFactor> = name_formfactor
         .into_iter()

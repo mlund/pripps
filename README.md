@@ -32,10 +32,10 @@ Atom definitions, which may be atomic or coarse grained, are defined in a separa
 see e.g. `assets/single_bead.yaml`.
 An input structure may use arbitrary combinations of the following form factor models:
 
-Keyword      | Description
------------- | ----------------------------------------------
-`Constant`   | 𝐹(𝑞) = 𝑐
-`Polynomial` | 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...
-`Gaussian`   | Five gaussian approximation
-`Table`      | Array of `[𝑞, 𝐹(𝑞)]` pairs used for interpolation
-
+Description                                | YAML example
+------------------------------------------ | ----------------------------------
+Alias for a previously defined form factor | `!Alias LYS`
+𝐹(𝑞) = 𝑐                                   |  `!Constant 1.0`
+[Nine coefficient approximation](https://doi.org/10.1107/S0108767395010038) (four a-b pairs + c) | `!NineCoeff { qrange: [0.0, 1.0], ab: [ [0.5, 0.7], .. ], c = 2.0 }`
+𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                          | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, 4.0, 5.0] }`
+Array of `[𝑞, 𝐹(𝑞)]` pairs used for interpolation | `!Table [ [0.0, 8.983], ...]`

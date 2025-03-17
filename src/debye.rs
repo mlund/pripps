@@ -99,12 +99,12 @@ pub fn calc_intensity_xtc(
 
     log::info!("Averaging 𝐼(𝑞) over {num_frames} frames, ignoring PBC information");
 
-    for (frame, w) in reader {
-        structure.update_from_trajectory(&frame)?;
+    for (frame, weight) in reader {
+        structure.update_from_frame(&frame)?;
         let intensity = calc_intensity(&structure, formfactors, q_values)?;
-        zip(mean.iter_mut(), intensity.iter()).for_each(|((_, m), (_, i))| {
-            *m += w * i / num_frames as f64;
-        });
+        for ((_, m), (_, i)) in zip(mean.iter_mut(), intensity) {
+            *m += weight * i / num_frames as f64;
+        }
         pb.inc(1);
     }
     Ok(mean)

@@ -75,7 +75,7 @@ impl Structure {
     }
 
     /// Set positions from a trajectory frame
-    pub fn update_from_trajectory(&mut self, frame: &Frame) -> Result<()> {
+    pub fn update_from_frame(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
             anyhow::bail!("number of atoms in structure does not match trajectory frame");
         }
