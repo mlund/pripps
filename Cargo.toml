@@ -3,6 +3,13 @@ name = "pripps"
 version = "0.1.0"
 edition = "2024"
 description = "Partial Rust Implementation of PePSi"
+authors = ["Mikael Lund <lyssky@icloud.com>"]
+repository = "https://github.com/mlund/pripps"
+documentation = "https://docs.rs/pripps"
+readme = "README.md"
+license = "Apache-2.0"
+categories = ["science"]
+keywords = ["debye_formula", "chemistry", "scattering_intensity", "proteins"]
 
 [dependencies]
 anyhow = "1.0.97"

@@ -100,22 +100,43 @@ pub fn do_main() -> Result<()> {
         } => {
             log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
 
-            let q_values: Vec<_> = (0..nq)
-                .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
-                .collect();
+            let q_values = make_q_values(qmin, qmax, nq);
             let intensity = pripps.debye_intensities(
                 &xyzfile,
                 &q_values,
                 xtcfile.as_deref(),
                 weights.as_deref(),
             )?;
-            let mut output = std::fs::File::create(output)?;
-
-            writeln!(output, "# q/Å I(q)")?;
-            for (q, i) in intensity {
-                writeln!(output, "{:.6} {:.6}", q, i)?;
-            }
+            write_table(&output, &intensity, Some("# q/Å I(q)"))?;
         }
     };
+    Ok(())
+}
+
+/// Generate a list of q values from qmin to qmax
+fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
+    (0..nq)
+        .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
+        .collect()
+}
+
+/// Write f(x) to a file
+fn write_table(
+    path: &std::path::Path,
+    intensity: &[(f64, f64)],
+    header: Option<&str>,
+) -> Result<()> {
+    let mut file = std::fs::File::create(path)
+        .map_err(|e| anyhow::anyhow!("error writing intensity file: {e}"))?;
+
+    log::info!("Writing {}", path.display());
+
+    if let Some(header) = header {
+        writeln!(file, "{header}")?;
+    }
+
+    for (q, i) in intensity {
+        writeln!(file, "{q:.6} {i:.6}")?;
+    }
     Ok(())
 }
