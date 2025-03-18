@@ -14,10 +14,12 @@
 
 //! Explicit calculation using discrete q vector
 
-use crate::Vector3;
+use crate::{Structure, Vector3, formfactor::FormFactorMap};
+use itertools::Itertools;
 use num_complex::Complex;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::iter::zip;
 use std::{cmp::Ordering, f64::consts::PI};
 
 /// Sample directions (h,k,l)
@@ -70,23 +72,40 @@ impl DirectTransform {
     }
 
     /// Calculate I(q) for a given structure inside cuboidal box
-    pub fn eval(&self, positions: &[Vector3], side_lengths: &Vector3) -> Vec<(f64, f64)> {
+    pub fn eval(
+        &self,
+        structure: &Structure,
+        formfactors: &FormFactorMap,
+        side_lengths: &Vector3,
+    ) -> Vec<(f64, f64)> {
         let table = self
             .directions
             .par_iter()
             .map(|dir| dir.component_div(side_lengths))
-            .map(|q| (q.norm(), calc_intensity(&q, positions)))
+            .map(|q| (q.norm(), calc_intensity(&q, structure, formfactors)))
             .collect::<Vec<_>>();
         average_duplicates(table)
     }
 }
 
 /// Calculate intensity for given q vector
-fn calc_intensity(q: &Vector3, positions: &[Vector3]) -> f64 {
-    let qr: Vec<f64> = positions.iter().map(|r| q.dot(r)).collect();
-    let sum_cos = qr.iter().fold(0.0, |acc, qr| acc + qr.cos());
-    let sum_sin = qr.iter().fold(0.0, |acc, qr| acc + qr.sin());
-    Complex::new(sum_cos, sum_sin).norm_sqr() / positions.len() as f64
+fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMap) -> f64 {
+    let q_norm = q.norm();
+    let qr: Vec<f64> = structure.pos.iter().map(|r| q.dot(r)).collect();
+
+    // F(q) for each atom kind
+    let formfactors: Vec<f64> = formfactors
+        .values()
+        .map(|ff| ff.eval(q_norm))
+        .try_collect()
+        .unwrap();
+    // F(q) for each atom id in given structure
+    let formfactors: Vec<f64> = structure.ids.iter().map(|i| formfactors[*i]).collect();
+
+    let sum_cos = zip(&formfactors, &qr).fold(0.0, |acc, (f, qr)| acc + qr.cos() * f);
+    let sum_sin = zip(&formfactors, &qr).fold(0.0, |acc, (f, qr)| acc + qr.sin() * f);
+
+    Complex::new(sum_cos, sum_sin).norm_sqr()
 }
 
 /// Average duplicate q values, then sort by q

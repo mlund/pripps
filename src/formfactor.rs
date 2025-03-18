@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::collections::BTreeMap;
 
+pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
+
 /// Special hydrogen properties for form factors
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Copy)]
 #[serde(rename_all = "lowercase")]
@@ -111,7 +113,7 @@ impl FormFactor {
 }
 
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
-pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, FormFactor>> {
+pub fn read_formfactors(path: &std::path::PathBuf) -> Result<FormFactorMap> {
     let file =
         std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
 
@@ -135,7 +137,7 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
         }
     }
 
-    let formfactor: BTreeMap<AtomKind, FormFactor> = name_formfactor
+    let formfactor: FormFactorMap = name_formfactor
         .into_iter()
         .enumerate()
         .map(|(id, (name, formfactor))| {
@@ -158,10 +160,7 @@ pub fn read_formfactors(path: &std::path::PathBuf) -> Result<BTreeMap<AtomKind, 
 }
 
 /// Create S x S matrix of form factor products at a given q value (S = atom id)
-pub fn formfactor_product(
-    formfactors: &BTreeMap<AtomKind, FormFactor>,
-    q: f64,
-) -> Result<DMatrix<f64>> {
+pub fn formfactor_product(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
     let f_vec = formfactors
         .values()
         .map(|f| f.eval(q))

@@ -12,17 +12,17 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::{AtomKind, FormFactor, Structure, XtcIterator, formfactor};
+use crate::{Structure, XtcIterator, formfactor, formfactor::FormFactorMap};
 use anyhow::Result;
 use indicatif::ProgressBar;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, iter::zip, path};
+use std::{iter::zip, path};
 
 /// Calculate I(q) over a range of q values using the Debye formula
 pub fn calc_intensity(
     structure: &Structure,
-    formfactors: &BTreeMap<AtomKind, FormFactor>,
+    formfactors: &FormFactorMap,
     q_values: &[f64],
 ) -> Result<Vec<(f64, f64)>> {
     let distance_matrix = structure.distance_matrix();
@@ -38,7 +38,7 @@ pub fn calc_intensity(
 /// Calculate I(q) using the Debye formula
 fn intensity_at_q(
     atom_ids: &[usize],
-    formfactors: &BTreeMap<AtomKind, FormFactor>,
+    formfactors: &FormFactorMap,
     distance_matrix: &DMatrix<f64>,
     q: f64,
 ) -> Result<f64> {
@@ -86,7 +86,7 @@ fn intensity_sum(
 /// Average I(q) over a trajectory of structures
 pub fn calc_intensity_xtc(
     structure: &Structure,
-    formfactors: &BTreeMap<AtomKind, FormFactor>,
+    formfactors: &FormFactorMap,
     q_values: &[f64],
     xtc_path: &path::Path,
     weights: Option<&path::Path>,

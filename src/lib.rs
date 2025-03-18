@@ -61,6 +61,6 @@ impl Pripps {
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
         let direct = explicit::DirectTransform::new(pmax);
-        Ok(direct.eval(&structure.pos, side_lengths))
+        Ok(direct.eval(&structure, &self.formfactors, side_lengths))
     }
 }
