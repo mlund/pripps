@@ -20,6 +20,7 @@ use num_complex::Complex;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::iter::zip;
+use std::ops::Mul;
 use std::{cmp::Ordering, f64::consts::PI};
 
 /// Sample directions (h,k,l)
@@ -90,22 +91,32 @@ impl DirectTransform {
 
 /// Calculate intensity for given q vector
 fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMap) -> f64 {
-    let q_norm = q.norm();
-    let qr: Vec<f64> = structure.pos.iter().map(|r| q.dot(r)).collect();
+    let qr = structure.pos.iter().map(|r| q.dot(r));
+    let formfactors = convert_formfactors(q.norm(), &structure.ids, formfactors);
 
+    // Vector of (q dot r, f) tuples
+    let qr_f = zip(qr, formfactors).collect::<Vec<_>>();
+
+    let sum_cos = qr_f.iter().fold(0.0, |acc, (qr, f)| acc + qr.cos().mul(*f));
+    let sum_sin = qr_f.iter().fold(0.0, |acc, (qr, f)| acc + qr.sin().mul(*f));
+
+    Complex::new(sum_cos, sum_sin).norm_sqr()
+}
+
+/// Convert formfactors to F(q) for each atom in structure, i.e. vector of length N
+fn convert_formfactors(
+    q: f64,
+    atom_ids: &[usize],
+    formfactors: &FormFactorMap,
+) -> impl Iterator<Item = f64> {
     // F(q) for each atom kind
     let formfactors: Vec<f64> = formfactors
         .values()
-        .map(|ff| ff.eval(q_norm))
+        .map(|ff| ff.eval(q))
         .try_collect()
         .unwrap();
-    // F(q) for each atom id in given structure
-    let formfactors: Vec<f64> = structure.ids.iter().map(|i| formfactors[*i]).collect();
-
-    let sum_cos = zip(&formfactors, &qr).fold(0.0, |acc, (f, qr)| acc + qr.cos() * f);
-    let sum_sin = zip(&formfactors, &qr).fold(0.0, |acc, (f, qr)| acc + qr.sin() * f);
-
-    Complex::new(sum_cos, sum_sin).norm_sqr()
+    // F(q) for each atom in structure
+    atom_ids.iter().map(move |i| formfactors[*i])
 }
 
 /// Average duplicate q values, then sort by q
