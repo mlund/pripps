@@ -19,6 +19,16 @@ use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::collections::BTreeMap;
 
+/// Special hydrogen properties for form factors
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum HydrogenProperties {
+    /// Number of hydrogens (>=1)
+    N(usize),
+    /// Distance offset
+    Rh(f64),
+}
+
 /// Models for site form factors, F(q)
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum FormFactor {
@@ -36,13 +46,12 @@ pub enum FormFactor {
         ab: Vec<(f64, f64)>,
         /// Offset
         c: f64,
-        /// Optional h value
-        h: Option<f64>,
-        /// Optional rh value
-        rh: Option<f64>,
-        /// Optional r value
-        r: Option<f64>,
-        /// Optional dsv value
+        /// Optional hydrogen properties
+        #[serde(flatten)]
+        hydrogen: Option<HydrogenProperties>,
+        /// Optional radius
+        radius: Option<f64>,
+        /// Optional dsv value. TODO: What is dsv?
         dsv: Option<f64>,
     },
     /// F(q) is the same an another defined form factor
@@ -90,8 +99,6 @@ impl FormFactor {
                 }
             }
             Gaussian { ab, c, .. } => {
-                // https://doi.org/10.1107/s0108767395010038, Eq. 3
-                // TODO: Should c be inside or outside the sum?
                 ab.iter()
                     .map(|(a, b)| a * f64::exp(-b * q * q))
                     .sum::<f64>()
