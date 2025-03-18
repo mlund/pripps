@@ -92,9 +92,9 @@ impl DirectTransform {
 /// Calculate intensity for given q vector
 fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMap) -> f64 {
     let qr = structure.pos.iter().map(|r| q.dot(r));
-    let formfactors = convert_formfactors(q.norm(), &structure.ids, formfactors);
+    let formfactors = convert_formfactors(q.norm(), &structure.ids, formfactors).unwrap();
 
-    // Vector of (q dot r, f) tuples
+    // Vector of (𝙦⋅𝙧ᵢ, 𝘧ᵢ) tuples
     let qr_f = zip(qr, formfactors).collect::<Vec<_>>();
 
     let sum_cos = qr_f.iter().fold(0.0, |acc, (qr, f)| acc + qr.cos().mul(*f));
@@ -103,20 +103,16 @@ fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMa
     Complex::new(sum_cos, sum_sin).norm_sqr()
 }
 
-/// Convert formfactors to F(q) for each atom in structure, i.e. vector of length N
+/// Convert formfactor map to F(q) for each atom in structure
 fn convert_formfactors(
     q: f64,
     atom_ids: &[usize],
     formfactors: &FormFactorMap,
-) -> impl Iterator<Item = f64> {
+) -> anyhow::Result<impl Iterator<Item = f64>> {
     // F(q) for each atom kind
-    let formfactors: Vec<f64> = formfactors
-        .values()
-        .map(|ff| ff.eval(q))
-        .try_collect()
-        .unwrap();
+    let formfactors: Vec<f64> = formfactors.values().map(|ff| ff.eval(q)).try_collect()?;
     // F(q) for each atom in structure
-    atom_ids.iter().map(move |i| formfactors[*i])
+    Ok(atom_ids.iter().map(move |i| formfactors[*i]))
 }
 
 /// Average duplicate q values, then sort by q
