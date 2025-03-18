@@ -26,12 +26,9 @@ use std::path::PathBuf;
 /// LASR - Labbot Application Server
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Calculate scattering intensity using the Debye formula
+    /// Scattering intensity using the Debye formula
     #[clap()]
     Debye {
-        /// XYZ structure file
-        #[clap(short, long)]
-        input: PathBuf,
         /// Minimum q value (1/Å)
         #[clap(long, default_value = "0.0")]
         qmin: f64,
@@ -39,29 +36,17 @@ pub enum Commands {
         #[clap(long, default_value = "0.75")]
         qmax: f64,
         /// Number of q values
-        #[clap(long, default_value = "20")]
+        #[clap(long, default_value = "100")]
         nq: usize,
-        /// Output file with I(q)
-        #[clap(short = 'o', long, default_value = "intensity.dat")]
-        output: PathBuf,
-        /// Optional .xtc trajectory file with structures to average over
-        #[clap(short = 'x', long)]
-        xtcfile: Option<PathBuf>,
-        /// Optional file with weights for each frame in XTC file (one weight per line)
-        #[clap(short = 'w', long, requires = "xtcfile")]
-        weights: Option<PathBuf>,
     },
-    /// Calculate scattering intensity using explicit q vectors
+    /// Scattering intensity using discrete q vectors
     Direct {
-        /// XYZ structure file
-        #[clap(short, long)]
-        input: PathBuf,
-        /// Maximum Miller index
+        /// Number of Miller index multiplications
         #[clap(short = 'p', long, default_value = "6")]
         pmax: usize,
-        /// Output file with I(q)
-        #[clap(short = 'o', long, default_value = "intensity.dat")]
-        output: PathBuf,
+        /// Cubic box side length (Å)
+        #[clap(short = 'b', long = "box", default_value = "200.0")]
+        side_length: f64,
     },
 }
 #[derive(Parser)]
@@ -77,7 +62,23 @@ pub struct Args {
 
     /// Form factor definitions for species (atoms, residues, etc.)
     #[clap(long, short = 'a')]
-    pub atomfile: Option<PathBuf>,
+    pub atomfile: PathBuf,
+
+    /// XYZ structure file
+    #[clap(short = 'i', long)]
+    input: PathBuf,
+
+    /// Output file with I(q)
+    #[clap(short = 'o', long, default_value = "intensity.dat")]
+    output: PathBuf,
+
+    /// Optional .xtc trajectory file with structures to average over
+    #[clap(short = 'x', long)]
+    xtcfile: Option<PathBuf>,
+
+    /// Optional file with weights for each frame in XTC file (one weight per line)
+    #[clap(short = 'w', long, requires = "xtcfile")]
+    weights: Option<PathBuf>,
 
     /// Verbose output. See more with e.g. RUST_LOG=Trace
     #[clap(long, short = 'v', action)]
@@ -95,40 +96,25 @@ pub fn do_main() -> Result<()> {
     }
     pretty_env_logger::init();
 
-    let pripps = match &args.atomfile {
-        Some(atompath) => Pripps::from_yaml(atompath)?,
-        None => anyhow::bail!("missing formfactor file"),
-    };
+    let pripps = Pripps::from_yaml(&args.atomfile)?;
 
     match args.command {
-        cli::Commands::Debye {
-            input: xyz_path,
-            qmin,
-            qmax,
-            nq,
-            output: intensity_path,
-            xtcfile,
-            weights,
-        } => {
+        cli::Commands::Debye { qmin, qmax, nq } => {
             log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
 
             let q_values = make_q_values(qmin, qmax, nq);
             let intensity = pripps.debye_intensities(
-                &xyz_path,
+                &args.input,
                 &q_values,
-                xtcfile.as_deref(),
-                weights.as_deref(),
+                args.xtcfile.as_deref(),
+                args.weights.as_deref(),
             )?;
-            write_table(&intensity_path, &intensity, Some("# q/Å I(q)"))?;
+            write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
         }
-        cli::Commands::Direct {
-            input,
-            pmax,
-            output,
-        } => {
-            let side_lengths = crate::Vector3::new(50.0, 50.0, 50.0);
-            let intensity = pripps.direct_intensities(&input, pmax, &side_lengths)?;
-            write_table(&output, &intensity, Some("# q/Å I(q)"))?;
+        cli::Commands::Direct { pmax, side_length } => {
+            let side_lengths = crate::Vector3::new(side_length, side_length, side_length);
+            let intensity = pripps.direct_intensities(&args.input, pmax, &side_lengths)?;
+            write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
         }
     };
     Ok(())

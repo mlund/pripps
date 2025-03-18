@@ -31,9 +31,9 @@ An input structure may use arbitrary combinations of the following form factor m
 
 Description                                | YAML example
 ------------------------------------------ | ----------------------------------
-𝐹(𝑞) = 𝑐                                    | `!Constant 1.0`
-𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                   | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, ...] }`
-𝐹(𝑞) = ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²) + 𝑐                     | `!Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [...], ...], c: 0.4, ...}`
+𝐹(𝑞) = 𝑐                                   | `!Constant 1.0`
+𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                  | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, ...] }`
+𝐹(𝑞) = ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²) + 𝑐                  | `!Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [...], ...], c: 0.4, ...}`
 Array of `[𝑞, 𝐹(𝑞)]` pairs                 | `!Table [ [0.0, 8.9], ... ]`
 Alias for a previously defined form factor | `!Alias LYS`
-[Nine coefficient approximation](https://doi.org/10.1107/S0108767395010038) (four a-b pairs + c) | `!NineCoeff { qrange: [0.0, 1.0], ab: [ [0.5, 0.7], .. ], c = 2.0 }`
+
