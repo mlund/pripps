@@ -75,12 +75,12 @@ fn intensity_sum(
         }
     }
 
-    let trace: f64 = atom_ids
+    let diagonal: f64 = atom_ids
         .iter()
         .map(|&id| formfactor_product[(id, id)])
         .sum();
 
-    Ok((2.0 * off_diagonal + trace) / n_atoms as f64)
+    Ok(2.0 * off_diagonal + diagonal)
 }
 
 /// Average I(q) over a trajectory of structures
@@ -92,10 +92,10 @@ pub fn calc_intensity_xtc(
     weights: Option<&path::Path>,
 ) -> Result<Vec<(f64, f64)>> {
     let reader = XtcIterator::open(xtc_path, weights)?;
+    let num_frames = reader.num_frames;
     let mut mean: Vec<(f64, f64)> = q_values.iter().map(|&q| (q, 0.0)).collect();
     let mut structure = structure.clone();
-    let num_frames = reader.num_frames;
-    let pb = ProgressBar::new(reader.num_frames as u64);
+    let progress = ProgressBar::new(reader.num_frames as u64);
 
     log::info!("Averaging 𝐼(𝑞) over {num_frames} frames, ignoring PBC information");
 
@@ -105,7 +105,7 @@ pub fn calc_intensity_xtc(
         for ((_, m), (_, i)) in zip(mean.iter_mut(), intensity) {
             *m += weight * i / num_frames as f64;
         }
-        pb.inc(1);
+        progress.inc(1);
     }
     Ok(mean)
 }

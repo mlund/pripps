@@ -111,6 +111,7 @@ fn average_duplicates(v: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
         .into_iter()
         .map(|(rounded_x, (sum_y, count))| (rounded_x as f64 / 10f64.powi(6), sum_y / count as f64))
         .collect::<Vec<_>>();
+
     table.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
     table
 }
