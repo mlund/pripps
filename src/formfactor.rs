@@ -28,14 +28,22 @@ pub enum FormFactor {
     Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
     /// F(q) given by a list of `(q, F)` pairs
     Table(Vec<(f64, f64)>),
-    /// Nine-coefficient exponential (Guo 1995, doi:10.1107/s0108767395010038, Eq. 3)
-    NineCoeff {
+    /// Multiple exponential (Guo 1995, doi:10.1107/s0108767395010038, Eq. 3)
+    Gaussian {
         /// Valid q range, inclusive
         qrange: (f64, f64),
-        /// (a, b) pairs for each of the four exponential terms
-        ab: [(f64, f64); 4],
+        /// List of (a, b) pairs for each of the exponential terms a * exp(-b * q^2)
+        ab: Vec<(f64, f64)>,
         /// Offset
         c: f64,
+        /// Optional h value
+        h: Option<f64>,
+        /// Optional rh value
+        rh: Option<f64>,
+        /// Optional r value
+        r: Option<f64>,
+        /// Optional dsv value
+        dsv: Option<f64>,
     },
     /// F(q) is the same an another defined form factor
     Alias(String),
@@ -47,7 +55,7 @@ impl FormFactor {
         use FormFactor::*;
         match self {
             Constant(_) | Alias(_) => true,
-            NineCoeff { qrange, .. } => q >= qrange.0 && q <= qrange.1,
+            Gaussian { qrange, .. } => q >= qrange.0 && q <= qrange.1,
             Polynomial { qrange, .. } => q >= qrange.0 && q <= qrange.1,
             Table(table) => q >= table[0].0 && q <= table[table.len() - 1].0,
         }
@@ -81,7 +89,7 @@ impl FormFactor {
                     f1 + (f2 - f1) * (q - q1) / (q2 - q1)
                 }
             }
-            NineCoeff { ab, c, .. } => {
+            Gaussian { ab, c, .. } => {
                 // https://doi.org/10.1107/s0108767395010038, Eq. 3
                 // TODO: Should c be inside or outside the sum?
                 ab.iter()
