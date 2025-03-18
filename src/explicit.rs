@@ -15,6 +15,7 @@
 //! Explicit calculation using discrete q vector
 
 use crate::{Structure, Vector3, formfactor::FormFactorMap};
+use anyhow::Result;
 use itertools::Itertools;
 use num_complex::Complex;
 use rayon::prelude::*;
@@ -83,16 +84,21 @@ impl DirectTransform {
             .directions
             .par_iter()
             .map(|dir| dir.component_div(side_lengths))
-            .map(|q| (q.norm(), calc_intensity(&q, structure, formfactors)))
+            .map(|q| {
+                (
+                    q.norm(),
+                    calc_intensity(&q, structure, formfactors).unwrap(),
+                )
+            })
             .collect::<Vec<_>>();
         average_duplicates(table)
     }
 }
 
 /// Calculate intensity for given q vector
-fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMap) -> f64 {
+fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMap) -> Result<f64> {
     let qr = structure.pos.iter().map(|r| q.dot(r));
-    let formfactors = convert_formfactors(q.norm(), &structure.ids, formfactors).unwrap();
+    let formfactors = convert_formfactors(q.norm(), &structure.ids, formfactors)?;
 
     // Vector of (𝙦⋅𝙧ᵢ, 𝘧ᵢ) tuples
     let qr_f = zip(qr, formfactors).collect::<Vec<_>>();
@@ -100,7 +106,7 @@ fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMa
     let sum_cos = qr_f.iter().fold(0.0, |acc, (qr, f)| acc + qr.cos().mul(*f));
     let sum_sin = qr_f.iter().fold(0.0, |acc, (qr, f)| acc + qr.sin().mul(*f));
 
-    Complex::new(sum_cos, sum_sin).norm_sqr()
+    Ok(Complex::new(sum_cos, sum_sin).norm_sqr())
 }
 
 /// Convert formfactor map to F(q) for each atom in structure
@@ -108,7 +114,7 @@ fn convert_formfactors(
     q: f64,
     atom_ids: &[usize],
     formfactors: &FormFactorMap,
-) -> anyhow::Result<impl Iterator<Item = f64>> {
+) -> Result<impl Iterator<Item = f64>> {
     // F(q) for each atom kind
     let formfactors: Vec<f64> = formfactors.values().map(|ff| ff.eval(q)).try_collect()?;
     // F(q) for each atom in structure
