@@ -18,11 +18,10 @@ use trajectory::{XtcIterator, get_side_lengths};
 
 pub trait IntensityCalculator {
     /// Calculate I(q) for a single structure
-    fn calc_intensities(
-        &self,
-        structure: &Structure,
-        side_lengths: Option<Vector3>,
-    ) -> Result<Vec<(f64, f64)>>;
+    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
+
+    /// Set the side lengths of the box if applicable
+    fn set_side_lengths(&self, _side_lengths: Vector3) {}
 
     /// Average I(q) over a trajectory of structures
     fn calc_intensities_xtc(
@@ -43,8 +42,10 @@ pub trait IntensityCalculator {
         for (frame, weight) in reader {
             structure.set_positions(&frame)?;
 
-            let side_lengths = get_side_lengths(&frame);
-            let intensity = self.calc_intensities(&structure, side_lengths)?;
+            if let Some(side_length) = get_side_lengths(&frame) {
+                self.set_side_lengths(side_length);
+            }
+            let intensity = self.calc_intensities(&structure)?;
 
             if mean_intensity.is_empty() {
                 mean_intensity = intensity.iter().map(|(q, _)| (*q, 0.0)).collect();
@@ -86,7 +87,7 @@ impl Pripps {
     /// (the original structure is not part of the average).
     pub fn calc_intensities(
         &self,
-        method: impl IntensityCalculator,
+        method: &dyn IntensityCalculator,
         xyzfile: &std::path::Path,
         xtcfile: Option<&path::Path>,
         weight_path: Option<&path::Path>,
@@ -99,7 +100,7 @@ impl Pripps {
             }
             method.calc_intensities_xtc(&structure, xtcfile, weight_path)
         } else {
-            method.calc_intensities(&structure, side_lengths)
+            method.calc_intensities(&structure)
         }
     }
 }

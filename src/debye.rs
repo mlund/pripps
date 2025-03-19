@@ -13,7 +13,7 @@
 // limitations under the license.
 
 use crate::{
-    IntensityCalculator, Structure, Vector3,
+    IntensityCalculator, Structure,
     formfactor::{self, FormFactorMap},
 };
 use anyhow::Result;
@@ -36,11 +36,7 @@ impl DebyeIntensity {
 
 impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
-    fn calc_intensities(
-        &self,
-        structure: &Structure,
-        _: Option<Vector3>,
-    ) -> Result<Vec<(f64, f64)>> {
+    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
         let distance_matrix = structure.distance_matrix();
         let intensities = self
             .q_values

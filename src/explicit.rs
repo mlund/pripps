@@ -22,6 +22,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Mul;
+use std::sync;
 use std::{cmp::Ordering, f64::consts::PI};
 
 /// Sample directions (h,k,l)
@@ -51,27 +52,21 @@ const DIRECTIONS: [Vector3; 13] = [
 /// - http://doi.org/10.1063/1.449987
 ///
 /// @TODO: Add form factors
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct DirectTransform {
     /// q directions; divided by box side lengths to get q
     directions: Vec<Vector3>,
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
+    /// Cuboidal box side lengths
+    side_lengths: sync::RwLock<Vector3>,
 }
 
 impl IntensityCalculator for DirectTransform {
     /// Calculate I(q) for a given structure inside cuboidal box
-    fn calc_intensities(
-        &self,
-        structure: &Structure,
-        side_lengths: Option<Vector3>,
-    ) -> Result<Vec<(f64, f64)>> {
-        let Some(side_lengths) = side_lengths else {
-            anyhow::bail!("Box side lengths must be provided");
-        };
-
+    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
+        let side_lengths = self.side_lengths.read().unwrap();
         let intensity = |q: Vector3| calc_intensity(&q, structure, &self.formfactors).unwrap();
-
         let table: Vec<(f64, f64)> = self
             .directions
             .par_iter()
@@ -84,7 +79,7 @@ impl IntensityCalculator for DirectTransform {
 }
 
 impl DirectTransform {
-    pub fn new(formfactors: FormFactorMap, p_max: usize) -> Self {
+    pub fn new(formfactors: FormFactorMap, p_max: usize, side_lengths: Vector3) -> Self {
         let directions: Vec<_> = DIRECTIONS
             .iter()
             .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
@@ -99,6 +94,7 @@ impl DirectTransform {
         Self {
             formfactors,
             directions,
+            side_lengths: side_lengths.into(),
         }
     }
 }

@@ -14,7 +14,9 @@
 
 //! Definition of command line interfaces (CLI)
 
-use crate::{Pripps, cli};
+use crate::debye::DebyeIntensity;
+use crate::explicit::DirectTransform;
+use crate::{IntensityCalculator, Pripps, Vector3, cli};
 use anyhow::Result;
 use clap::{Parser, Subcommand, builder::styling::AnsiColor};
 
@@ -98,33 +100,28 @@ pub fn do_main() -> Result<()> {
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
 
-    match args.command {
+    let method = match args.command {
         cli::Commands::Debye { qmin, qmax, nq } => {
             log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
-            let method =
-                crate::debye::DebyeIntensity::new(pripps.formfactors.clone(), (qmin, qmax), nq)?;
-            let intensity = pripps.calc_intensities(
-                method,
-                &args.input,
-                args.xtcfile.as_deref(),
-                args.weights.as_deref(),
-                None,
-            )?;
-            write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
+            let method = DebyeIntensity::new(pripps.formfactors.clone(), (qmin, qmax), nq)?;
+            Box::new(method) as Box<dyn IntensityCalculator>
         }
         cli::Commands::Direct { pmax, side_length } => {
-            let side_lengths = crate::Vector3::new(side_length, side_length, side_length);
-            let method = crate::explicit::DirectTransform::new(pripps.formfactors.clone(), pmax);
-            let intensity = pripps.calc_intensities(
-                method,
-                &args.input,
-                args.xtcfile.as_deref(),
-                args.weights.as_deref(),
-                Some(side_lengths),
-            )?;
-            write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
+            let side_lengths = Vector3::new(side_length, side_length, side_length);
+            let method = DirectTransform::new(pripps.formfactors.clone(), pmax, side_lengths);
+            Box::new(method) as Box<dyn IntensityCalculator>
         }
     };
+
+    let intensity = pripps.calc_intensities(
+        method.as_ref(),
+        &args.input,
+        args.xtcfile.as_deref(),
+        args.weights.as_deref(),
+        None,
+    )?;
+    write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
+
     Ok(())
 }
 
