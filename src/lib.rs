@@ -61,10 +61,13 @@ pub trait IntensityCalculator {
     }
 }
 
-/// Get side lengths from a frame
+/// Get side lengths from a frame (Å)
+///
+/// This assumed that values are in nm and converts to Å
 fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
+    const ANGSTROM_PER_NM: f64 = 10.0;
     let b = frame.boxvec.to_cols_array_2d();
-    let b = Vector3::new(b[0][0] as f64, b[1][1] as f64, b[2][2] as f64);
+    let b = ANGSTROM_PER_NM * Vector3::new(b[0][0] as f64, b[1][1] as f64, b[2][2] as f64);
     log::trace!("frame side-length = {:?}", b);
     if b.norm() < 1e-6 { None } else { Some(b) }
 }

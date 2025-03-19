@@ -79,8 +79,10 @@ impl Structure {
         if frame.natoms() != self.pos.len() {
             bail!("number of atoms in structure does not match trajectory frame");
         }
+        const ANGSTROM_PER_NM: f64 = 10.0;
         for (pos, new_pos) in self.pos.iter_mut().zip(frame.coords()) {
-            *pos = Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
+            *pos = ANGSTROM_PER_NM
+                * Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
         }
         Ok(())
     }
