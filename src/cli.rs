@@ -101,36 +101,31 @@ pub fn do_main() -> Result<()> {
     match args.command {
         cli::Commands::Debye { qmin, qmax, nq } => {
             log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
-
-            let q_values = make_q_values(qmin, qmax, nq);
-            let intensity = pripps.debye_intensities(
+            let method =
+                crate::debye::DebyeIntensity::new(pripps.formfactors.clone(), (qmin, qmax), nq)?;
+            let intensity = pripps.calc_intensities(
+                method,
                 &args.input,
-                &q_values,
                 args.xtcfile.as_deref(),
                 args.weights.as_deref(),
+                None,
             )?;
             write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
         }
         cli::Commands::Direct { pmax, side_length } => {
             let side_lengths = crate::Vector3::new(side_length, side_length, side_length);
-            let intensity = pripps.direct_intensities(
+            let method = crate::explicit::DirectTransform::new(pripps.formfactors.clone(), pmax);
+            let intensity = pripps.calc_intensities(
+                method,
                 &args.input,
-                pmax,
-                &side_lengths,
                 args.xtcfile.as_deref(),
                 args.weights.as_deref(),
+                Some(side_lengths),
             )?;
             write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
         }
     };
     Ok(())
-}
-
-/// Generate a list of q values from qmin to qmax
-fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
-    (0..nq)
-        .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
-        .collect()
 }
 
 /// Write f(x) to a file

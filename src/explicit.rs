@@ -104,6 +104,8 @@ impl DirectTransform {
 }
 
 /// Calculate intensity for given q vector
+///
+/// See https://doi.org/10.1103/PhysRevE.62.5409 for a potential optimization
 fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMap) -> Result<f64> {
     let qr = structure.pos.iter().map(|r| q.dot(r));
     let formfactors = convert_formfactors(q.norm(), &structure.ids, formfactors)?;
