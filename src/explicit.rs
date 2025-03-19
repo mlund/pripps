@@ -14,7 +14,7 @@
 
 //! Explicit calculation using discrete q vector
 
-use crate::{Structure, Vector3, formfactor::FormFactorMap};
+use crate::{IntensityCalculator, Structure, Vector3, formfactor::FormFactorMap};
 use anyhow::Result;
 use itertools::Itertools;
 use num_complex::Complex;
@@ -55,10 +55,36 @@ const DIRECTIONS: [Vector3; 13] = [
 pub struct DirectTransform {
     /// q directions; divided by box side lengths to get q
     directions: Vec<Vector3>,
+    /// Form factors for each atom kind
+    formfactors: FormFactorMap,
+}
+
+impl IntensityCalculator for DirectTransform {
+    /// Calculate I(q) for a given structure inside cuboidal box
+    fn calc_intensities(
+        &self,
+        structure: &Structure,
+        side_lengths: Option<Vector3>,
+    ) -> Result<Vec<(f64, f64)>> {
+        let Some(side_lengths) = side_lengths else {
+            anyhow::bail!("Box side lengths must be provided");
+        };
+
+        let intensity = |q: Vector3| calc_intensity(&q, structure, &self.formfactors).unwrap();
+
+        let table: Vec<(f64, f64)> = self
+            .directions
+            .par_iter()
+            .map(|dir| dir.component_div(&side_lengths))
+            .map(|q| (q.norm(), intensity(q)))
+            .collect();
+
+        Ok(average_duplicates(table))
+    }
 }
 
 impl DirectTransform {
-    pub fn new(p_max: usize) -> Self {
+    pub fn new(formfactors: FormFactorMap, p_max: usize) -> Self {
         let directions: Vec<_> = DIRECTIONS
             .iter()
             .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
@@ -70,26 +96,10 @@ impl DirectTransform {
             p_max
         );
 
-        Self { directions }
-    }
-
-    /// Calculate I(q) for a given structure inside cuboidal box
-    pub fn eval(
-        &self,
-        structure: &Structure,
-        formfactors: &FormFactorMap,
-        side_lengths: Vector3,
-    ) -> Result<Vec<(f64, f64)>> {
-        let intensity = |q: Vector3| calc_intensity(&q, structure, formfactors).unwrap();
-
-        let table: Vec<(f64, f64)> = self
-            .directions
-            .par_iter()
-            .map(|dir| dir.component_div(&side_lengths))
-            .map(|q| (q.norm(), intensity(q)))
-            .collect();
-
-        Ok(average_duplicates(table))
+        Self {
+            formfactors,
+            directions,
+        }
     }
 }
 

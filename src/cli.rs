@@ -113,7 +113,13 @@ pub fn do_main() -> Result<()> {
         }
         cli::Commands::Direct { pmax, side_length } => {
             let side_lengths = crate::Vector3::new(side_length, side_length, side_length);
-            let intensity = pripps.direct_intensities(&args.input, pmax, &side_lengths)?;
+            let intensity = pripps.direct_intensities(
+                &args.input,
+                pmax,
+                &side_lengths,
+                args.xtcfile.as_deref(),
+                args.weights.as_deref(),
+            )?;
             write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
         }
     };

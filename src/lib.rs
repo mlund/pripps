@@ -117,9 +117,15 @@ impl Pripps {
         xyzfile: &std::path::Path,
         pmax: usize,
         side_lengths: &Vector3,
+        xtcfile: Option<&path::Path>,
+        weight_path: Option<&path::Path>,
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
-        let direct = explicit::DirectTransform::new(pmax);
-        direct.eval(&structure, &self.formfactors, *side_lengths)
+        let direct = explicit::DirectTransform::new(self.formfactors.clone(), pmax);
+        if let Some(xtcfile) = xtcfile {
+            direct.calc_intensities_xtc(&structure, xtcfile, weight_path)
+        } else {
+            direct.calc_intensities(&structure, Some(*side_lengths))
+        }
     }
 }
