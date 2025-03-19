@@ -1,21 +1,24 @@
 pub mod cli;
-pub mod debye;
+mod debye;
 pub mod explicit;
 mod structure;
 mod trajectory;
 use anyhow::{Result, bail};
+use debye::DebyeIntensity;
+use explicit::DirectTransform;
 use indicatif::ProgressBar;
 use std::collections::BTreeMap;
 use std::iter::zip;
-use std::path::{self, PathBuf};
+use std::path::{self, Path};
+use trajectory::{XtcIterator, get_side_lengths};
 
 pub use structure::Structure;
 pub mod formfactor;
 pub use faunus::Point as Vector3;
 pub use faunus::topology::{AtomKind, AtomKindBuilder};
 pub use formfactor::FormFactor;
-use trajectory::{XtcIterator, get_side_lengths};
 
+/// Trait for calculating scattering intensities
 pub trait IntensityCalculator {
     /// Calculate I(q) for a single structure
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
@@ -72,13 +75,29 @@ pub struct Pripps {
 
 impl Pripps {
     /// Create a new a YAML file with form factors
-    pub fn from_yaml(path: &PathBuf) -> Result<Self> {
+    pub fn from_yaml(path: &Path) -> Result<Self> {
         let formfactors = formfactor::read_formfactors(path)?;
         let atomkinds = formfactors.keys().cloned().collect::<Vec<AtomKind>>();
         Ok(Self {
             formfactors,
             atomkinds,
         })
+    }
+
+    pub fn make_method(&self, command: cli::Commands) -> Result<Box<dyn IntensityCalculator>> {
+        use cli::Commands::*;
+        match command {
+            Debye { qmin, qmax, nq } => {
+                log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
+                let method = DebyeIntensity::new(self.formfactors.clone(), (qmin, qmax), nq)?;
+                Ok(Box::new(method) as Box<dyn IntensityCalculator>)
+            }
+            Direct { pmax, side_length } => {
+                let side_lengths = Vector3::new(side_length, side_length, side_length);
+                let method = DirectTransform::new(self.formfactors.clone(), pmax, side_lengths);
+                Ok(Box::new(method) as Box<dyn IntensityCalculator>)
+            }
+        }
     }
 
     /// Calculate I(q) for a given structure using the Debye formula

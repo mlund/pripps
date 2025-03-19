@@ -113,7 +113,7 @@ impl FormFactor {
 }
 
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
-pub fn read_formfactors(path: &std::path::PathBuf) -> Result<FormFactorMap> {
+pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     let file =
         std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
 

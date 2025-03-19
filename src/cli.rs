@@ -14,9 +14,7 @@
 
 //! Definition of command line interfaces (CLI)
 
-use crate::debye::DebyeIntensity;
-use crate::explicit::DirectTransform;
-use crate::{IntensityCalculator, Pripps, Vector3, cli};
+use crate::{Pripps, cli};
 use anyhow::Result;
 use clap::{Parser, Subcommand, builder::styling::AnsiColor};
 
@@ -25,7 +23,7 @@ use std::env::set_var;
 use std::io::Write;
 use std::path::PathBuf;
 
-/// LASR - Labbot Application Server
+/// Commands
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Scattering intensity using the Debye formula
@@ -99,19 +97,7 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
-
-    let method = match args.command {
-        cli::Commands::Debye { qmin, qmax, nq } => {
-            log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
-            let method = DebyeIntensity::new(pripps.formfactors.clone(), (qmin, qmax), nq)?;
-            Box::new(method) as Box<dyn IntensityCalculator>
-        }
-        cli::Commands::Direct { pmax, side_length } => {
-            let side_lengths = Vector3::new(side_length, side_length, side_length);
-            let method = DirectTransform::new(pripps.formfactors.clone(), pmax, side_lengths);
-            Box::new(method) as Box<dyn IntensityCalculator>
-        }
-    };
+    let method = pripps.make_method(args.command)?;
 
     let intensity = pripps.calc_intensities(
         method.as_ref(),
