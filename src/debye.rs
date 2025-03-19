@@ -12,27 +12,44 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::{Structure, XtcIterator, formfactor, formfactor::FormFactorMap};
+use crate::{IntensityCalculator, Structure, formfactor, formfactor::FormFactorMap};
 use anyhow::Result;
-use indicatif::ProgressBar;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
-use std::{iter::zip, path};
 
-/// Calculate I(q) over a range of q values using the Debye formula
-pub fn calc_intensity(
-    structure: &Structure,
-    formfactors: &FormFactorMap,
-    q_values: &[f64],
-) -> Result<Vec<(f64, f64)>> {
-    let distance_matrix = structure.distance_matrix();
+pub struct DebyeIntensity {
+    q_values: Vec<f64>,
+    formfactors: FormFactorMap,
+}
 
-    let intensities = q_values
-        .par_iter()
-        .map(|q| intensity_at_q(&structure.ids, formfactors, &distance_matrix, *q))
-        .collect::<Result<Vec<f64>>>()?;
+impl DebyeIntensity {
+    pub fn new(formfactors: FormFactorMap, q_minmax: (f64, f64), num_q: usize) -> Result<Self> {
+        Ok(Self {
+            q_values: make_q_values(q_minmax.0, q_minmax.1, num_q),
+            formfactors,
+        })
+    }
+}
 
-    Ok(q_values.iter().cloned().zip(intensities).collect())
+impl IntensityCalculator for DebyeIntensity {
+    /// Calculate I(q) over a range of q values using the Debye formula
+    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
+        let distance_matrix = structure.distance_matrix();
+        let intensities = self
+            .q_values
+            .par_iter()
+            .map(|q| intensity_at_q(&structure.ids, &self.formfactors, &distance_matrix, *q))
+            .collect::<Result<Vec<f64>>>()?;
+
+        Ok(self.q_values.iter().cloned().zip(intensities).collect())
+    }
+}
+
+/// Generate a list of q values from qmin to qmax
+fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
+    (0..nq)
+        .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
+        .collect()
 }
 
 /// Calculate I(q) using the Debye formula
@@ -81,31 +98,4 @@ fn intensity_sum(
         .sum();
 
     Ok(2.0 * off_diagonal + diagonal)
-}
-
-/// Average I(q) over a trajectory of structures
-pub fn calc_intensity_xtc(
-    structure: &Structure,
-    formfactors: &FormFactorMap,
-    q_values: &[f64],
-    xtc_path: &path::Path,
-    weights: Option<&path::Path>,
-) -> Result<Vec<(f64, f64)>> {
-    let reader = XtcIterator::open(xtc_path, weights)?;
-    let num_frames = reader.num_frames;
-    let mut mean: Vec<(f64, f64)> = q_values.iter().map(|&q| (q, 0.0)).collect();
-    let mut structure = structure.clone();
-    let progress = ProgressBar::new(reader.num_frames as u64);
-
-    log::info!("Averaging 𝐼(𝑞) over {num_frames} frames, ignoring PBC information");
-
-    for (frame, weight) in reader {
-        structure.set_positions(&frame)?;
-        let intensity = calc_intensity(&structure, formfactors, q_values)?;
-        for ((_, m), (_, i)) in zip(mean.iter_mut(), intensity) {
-            *m += weight * i / num_frames as f64;
-        }
-        progress.inc(1);
-    }
-    Ok(mean)
 }
