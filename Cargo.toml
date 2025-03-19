@@ -13,6 +13,7 @@ keywords = ["debye_formula", "chemistry", "scattering_intensity", "proteins"]
 
 [dependencies]
 anyhow = "1.0.97"
+chemfiles = "0.10.41"
 clap = { version = "4.5.32", features = ["derive"] }
 faunus = { git = "https://github.com/mlund/faunus-rs" }
 indicatif = { version = "0.17.11" }

@@ -33,31 +33,27 @@ pub struct Structure {
 }
 
 impl Structure {
-    /// Constructs a new structure from an XYZ file, centering the structure at the origin
-    pub fn from_xyz(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
-        let nxyz: Vec<_> = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("couldn't read XYZ file {}: {e}", path.display()))?
-            .lines()
-            .skip(2) // skip header
-            .map(from_xyz_line)
-            .try_collect()?;
+    /// Constructs a new structure from a file using chemfiles
+    pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
+        let mut traj = chemfiles::Trajectory::open(path, 'r')
+            .context(format!("couldn't open file {}", path.display()))?;
 
-        let atom_ids = nxyz
-            .iter()
-            .map(|(name, _)| {
+        let to_vector3 = |pos: &[_; 3]| Vector3::new(pos[0], pos[1], pos[2]);
+
+        let mut frame = chemfiles::Frame::new();
+        traj.read(&mut frame)?;
+
+        let pos = frame.positions().iter().map(to_vector3).collect();
+        let ids = frame
+            .iter_atoms()
+            .map(|atom| {
                 atomkinds
-                    .find_name(name)
+                    .find_name(&atom.name())
                     .map(|kind| kind.id())
-                    .context(format!("Unknown atom name in structure file: {name}"))
+                    .context(format!("unknown atom name in file: {:?}", atom.name()))
             })
             .try_collect()?;
-
-        let structure = Self {
-            pos: nxyz.iter().map(|(_, pos)| *pos).collect(),
-            ids: atom_ids,
-        };
-        log::info!("Read structure {}: {}", path.display(), structure);
-        Ok(structure)
+        Ok(Self { pos, ids })
     }
 
     /// Calculate N x N distance matrix
@@ -92,17 +88,5 @@ impl Structure {
 impl Display for Structure {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "𝑁={}", self.pos.len())
-    }
-}
-
-/// Parse a single line from an XYZ file
-fn from_xyz_line(line: &str) -> Result<(String, Vector3)> {
-    if let Some([name, x, y, z]) = line.split_whitespace().collect_array() {
-        Ok((
-            name.to_string(),
-            Vector3::new(x.parse()?, y.parse()?, z.parse()?),
-        ))
-    } else {
-        bail!("'name x y z' expected in XYZ record: {}", line);
     }
 }

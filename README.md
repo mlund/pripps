@@ -8,7 +8,6 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 - Multiple form factor models
 - Multithreaded
 - Weighted trajectory averaging
-- File formats: `xyz`, `xtc`
 - Unit tested
 - Excessive error handling and memory safetiness
 
@@ -36,4 +35,3 @@ Description                                | YAML example
 𝐹(𝑞) = ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²) + 𝑐                  | `!Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [...], ...], c: 0.4, ...}`
 Array of `[𝑞, 𝐹(𝑞)]` pairs                 | `!Table [ [0.0, 8.9], ... ]`
 Alias for a previously defined form factor | `!Alias LYS`
-

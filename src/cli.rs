@@ -66,7 +66,7 @@ pub struct Args {
     #[clap(long, short = 'a')]
     pub atomfile: PathBuf,
 
-    /// XYZ structure file
+    /// Input structure (xyz, pdb, gro etc.)
     #[clap(short = 'i', long)]
     input: PathBuf,
 

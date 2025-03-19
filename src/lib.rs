@@ -93,7 +93,7 @@ impl Pripps {
         weight_path: Option<&path::Path>,
         side_lengths: Option<Vector3>,
     ) -> Result<Vec<(f64, f64)>> {
-        let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
+        let structure = Structure::from_file(xyzfile, &self.atomkinds)?;
         if let Some(xtcfile) = xtcfile {
             if side_lengths.is_some() {
                 bail!("manual box length cannot be used with trajectories");
