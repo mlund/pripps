@@ -78,20 +78,18 @@ impl DirectTransform {
         &self,
         structure: &Structure,
         formfactors: &FormFactorMap,
-        side_lengths: &Vector3,
-    ) -> Vec<(f64, f64)> {
-        let table = self
+        side_lengths: Vector3,
+    ) -> Result<Vec<(f64, f64)>> {
+        let intensity = |q: Vector3| calc_intensity(&q, structure, formfactors).unwrap();
+
+        let table: Vec<(f64, f64)> = self
             .directions
             .par_iter()
-            .map(|dir| dir.component_div(side_lengths))
-            .map(|q| {
-                (
-                    q.norm(),
-                    calc_intensity(&q, structure, formfactors).unwrap(),
-                )
-            })
-            .collect::<Vec<_>>();
-        average_duplicates(table)
+            .map(|dir| dir.component_div(&side_lengths))
+            .map(|q| (q.norm(), intensity(q)))
+            .collect();
+
+        Ok(average_duplicates(table))
     }
 }
 

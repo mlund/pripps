@@ -12,7 +12,10 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::{IntensityCalculator, Structure, formfactor, formfactor::FormFactorMap};
+use crate::{
+    IntensityCalculator, Structure, Vector3,
+    formfactor::{self, FormFactorMap},
+};
 use anyhow::Result;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
@@ -32,10 +35,12 @@ impl DebyeIntensity {
 }
 
 impl IntensityCalculator for DebyeIntensity {
-    fn set_box(&mut self, _box_lengths: &faunus::Point) {}
-
     /// Calculate I(q) over a range of q values using the Debye formula
-    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
+    fn calc_intensities(
+        &self,
+        structure: &Structure,
+        _: Option<Vector3>,
+    ) -> Result<Vec<(f64, f64)>> {
         let distance_matrix = structure.distance_matrix();
         let intensities = self
             .q_values

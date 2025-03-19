@@ -17,9 +17,12 @@ pub use formfactor::FormFactor;
 pub use trajectory::XtcIterator;
 
 pub trait IntensityCalculator {
-    fn set_box(&mut self, box_lengths: &Vector3);
-
-    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
+    /// Calculate I(q) for a single structure
+    fn calc_intensities(
+        &self,
+        structure: &Structure,
+        side_lengths: Option<Vector3>,
+    ) -> Result<Vec<(f64, f64)>>;
 
     /// Average I(q) over a trajectory of structures
     fn calc_intensities_xtc(
@@ -39,17 +42,31 @@ pub trait IntensityCalculator {
 
         for (frame, weight) in reader {
             structure.set_positions(&frame)?;
-            let intensity = self.calc_intensities(&structure)?;
+
+            let side_lengths = get_side_lengths(&frame);
+            let intensity = self.calc_intensities(&structure, side_lengths)?;
+
             if mean_intensity.is_empty() {
                 mean_intensity = intensity.iter().map(|(q, _)| (*q, 0.0)).collect();
             }
+
             for ((_, m), (_, i)) in zip(mean_intensity.iter_mut(), intensity) {
                 *m += weight * i / num_frames as f64;
             }
+
             progress.inc(1);
         }
+
         Ok(mean_intensity)
     }
+}
+
+/// Get side lengths from a frame
+fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
+    let b = frame.boxvec.to_cols_array_2d();
+    let b = Vector3::new(b[0][0] as f64, b[1][1] as f64, b[2][2] as f64);
+    log::trace!("frame side-length = {:?}", b);
+    if b.norm() < 1e-6 { None } else { Some(b) }
 }
 
 /// High-level interface to the Pripps library
@@ -91,7 +108,7 @@ impl Pripps {
         if let Some(xtcfile) = xtcfile {
             debye.calc_intensities_xtc(&structure, xtcfile, weight_path)
         } else {
-            debye.calc_intensities(&structure)
+            debye.calc_intensities(&structure, None)
         }
     }
 
@@ -103,6 +120,6 @@ impl Pripps {
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_xyz(xyzfile, &self.atomkinds)?;
         let direct = explicit::DirectTransform::new(pmax);
-        Ok(direct.eval(&structure, &self.formfactors, side_lengths))
+        direct.eval(&structure, &self.formfactors, *side_lengths)
     }
 }
