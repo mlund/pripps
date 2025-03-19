@@ -17,6 +17,8 @@ pub use formfactor::FormFactor;
 pub use trajectory::XtcIterator;
 
 pub trait IntensityCalculator {
+    fn set_box(&mut self, box_lengths: &Vector3);
+
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
 
     /// Average I(q) over a trajectory of structures

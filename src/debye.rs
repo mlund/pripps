@@ -32,6 +32,8 @@ impl DebyeIntensity {
 }
 
 impl IntensityCalculator for DebyeIntensity {
+    fn set_box(&mut self, _box_lengths: &faunus::Point) {}
+
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
         let distance_matrix = structure.distance_matrix();
