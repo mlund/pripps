@@ -32,6 +32,6 @@ Description                                | YAML example
 ------------------------------------------ | ----------------------------------
 𝐹(𝑞) = 𝑐                                   | `!Constant 1.0`
 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                  | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, ...] }`
-𝐹(𝑞) = ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²) + 𝑐                  | `!Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [...], ...], c: 0.4, ...}`
+𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)                  | `!Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [...], ...], c: 0.4, ...}`
 Array of `[𝑞, 𝐹(𝑞)]` pairs                 | `!Table [ [0.0, 8.9], ... ]`
 Alias for a previously defined form factor | `!Alias LYS`

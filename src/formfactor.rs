@@ -14,6 +14,7 @@
 
 use crate::{AtomKind, AtomKindBuilder};
 use anyhow::{Result, bail};
+use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
@@ -21,10 +22,10 @@ use std::collections::BTreeMap;
 
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
 
-/// Special hydrogen properties for form factors
+/// Properties for implicitly attached hydrogens
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Copy)]
 #[serde(rename_all = "lowercase")]
-pub enum HydrogenProperties {
+pub enum BoundHydrogen {
     /// Number of hydrogens (>=1)
     N(usize),
     /// Distance offset
@@ -34,29 +35,29 @@ pub enum HydrogenProperties {
 /// Models for site form factors, F(q)
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum FormFactor {
-    /// F(q)=constant for all q values
+    /// 𝐹(𝑞) = constant for all q values
     Constant(f64),
-    /// F(q) given by an arbitrary length polynomial valid within an inclusive q range
+    /// 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ... valid within an inclusive q range
     Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
-    /// F(q) given by a list of `(q, F)` pairs
+    /// Interpolated 𝐹(𝑞) from a list of (𝑞,𝐹) pairs
     Table(Vec<(f64, f64)>),
-    /// Multiple exponential (Guo 1995, doi:10.1107/s0108767395010038, Eq. 3)
+    /// Multi-exponential, 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)
     Gaussian {
         /// Valid q range, inclusive
         qrange: (f64, f64),
-        /// List of (a, b) pairs for each of the exponential terms a * exp(-b * q^2)
+        /// List of (a, b) pairs for each of the exponential terms
         ab: Vec<(f64, f64)>,
         /// Offset
         c: f64,
         /// Optional hydrogen properties
         #[serde(flatten)]
-        hydrogen: Option<HydrogenProperties>,
+        hydrogen: Option<BoundHydrogen>,
         /// Optional radius
         radius: Option<f64>,
         /// Optional dsv value. TODO: What is dsv?
         dsv: Option<f64>,
     },
-    /// F(q) is the same an another defined form factor
+    /// 𝐹(𝑞) is the same an another defined form factor. Used only during deserialization.
     Alias(String),
 }
 
@@ -141,14 +142,13 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
         .into_iter()
         .enumerate()
         .map(|(id, (name, formfactor))| {
-            let kind = AtomKindBuilder::default()
+            AtomKindBuilder::default()
                 .name(name)
                 .id(id)
                 .build()
-                .unwrap(); // todo: handle error
-            (kind, formfactor)
+                .and_then(|k| Ok((k, formfactor)))
         })
-        .collect();
+        .try_collect()?;
 
     assert!(formfactor.keys().map(|kind| kind.id()).is_sorted());
     log::info!(
