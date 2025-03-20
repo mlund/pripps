@@ -1,0 +1,38 @@
+{
+  "title": "PRIPPS - Partial Rust Implementation of PePSi",
+  "description": "Tool to calculate scattering intensities in molecular structures",
+  "creators": [
+    {
+      "name": "Isabel Vinterbladh",
+      "affiliation": "Division of Computational Chemistry, Department of Chemistry, Lund University, Sweden",
+      "orcid": "0009-0007-0801-2611"
+    },
+    {
+      "name": "Rémi Vuillemot"
+    },
+    {
+      "name": "Sergei Grudinin"
+    },
+    {
+      "name": "Mikael Lund",
+      "affiliation": "Division of Computational Chemistry, Department of Chemistry, Lund University, Sweden",
+      "orcid": "0000-0001-8178-8175"
+    }
+  ],
+  "keywords": ["debye formula", "scattering intensity", "proteins"],
+  "related_identifiers": [
+    {
+      "scheme": "url",
+      "identifier": "https://github.com/mlund/pripps",
+      "relation": "isSupplementTo"
+    },
+    {
+      "scheme": "doi",
+      "identifier": "...",
+      "relation": "isSupplementTo"
+    }
+  ],
+  "license": "apache-license",
+  "access_right": "open",
+  "upload_type": "software"
+}
