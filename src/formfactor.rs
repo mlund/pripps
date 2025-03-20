@@ -146,7 +146,7 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
                 .name(name)
                 .id(id)
                 .build()
-                .and_then(|k| Ok((k, formfactor)))
+                .map(|kind| (kind, formfactor))
         })
         .try_collect()?;
 

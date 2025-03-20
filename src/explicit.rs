@@ -59,25 +59,31 @@ pub struct DirectTransform {
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
     /// Cuboidal box side lengths
-    side_lengths: sync::RwLock<Vector3>,
+    box_sides: sync::RwLock<Vector3>,
 }
 
 impl IntensityCalculator for DirectTransform {
     /// Calculate I(q) for a given structure inside cuboidal box
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
-        let side_lengths = self.side_lengths.read().unwrap();
-        let intensity = |q: Vector3| calc_intensity(&q, structure, &self.formfactors).unwrap();
-        let table: Vec<(f64, f64)> = self
+        let box_sides = self
+            .box_sides
+            .read()
+            .map_err(|e| anyhow::anyhow!("could not read side length: {e}"))?;
+
+        let intensity = |q: Vector3| calc_intensity(&q, structure, &self.formfactors);
+
+        let table = self
             .directions
             .par_iter()
-            .map(|dir| dir.component_div(&side_lengths))
-            .map(|q| (q.norm(), intensity(q)))
-            .collect();
+            .map(|dir| dir.component_div(&box_sides))
+            .map(|q| intensity(q).map(|i| (q.norm(), i)))
+            .collect::<Result<Vec<(f64, f64)>>>()?;
 
         Ok(average_duplicates(table))
     }
+
     fn set_side_lengths(&self, side_lengths: Vector3) {
-        *self.side_lengths.write().unwrap() = side_lengths;
+        *self.box_sides.write().unwrap() = side_lengths;
     }
 }
 
@@ -97,7 +103,7 @@ impl DirectTransform {
         Self {
             formfactors,
             directions,
-            side_lengths: side_lengths.into(),
+            box_sides: side_lengths.into(),
         }
     }
 }
