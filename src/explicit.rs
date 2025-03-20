@@ -76,6 +76,9 @@ impl IntensityCalculator for DirectTransform {
 
         Ok(average_duplicates(table))
     }
+    fn set_side_lengths(&self, side_lengths: Vector3) {
+        *self.side_lengths.write().unwrap() = side_lengths;
+    }
 }
 
 impl DirectTransform {

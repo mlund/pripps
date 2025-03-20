@@ -46,6 +46,9 @@ impl IntensityCalculator for DebyeIntensity {
 
         Ok(self.q_values.iter().cloned().zip(intensities).collect())
     }
+    fn set_side_lengths(&self, _side_lengths: crate::Vector3) {
+        // The Debye formula does not depend on box side lengths
+    }
 }
 
 /// Generate a list of q values from qmin to qmax

@@ -23,8 +23,8 @@ pub trait IntensityCalculator {
     /// Calculate I(q) for a single structure
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
 
-    /// Set the side lengths of the box if applicable
-    fn set_side_lengths(&self, _side_lengths: Vector3) {}
+    /// Set the side lengths of the box, if applicable
+    fn set_side_lengths(&self, _side_lengths: Vector3);
 
     /// Average I(q) over a trajectory of structures
     fn calc_intensities_xtc(
