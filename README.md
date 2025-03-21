@@ -13,13 +13,25 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 
 ## Usage
 
-Compile and run directly from the source repository
-[(requires a Rust installation)](https://www.rust-lang.org/tools/install):
+Explore available options with `--help`. Note that to run directly from the source repository,
+replace `pripps` with `cargo run --release --`, see section below.
+```sh
+pripps --help
+```
+
+Calculate the scattering intensity for a coarse grained lysozyme structure
+```sh
+pripps --atomfile assets/single_bead.yaml --input assets/4lzt.xyz debye
+```
+
+### Building from source
+
+This requires a [Rust installation)](https://www.rust-lang.org/tools/install):
 
 ```sh
 git clone git@github.com:mlund/pripps.git
 cd pripps/
-cargo run --release -- -h
+cargo run --release -- --help
 ```
 
 ## Form Factor Models
