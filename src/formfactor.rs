@@ -22,16 +22,6 @@ use std::collections::BTreeMap;
 
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
 
-/// Properties for implicitly attached hydrogens
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum BoundHydrogen {
-    /// Number of hydrogens (>=1)
-    N(usize),
-    /// Distance offset
-    Rh(f64),
-}
-
 /// Models for site form factors, F(q)
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum FormFactor {
@@ -49,28 +39,39 @@ pub enum FormFactor {
         ab: Vec<(f64, f64)>,
         /// Offset
         c: f64,
-        /// Optional hydrogen properties
-        #[serde(flatten)]
-        hydrogen: Option<BoundHydrogen>,
-        /// Optional radius
-        radius: Option<f64>,
-        /// Optional dsv value. TODO: What is dsv?
-        dsv: Option<f64>,
     },
-    /// 𝐹(𝑞) is the same an another defined form factor. Used only during deserialization.
+    /// 𝐹(𝑞) is the same an another defined form factor.
+    ///
+    /// Used only during deserialization where it is replaced with the actual form factor
     Alias(String),
+    /// United form factor where a central atom is flanked by multiple other atoms with distance offsets
+    ///
+    /// Used only during deserialization where it is replaced with a tabulated form factor
+    United {
+        /// Central atom
+        central: String,
+        /// Pairs of flanking atoms and distance offsets
+        orbit: Vec<(String, f64)>,
+    },
 }
 
 impl FormFactor {
-    /// Determine if a q value is within valid q-range
-    pub fn in_qrange(&self, q: f64) -> bool {
+    /// Get the q-range for the form factor
+    pub fn qrange(&self) -> (f64, f64) {
         use FormFactor::*;
         match self {
-            Constant(_) | Alias(_) => true,
-            Gaussian { qrange, .. } => q >= qrange.0 && q <= qrange.1,
-            Polynomial { qrange, .. } => q >= qrange.0 && q <= qrange.1,
-            Table(table) => q >= table[0].0 && q <= table[table.len() - 1].0,
+            Constant(_) => (0.0, f64::INFINITY),
+            Polynomial { qrange, .. } => *qrange,
+            Table(table) => (table[0].0, table[table.len() - 1].0),
+            Gaussian { qrange, .. } => *qrange,
+            Alias(_) => (0.0, f64::INFINITY),
+            United { .. } => (0.0, f64::INFINITY),
         }
+    }
+    /// Determine if a q value is within valid q-range
+    pub fn in_qrange(&self, q: f64) -> bool {
+        let qrange = self.qrange();
+        q >= qrange.0 && q <= qrange.1
     }
 
     /// Evaluate the form factor, F(q)
@@ -107,7 +108,9 @@ impl FormFactor {
                     .sum::<f64>()
                     + c
             }
-            Alias(name) => bail!("Unexpected alias form factor {}", name),
+            // These should be converted and filtered out during deserialization
+            Alias(name) => bail!("Unexpected alias form factor '{name}'"),
+            United { central, .. } => bail!("unexpected united form factor '{central}'"),
         };
         Ok(formfactor)
     }
@@ -118,27 +121,13 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     let file =
         std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
 
-    let mut name_formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
+    let mut formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
 
-    // Map of form without aliases
-    let no_alias = &name_formfactor
-        .iter()
-        .filter(|(_, ff)| !matches!(ff, FormFactor::Alias(_)))
-        .map(|(name, ff)| (name.clone(), ff.clone()))
-        .collect::<BTreeMap<_, _>>();
+    convert_alias(&mut formfactor)?;
+    convert_united(&mut formfactor)?;
 
-    // Convert all alias variants to the actual form factor variant that they refer to
-    for (_, formfactor) in name_formfactor.iter_mut() {
-        if let FormFactor::Alias(name) = formfactor {
-            match no_alias.get(name) {
-                Some(ff) => *formfactor = ff.clone(),
-                None => bail!("Aliased form factor {} is not defined", name),
-            }
-        }
-    }
-
-    let formfactor: FormFactorMap = name_formfactor
+    let formfactor: FormFactorMap = formfactor
         .into_iter()
         .enumerate()
         .map(|(id, (name, formfactor))| {
@@ -157,6 +146,50 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
         formfactor.len(),
     );
     Ok(formfactor)
+}
+
+/// Convert alias form factors to the actual form factors
+fn convert_alias(name_formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
+    // Map of form without aliases
+    let no_alias = &name_formfactor
+        .iter()
+        .filter(|(_, ff)| !matches!(ff, FormFactor::Alias(_)))
+        .map(|(name, ff)| (name.clone(), ff.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    // Convert all alias variants to the actual form factor variant that they refer to
+    for (_, formfactor) in name_formfactor.iter_mut() {
+        if let FormFactor::Alias(name) = formfactor {
+            match no_alias.get(name) {
+                Some(ff) => *formfactor = ff.clone(),
+                None => bail!("undefined aliased form factor '{name}'"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Convert united form factors to tabulated form factors
+fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
+    // Map of form without aliases
+    let no_united = &formfactor
+        .iter()
+        .filter(|(_, ff)| !matches!(ff, FormFactor::United { .. }))
+        .map(|(name, ff)| (name.clone(), ff.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    // Convert all united variants to combined, tabulated form factors using the Debye formula
+    for (_, formfactor) in formfactor.iter_mut() {
+        let FormFactor::United { central, .. } = formfactor else {
+            continue;
+        };
+        let Some(_central_ff) = no_united.get(central) else {
+            bail!("undefined central atom form factor '{central}'")
+        };
+        *formfactor = FormFactor::Constant(1.0);
+        todo!("united groups not yet implemented...");
+    }
+    Ok(())
 }
 
 /// Create S x S matrix of form factor products at a given q value (S = atom id)

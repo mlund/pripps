@@ -38,12 +38,23 @@ cargo run --release -- --help
 
 Atom definitions, which may be atomic or coarse grained, are defined in a separate YAML file,
 see e.g. `assets/single_bead.yaml`.
-An input structure may use arbitrary combinations of the following form factor models:
+Input structures (xyz, gro, pdb) may use species with form factors defined by any combination of the following models:
 
-Description                                | YAML example
------------------------------------------- | ----------------------------------
-𝐹(𝑞) = 𝑐                                   | `!Constant 1.0`
-𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                  | `!Polynomial { qrange: [0.0, 1.0], coeff: [1.0, 2.0, 3.0, ...] }`
-𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)                  | `!Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [...], ...], c: 0.4, ...}`
-Array of `[𝑞, 𝐹(𝑞)]` pairs                 | `!Table [ [0.0, 8.9], ... ]`
-Alias for a previously defined form factor | `!Alias LYS`
+Description                                | Keyword
+------------------------------------------ | ----------
+𝐹(𝑞) = 𝑐                                   | `!Constant`
+𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                  | `!Polynomial`
+𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)                  | `!Gaussian`
+Array of `[𝑞, 𝐹]` pairs                 | `!Table`
+Alias for a previously defined form factor | `!Alias`
+
+### Examples
+
+```yaml
+# atoms.yaml
+O: !Constant 1.0
+N: !Table [ [0.0, 8.9], [0.1, 7.8], ...]
+C: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [0.2, 3.0], ...], c: 0.4 }
+CA: !Alias C
+ALA: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]}
+```
