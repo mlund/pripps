@@ -45,16 +45,19 @@ Description                                | Keyword
 𝐹(𝑞) = 𝑐                                   | `!Constant`
 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                  | `!Polynomial`
 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)                  | `!Gaussian`
-Array of `[𝑞, 𝐹]` pairs                 | `!Table`
+𝐹′(𝑞) = 𝐹(𝑞) + ∑𝑤ᵢ𝐹ᵢ(𝑞)⋅sin(𝑞𝑟ᵢ)/𝑞𝑟ᵢ       | `!United`
+Array of `[𝑞, 𝐹]` pairs                    | `!Table`
 Alias for a previously defined form factor | `!Alias`
 
 ### Examples
 
 ```yaml
 # atoms.yaml
-O: !Constant 1.0
+H: !Constant 1.0
 N: !Table [ [0.0, 8.9], [0.1, 7.8], ...]
 C: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [0.2, 3.0], ...], c: 0.4 }
+# United C and H where H is offset by 1.5 Å and added with weight 1 (`null`):
+CH: !United { center: C, orbit: [[H, 1.5, null]] }
 CA: !Alias C
 ALA: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]}
 ```

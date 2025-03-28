@@ -18,7 +18,7 @@ use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Deref};
 
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
 
@@ -44,14 +44,16 @@ pub enum FormFactor {
     ///
     /// Used only during deserialization where it is replaced with the actual form factor
     Alias(String),
-    /// United form factor where a central atom is flanked by multiple other atoms with distance offsets
+    /// United form factor where a central atom is flanked by multiple other atoms with distance offsets, 𝑟ᵢ
+    ///
+    /// 𝐹′(𝑞) = 𝐹(𝑞) + ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)⋅sin(𝑞𝑟ᵢ)/𝑞𝑟ᵢ
     ///
     /// Used only during deserialization where it is replaced with a tabulated form factor
     United {
         /// Central atom
-        central: String,
-        /// Pairs of flanking atoms and distance offsets
-        orbit: Vec<(String, f64)>,
+        center: String,
+        /// Orbiting atoms given by tuples (name, offset, optional weight). Default weights, 𝑤ᵢ=1.
+        orbit: Vec<(String, f64, Option<f64>)>,
     },
 }
 
@@ -72,6 +74,17 @@ impl FormFactor {
     pub fn in_qrange(&self, q: f64) -> bool {
         let qrange = self.qrange();
         q >= qrange.0 && q <= qrange.1
+    }
+
+    /// Convert any form factor to a tabulated form factor in the given q range
+    ///
+    /// Errors if the q values are outside valid range (checked by `eval()`)
+    pub fn to_tabulated(&self, qvalues: impl IntoIterator<Item = f64>) -> Result<FormFactor> {
+        let table = qvalues
+            .into_iter()
+            .map(|q| self.eval(q).map(|f| (q, f)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(FormFactor::Table(table))
     }
 
     /// Evaluate the form factor, F(q)
@@ -110,7 +123,9 @@ impl FormFactor {
             }
             // These should be converted and filtered out during deserialization
             Alias(name) => bail!("Unexpected alias form factor '{name}'"),
-            United { central, .. } => bail!("unexpected united form factor '{central}'"),
+            United {
+                center: central, ..
+            } => bail!("unexpected united form factor '{central}'"),
         };
         Ok(formfactor)
     }
@@ -148,7 +163,7 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     Ok(formfactor)
 }
 
-/// Convert alias form factors to the actual form factors
+/// Helper to convert alias form factors to the actual form factors
 fn convert_alias(name_formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
     // Map of form without aliases
     let no_alias = &name_formfactor
@@ -169,25 +184,54 @@ fn convert_alias(name_formfactor: &mut BTreeMap<String, FormFactor>) -> Result<(
     Ok(())
 }
 
-/// Convert united form factors to tabulated form factors
+/// Helper to convert all united variants to combined, tabulated form factors using the Debye formula
 fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
-    // Map of form without aliases
+    const TABLE_SIZE: usize = 100;
+    const MAX_Q: f64 = 4.0; // Å⁻¹
+
     let no_united = &formfactor
         .iter()
         .filter(|(_, ff)| !matches!(ff, FormFactor::United { .. }))
         .map(|(name, ff)| (name.clone(), ff.clone()))
         .collect::<BTreeMap<_, _>>();
 
-    // Convert all united variants to combined, tabulated form factors using the Debye formula
+    // Evaluates single united form factor to a tabulated form factor
+    let to_table = |ff: &FormFactor| -> Result<FormFactor> {
+        let FormFactor::United { center, orbit } = ff else {
+            bail!("united form factor expected");
+        };
+        let center_ff = no_united
+            .get(center)
+            .ok_or_else(|| anyhow::anyhow!("undefined central atom form factor '{center}'"))?;
+
+        let mut qrange = center_ff.qrange();
+        if qrange.1.is_infinite() {
+            log::debug!("Infinite q-range for '{center}'; setting to max q = {MAX_Q} Å⁻¹");
+            qrange.1 = MAX_Q;
+        }
+
+        let mut table = (0..=TABLE_SIZE)
+            .map(|i| qrange.0 + (qrange.1 - qrange.0) * i as f64 / TABLE_SIZE as f64)
+            .map(|q| center_ff.eval(q).map(|f| (q, f)))
+            .collect::<Result<Vec<_>>>()?;
+
+        for (name, r, weight) in orbit {
+            let orbit_ff = no_united
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("undefined orbiting atom form factor '{name}'"))?;
+            let weight = weight.unwrap_or(1.0);
+            for (q, f) in table.iter_mut() {
+                let qr = q.deref() * r;
+                *f += weight * orbit_ff.eval(*q)? * f64::sin(qr) / qr;
+            }
+        }
+        Ok(FormFactor::Table(table))
+    };
+
     for (_, formfactor) in formfactor.iter_mut() {
-        let FormFactor::United { central, .. } = formfactor else {
-            continue;
-        };
-        let Some(_central_ff) = no_united.get(central) else {
-            bail!("undefined central atom form factor '{central}'")
-        };
-        *formfactor = FormFactor::Constant(1.0);
-        todo!("united groups not yet implemented...");
+        if let FormFactor::United { .. } = formfactor {
+            *formfactor = to_table(formfactor)?;
+        }
     }
     Ok(())
 }

@@ -124,7 +124,7 @@ fn calc_intensity(q: &Vector3, structure: &Structure, formfactors: &FormFactorMa
     Ok(Complex::new(sum_cos, sum_sin).norm_sqr())
 }
 
-/// Convert formfactor map to F(q) for each atom in structure
+/// Helper function to convert formfactor map to F(q) for each atom in structure
 fn convert_formfactors(
     q: f64,
     atom_ids: &[usize],
