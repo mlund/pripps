@@ -196,7 +196,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
         .collect::<BTreeMap<_, _>>();
 
     // Evaluates single united form factor to a tabulated form factor
-    let to_table = |ff: &FormFactor| -> Result<FormFactor> {
+    let eval = |ff: &FormFactor| -> Result<FormFactor> {
         let FormFactor::United { center, orbit } = ff else {
             bail!("united form factor expected");
         };
@@ -204,14 +204,14 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
             .get(center)
             .ok_or_else(|| anyhow::anyhow!("undefined central atom form factor '{center}'"))?;
 
-        let mut qrange = center_ff.qrange();
-        if qrange.1.is_infinite() {
+        let (qmin, mut qmax) = center_ff.qrange();
+        if qmax.is_infinite() {
             log::debug!("Infinite q-range for '{center}'; setting to max q = {MAX_Q} Å⁻¹");
-            qrange.1 = MAX_Q;
+            qmax = MAX_Q;
         }
 
         let mut table = (0..=TABLE_SIZE)
-            .map(|i| qrange.0 + (qrange.1 - qrange.0) * i as f64 / TABLE_SIZE as f64)
+            .map(|i| qmin + (qmax - qmin) * i as f64 / TABLE_SIZE as f64)
             .map(|q| center_ff.eval(q).map(|f| (q, f)))
             .collect::<Result<Vec<_>>>()?;
 
@@ -222,7 +222,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
                 let qr = q.deref() * r;
-                *f += weight * orbit_ff.eval(*q)? * f64::sin(qr) / qr;
+                *f += weight * orbit_ff.eval(*q)? * qr.sin() / qr;
             }
         }
         Ok(FormFactor::Table(table))
@@ -230,7 +230,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
 
     for (_, formfactor) in formfactor.iter_mut() {
         if let FormFactor::United { .. } = formfactor {
-            *formfactor = to_table(formfactor)?;
+            *formfactor = eval(formfactor)?;
         }
     }
     Ok(())

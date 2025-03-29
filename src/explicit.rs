@@ -19,7 +19,6 @@ use anyhow::Result;
 use itertools::Itertools;
 use num_complex::Complex;
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Mul;
 use std::sync;
@@ -28,7 +27,7 @@ use std::{cmp::Ordering, f64::consts::PI};
 /// Sample directions (h,k,l)
 ///
 /// This is the thirteen permutations of the Miller index [100], [110], [101]
-const DIRECTIONS: [Vector3; 13] = [
+const MILLER_INDEX: [Vector3; 13] = [
     Vector3::new(1.0, 0.0, 0.0),
     Vector3::new(0.0, 1.0, 0.0),
     Vector3::new(0.0, 0.0, 1.0),
@@ -89,7 +88,7 @@ impl IntensityCalculator for DirectTransform {
 
 impl DirectTransform {
     pub fn new(formfactors: FormFactorMap, p_max: usize, side_lengths: Vector3) -> Self {
-        let directions: Vec<_> = DIRECTIONS
+        let directions: Vec<_> = MILLER_INDEX
             .iter()
             .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
             .collect();
@@ -136,29 +135,34 @@ fn convert_formfactors(
     Ok(atom_ids.iter().map(move |i| formfactors[*i]))
 }
 
-/// Average duplicate q values, then sort by q
-fn average_duplicates(v: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
-    let mut map: HashMap<i64, (f64, usize)> = HashMap::new();
+/// Helper to average and merge duplicate x values, then sort by x
+fn average_duplicates(with_duplicate_x: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    // Round x to a certain number of decimal places
+    let round = |x: f64| (10f64.powi(6) * x).round() as i64;
+    // [(x,y1),(x,y2),...] -> (x, <y>)
+    let average_duplicates = |pair: &[(f64, f64)]| {
+        let mean_y = pair.iter().map(|(_, y)| y).sum::<f64>() / pair.len() as f64;
+        (pair.first().unwrap().0, mean_y)
+    };
 
-    // Function to round f64 to a certain number of decimal places (e.g., 6 places)
-    fn round_to_precision(x: f64, precision: usize) -> i64 {
-        (x * 10f64.powi(precision as i32)).round() as i64
-    }
-
-    // Iterate over the vector and populate the map with sums and counts
-    for (x, y) in v {
-        let rounded_x = round_to_precision(x, 6); // Round x to 6 decimal places
-        let entry = map.entry(rounded_x).or_insert((0.0, 0));
-        entry.0 += y; // Sum of y
-        entry.1 += 1; // Count of occurrences
-    }
-
-    // Create a new vector with averaged results
-    let mut table = map
+    let mut table: Vec<_> = with_duplicate_x
         .into_iter()
-        .map(|(rounded_x, (sum_y, count))| (rounded_x as f64 / 10f64.powi(6), sum_y / count as f64))
-        .collect::<Vec<_>>();
-
+        .into_group_map_by(|(x, _)| round(*x))
+        .values()
+        .map(|pair| average_duplicates(pair))
+        .collect();
     table.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
     table
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_average_duplicates() {
+        let v = vec![(1.0, 1.0), (3.0, 0.1), (2.0, 3.0), (2.0, 4.0), (1.0, 2.0)];
+        let result = average_duplicates(v);
+        assert_eq!(result, vec![(1.0, 1.5), (2.0, 3.5), (3.0, 0.1)]);
+    }
 }
