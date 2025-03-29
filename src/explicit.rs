@@ -135,7 +135,9 @@ fn convert_formfactors(
     Ok(atom_ids.iter().map(move |i| formfactors[*i]))
 }
 
-/// Helper to average and merge duplicate x values, then sort by x
+/// Helper merge duplicate x values by averaging y; then sort by x
+///
+/// `[(x1,y1),(x1,y2), (x2,y3),...] -> [(x1,<y1,y2>, (x2,y3),...]`
 fn average_duplicates(with_duplicate_x: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
     // Round x to a certain number of decimal places
     let round = |x: f64| (10f64.powi(6) * x).round() as i64;
