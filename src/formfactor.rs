@@ -87,7 +87,7 @@ impl FormFactor {
         Ok(FormFactor::Table(table))
     }
 
-    /// Evaluate the form factor, F(q)
+    /// Evaluate form factor, 𝐹(𝑞)
     pub fn eval(&self, q: f64) -> Result<f64> {
         use FormFactor::*;
         if !self.in_qrange(q) {
@@ -95,39 +95,52 @@ impl FormFactor {
         }
         let formfactor = match self {
             Constant(c) => *c,
-            Polynomial { coeff, .. } => coeff
-                .iter()
-                .enumerate()
-                .map(|(i, c)| c * q.powi(i as i32))
-                .sum(),
-            Table(table) => {
-                // Linear interpolation using binary search; requires sorted table
-                if q == table[0].0 {
-                    table[0].1
-                } else if q >= table[table.len() - 1].0 {
-                    table[table.len() - 1].1
-                } else {
-                    let i = table
-                        .binary_search_by(|(q_i, _)| q.partial_cmp(q_i).unwrap())
-                        .unwrap_or(table.len() - 2);
-                    let (q1, f1) = table[i];
-                    let (q2, f2) = table[i + 1];
-                    f1 + (f2 - f1) * (q - q1) / (q2 - q1)
-                }
-            }
-            Gaussian { ab, c, .. } => {
-                ab.iter()
-                    .map(|(a, b)| a * f64::exp(-b * q * q))
-                    .sum::<f64>()
-                    + c
-            }
+            Polynomial { coeff, .. } => eval_polynomium(coeff, q),
+            Table(table) => interpolate(table, q),
+            Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
             // These should be converted and filtered out during deserialization
             Alias(name) => bail!("Unexpected alias form factor '{name}'"),
-            United {
-                center: central, ..
-            } => bail!("unexpected united form factor '{central}'"),
+            United { center, .. } => bail!("unexpected united form factor '{center}'"),
         };
         Ok(formfactor)
+    }
+}
+
+/// Evaluate Gaussian form factor, 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)
+#[inline]
+fn eval_gaussian(q: f64, ab: &[(f64, f64)], c: f64) -> f64 {
+    ab.iter()
+        .map(|(a, b)| a * f64::exp(-b * q * q))
+        .sum::<f64>()
+        + c
+}
+
+/// Evaluate polynomium form factor, 𝐹(𝑞) = c₀ + c₁𝑞 + c₂𝑞² + ...
+#[inline]
+fn eval_polynomium(coeff: &[f64], q: f64) -> f64 {
+    coeff
+        .iter()
+        .enumerate()
+        .map(|(i, c)| c * q.powi(i as i32))
+        .sum()
+}
+
+/// Linear interpolation using binary search; requires x sorted (x,y) table
+#[inline]
+fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
+    debug_assert!(table.is_sorted());
+    debug_assert!(table.len() >= 2);
+    let last = table.len() - 1;
+    if x == table[0].0 {
+        table[0].1
+    } else if x >= table[last].0 {
+        table[last].1
+    } else {
+        let compare_x = |(xi, _): &(f64, f64)| xi.partial_cmp(&x).unwrap();
+        let i = table.binary_search_by(compare_x).unwrap_or(last - 1);
+        let (x1, y1) = table[i];
+        let (x2, y2) = table[i + 1];
+        y1 + (y2 - y1) / (x2 - x1) * (x - x1)
     }
 }
 
@@ -187,7 +200,7 @@ fn convert_alias(name_formfactor: &mut BTreeMap<String, FormFactor>) -> Result<(
 /// Helper to convert all united variants to combined, tabulated form factors using the Debye formula
 fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
     const TABLE_SIZE: usize = 100;
-    const MAX_Q: f64 = 4.0; // Å⁻¹
+    const MAX_Q: f64 = 2.0; // Å⁻¹
 
     let no_united = &formfactor
         .iter()
@@ -206,7 +219,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
 
         let (qmin, mut qmax) = center_ff.qrange();
         if qmax.is_infinite() {
-            log::debug!("Infinite q-range for '{center}'; setting to max q = {MAX_Q} Å⁻¹");
+            log::debug!("Infinite q-range for '{center}'; setting max q to {MAX_Q} Å⁻¹");
             qmax = MAX_Q;
         }
 
@@ -273,6 +286,10 @@ mod tests {
         assert_relative_eq!(ff.eval(1.5).unwrap(), 2.5);
         assert_relative_eq!(ff.eval(1.9).unwrap(), 2.9);
         assert_relative_eq!(ff.eval(2.0).unwrap(), 3.0);
+        let ff = FormFactor::Table(vec![(0.0, 1.0), (1.0, 2.0)]);
+        assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
+        assert_relative_eq!(ff.eval(0.5).unwrap(), 1.5);
+        assert_relative_eq!(ff.eval(1.0).unwrap(), 2.0);
     }
 
     #[test]

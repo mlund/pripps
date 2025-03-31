@@ -139,8 +139,8 @@ fn convert_formfactors(
 ///
 /// `[(x1,y1),(x1,y2), (x2,y3),...] -> [(x1,<y1,y2>, (x2,y3),...]`
 fn average_duplicates(with_duplicate_x: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
-    // Round x to a certain number of decimal places
-    let round = |x: f64| (10f64.powi(6) * x).round() as i64;
+    // Round x to integer to be used for grouping: 0.123456 -> 123456
+    let round = |x: f64| x.mul(1e6).round() as i64;
     // [(x,y1),(x,y2),...] -> (x, <y>)
     let average_duplicates = |pair: &[(f64, f64)]| {
         let mean_y = pair.iter().map(|(_, y)| y).sum::<f64>() / pair.len() as f64;
