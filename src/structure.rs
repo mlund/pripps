@@ -30,6 +30,8 @@ pub struct Structure {
     pub pos: Vec<Vector3>,
     /// Atom kind ids
     pub ids: Vec<usize>,
+    /// Solvent accessible surface area for each atom
+    pub sasa: Option<Vec<f64>>,
 }
 
 impl Structure {
@@ -53,7 +55,11 @@ impl Structure {
                     .context(format!("unknown atom name in file: {:?}", atom.name()))
             })
             .try_collect()?;
-        Ok(Self { pos, ids })
+        Ok(Self {
+            pos,
+            ids,
+            sasa: None,
+        })
     }
 
     /// Calculate N x N distance matrix

@@ -25,9 +25,6 @@ pub struct DebyeIntensity {
     q_values: Vec<f64>,
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
-    /// Solvent accessible surface area for each atom
-    #[allow(dead_code)]
-    sasa: Option<Vec<f64>>,
 }
 
 impl DebyeIntensity {
@@ -35,7 +32,6 @@ impl DebyeIntensity {
         Ok(Self {
             q_values: make_q_values(q_minmax.0, q_minmax.1, num_q),
             formfactors,
-            sasa: None,
         })
     }
 }
