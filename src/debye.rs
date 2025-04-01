@@ -66,10 +66,11 @@ fn intensity_at_q(
     q: f64,
 ) -> Result<f64> {
     log::trace!("Calculating I(q) for q = {}", q);
+    const NEARLY_ZERO: f64 = 1e-10;
     let formfactor_product = formfactor::formfactor_product(formfactors, q)?;
 
     // avoid division by zero: sin(x)/x -> 1 as x -> 0
-    if q.abs() < 1e-10 {
+    if q.abs() < NEARLY_ZERO {
         intensity_sum(atom_ids, &formfactor_product, distance_matrix, q, |_| 1.0)
     } else {
         intensity_sum(atom_ids, &formfactor_product, distance_matrix, q, |qr| {
