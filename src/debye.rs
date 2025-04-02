@@ -43,7 +43,15 @@ impl IntensityCalculator for DebyeIntensity {
         let intensities = self
             .q_values
             .par_iter()
-            .map(|q| intensity_at_q(&structure.ids, &self.formfactors, &distance_matrix, *q))
+            .map(|q| {
+                intensity_at_q(
+                    &structure.ids,
+                    &self.formfactors,
+                    &distance_matrix,
+                    *q,
+                    None,
+                )
+            })
             .collect::<Result<Vec<f64>>>()?;
 
         Ok(self.q_values.iter().cloned().zip(intensities).collect())
@@ -61,17 +69,28 @@ fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
 }
 
 /// Calculate I(q) using the Debye formula
+///
+/// If given, the solvent correction is a list of corrections for each atom that is added to the form factor.
 fn intensity_at_q(
     atom_ids: &[usize],
     formfactors: &FormFactorMap,
     distance_matrix: &DMatrix<f64>,
     q: f64,
+    solvent_correction: Option<Vec<f64>>,
 ) -> Result<f64> {
     log::trace!("Calculating I(q) for q = {}", q);
     const NEARLY_ZERO: f64 = 1e-10;
-    let formfactor_product = formfactor::formfactor_product(formfactors, q)?;
 
-    // avoid division by zero: sin(x)/x -> 1 as x -> 0
+    let mut formfactors = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
+    if let Some(solvent) = solvent_correction {
+        for (i, q) in formfactors.iter_mut().enumerate() {
+            *q += solvent[i];
+        }
+    }
+    let formfactor_product = &formfactors * formfactors.transpose();
+
+    // avoid division by zero: sin(𝑥)/𝑥 -> 1 as 𝑥 -> 0
+    // Taylor expansion: sin(𝑥)/𝑥 ≈ 1 - 𝑥²/6 + 𝑥⁴/120 - 𝑥⁶/5040 ...
     if q.abs() < NEARLY_ZERO {
         intensity_sum(atom_ids, &formfactor_product, distance_matrix, q, |_| 1.0)
     } else {
@@ -95,9 +114,7 @@ fn intensity_sum(
     for i in 0..n_atoms - 1 {
         for j in i + 1..n_atoms {
             let qr = q * distance_matrix[(i, j)];
-            let id1 = atom_ids[i];
-            let id2 = atom_ids[j];
-            off_diagonal += formfactor_product[(id1, id2)] * func(qr);
+            off_diagonal += formfactor_product[(i, j)] * func(qr);
         }
     }
 

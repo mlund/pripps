@@ -273,9 +273,6 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
 }
 
 /// Create N vector of form factors at given q value (N = number of atoms)
-///
-/// Returned as a DVector, this can conveniently be turned into a matrix by
-/// multiplying with its transpose.
 pub fn formfactor_by_index(
     formfactors: &FormFactorMap,
     q: f64,
@@ -288,13 +285,13 @@ pub fn formfactor_by_index(
         .collect::<Result<Vec<_>>>()?;
 
     Ok(DVector::from_iterator(
-        ff_by_id.len(),
+        atom_ids.len(),
         atom_ids.iter().map(|id| ff_by_id[*id]),
     ))
 }
 
 /// Create S x S matrix of form factor products at a given q value (S = atom id)
-pub fn formfactor_product(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
+pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
     let f_vec = formfactors
         .values()
         .map(|f| f.eval(q))
@@ -350,7 +347,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let matrix = formfactor_product(&formfactors, 1.0).unwrap();
+        let matrix = formfactor_product_by_id(&formfactors, 1.0).unwrap();
         assert_relative_eq!(matrix[(0, 0)], 1.0);
         assert_relative_eq!(matrix[(0, 1)], 2.0);
         assert_relative_eq!(matrix[(1, 1)], 4.0);
