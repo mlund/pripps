@@ -53,11 +53,13 @@ Alias for a previously defined form factor | `!Alias`
 
 ```yaml
 # atoms.yaml
-H: !Constant 1.0
-N: !Table [ [0.0, 8.9], [0.1, 7.8], ...]
-C: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [0.2, 3.0], ...], c: 0.4 }
+# radius is in Ångström and optional
+H: { formfactor: !Constant 1.0, radius: 1.0 }
+# 'ff' is an alias for 'formfactor'
+N: { ff: !Table [ [0.0, 8.9], [0.1, 7.8], ...] }
+C: { ff: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [0.2, 3.0], ...], c: 0.4 } }
 # United C and H where H is offset by 1.5 Å and added with weight 1 (`null`):
-CH: !United { center: C, orbit: [[H, 1.5, null]] }
-CA: !Alias C
-ALA: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]}
+CH: { ff: !United { center: C, orbit: [[H, 1.5, null]] } }
+CA: { ff: !Alias C }
+ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]} }
 ```

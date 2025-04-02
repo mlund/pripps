@@ -20,6 +20,13 @@ use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::{collections::BTreeMap, ops::Deref};
 
+/// Used to deserialize from YAML file
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+struct AtomRecord {
+    radius: Option<f64>,
+    formfactor: FormFactor,
+}
+
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
 
 /// Models for site form factors, F(q)
@@ -149,7 +156,7 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     let file =
         std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
 
-    let mut formfactor: BTreeMap<String, FormFactor> = serde_yaml::from_reader(file)
+    let mut formfactor: BTreeMap<String, AtomRecord> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
 
     convert_alias(&mut formfactor)?;
@@ -158,12 +165,13 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     let formfactor: FormFactorMap = formfactor
         .into_iter()
         .enumerate()
-        .map(|(id, (name, formfactor))| {
+        .map(|(id, (name, record))| {
             AtomKindBuilder::default()
                 .name(name)
                 .id(id)
+                .sigma(2.0 * record.radius.unwrap_or(0.0))
                 .build()
-                .map(|kind| (kind, formfactor))
+                .map(|kind| (kind, record.formfactor))
         })
         .try_collect()?;
 
@@ -177,19 +185,20 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
 }
 
 /// Helper to convert alias form factors to the actual form factors
-fn convert_alias(name_formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
+fn convert_alias(name_formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
     // Map of form without aliases
     let no_alias = &name_formfactor
         .iter()
+        .map(|(name, record)| (name, record.formfactor.clone()))
         .filter(|(_, ff)| !matches!(ff, FormFactor::Alias(_)))
         .map(|(name, ff)| (name.clone(), ff.clone()))
         .collect::<BTreeMap<_, _>>();
 
     // Convert all alias variants to the actual form factor variant that they refer to
-    for (_, formfactor) in name_formfactor.iter_mut() {
-        if let FormFactor::Alias(name) = formfactor {
-            match no_alias.get(name) {
-                Some(ff) => *formfactor = ff.clone(),
+    for (_, record) in name_formfactor.iter_mut() {
+        if let FormFactor::Alias(name) = record.formfactor.clone() {
+            match no_alias.get(&name) {
+                Some(ff) => record.formfactor = ff.clone(),
                 None => bail!("undefined aliased form factor '{name}'"),
             }
         }
@@ -198,13 +207,13 @@ fn convert_alias(name_formfactor: &mut BTreeMap<String, FormFactor>) -> Result<(
 }
 
 /// Helper to convert all united variants to combined, tabulated form factors using the Debye formula
-fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
+fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
     const TABLE_SIZE: usize = 100;
     const MAX_Q: f64 = 2.0; // Å⁻¹
 
     let no_united = &formfactor
         .iter()
-        .filter(|(_, ff)| !matches!(ff, FormFactor::United { .. }))
+        .filter(|(_, record)| !matches!(record.formfactor, FormFactor::United { .. }))
         .map(|(name, ff)| (name.clone(), ff.clone()))
         .collect::<BTreeMap<_, _>>();
 
@@ -217,7 +226,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
             .get(center)
             .ok_or_else(|| anyhow::anyhow!("undefined central atom form factor '{center}'"))?;
 
-        let (qmin, mut qmax) = center_ff.qrange();
+        let (qmin, mut qmax) = center_ff.formfactor.qrange();
         if qmax.is_infinite() {
             log::debug!("Infinite q-range for '{center}'; setting max q to {MAX_Q} Å⁻¹");
             qmax = MAX_Q;
@@ -225,7 +234,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
 
         let mut table = (0..=TABLE_SIZE)
             .map(|i| qmin + (qmax - qmin) * i as f64 / TABLE_SIZE as f64)
-            .map(|q| center_ff.eval(q).map(|f| (q, f)))
+            .map(|q| center_ff.formfactor.eval(q).map(|f| (q, f)))
             .collect::<Result<Vec<_>>>()?;
 
         for (name, r, weight) in orbit {
@@ -235,15 +244,15 @@ fn convert_united(formfactor: &mut BTreeMap<String, FormFactor>) -> Result<()> {
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
                 let qr = q.deref() * r;
-                *f += weight * orbit_ff.eval(*q)? * qr.sin() / qr;
+                *f += weight * orbit_ff.formfactor.eval(*q)? * qr.sin() / qr;
             }
         }
         Ok(FormFactor::Table(table))
     };
 
-    for (_, formfactor) in formfactor.iter_mut() {
-        if let FormFactor::United { .. } = formfactor {
-            *formfactor = eval(formfactor)?;
+    for (_, record) in formfactor.iter_mut() {
+        if let FormFactor::United { .. } = record.formfactor {
+            record.formfactor = eval(&record.formfactor)?;
         }
     }
     Ok(())

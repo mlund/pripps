@@ -9,8 +9,7 @@ df = pd.read_csv("stovgaard2010.csv")
 for residue in df.columns.to_list():
     if residue == "q" or residue == "Unnamed: 0":
         continue
-    print(f"{residue}: !Table [", end="")
+    print(f"{residue}: {{ formfactor: !Table [", end="")
     for q, I in zip(df["q"], df[residue]):
         print(f"[{q}, {I}], ", end="")
-    print("]")
-
+    print("]}\n")
