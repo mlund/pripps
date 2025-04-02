@@ -59,7 +59,7 @@ pub enum FormFactor {
     United {
         /// Central atom
         center: String,
-        /// Orbiting atoms given by tuples (name, offset, optional weight). Default weights, 𝑤ᵢ=1.
+        /// Orbiting atoms given by a list of tuples (name, offset in Å, optional weight). Default weights, 𝑤ᵢ=1.
         orbit: Vec<(String, f64, Option<f64>)>,
     },
 }
@@ -110,6 +110,20 @@ impl FormFactor {
             United { center, .. } => bail!("unexpected united form factor '{center}'"),
         };
         Ok(formfactor)
+    }
+    /// Evaluate form factor, 𝐹(𝑞), with added solvent
+    ///
+    /// 𝐼(𝑞) = 𝐹(𝑞) + 𝑤⋅𝐹_solvent(𝑞)⋅sin(𝑞⋅offset)/(𝑞⋅offset)
+    pub fn eval_with_solvent(
+        &self,
+        q: f64,
+        solvent: &FormFactor,
+        offset: f64,
+        weight: Option<f64>,
+    ) -> Result<f64> {
+        let intensity = self.eval(q)?
+            + weight.unwrap_or(1.0) * solvent.eval(q)? * f64::sin(q * offset) / (q * offset);
+        Ok(intensity)
     }
 }
 

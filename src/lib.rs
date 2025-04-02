@@ -1,6 +1,7 @@
 pub mod cli;
 mod debye;
 pub mod explicit;
+mod solvate;
 mod structure;
 mod trajectory;
 use anyhow::{Result, bail};
@@ -84,6 +85,7 @@ impl Pripps {
         })
     }
 
+    /// Construct a new instance of `IntensityCalculator` based on CLI input
     pub fn make_method(&self, command: cli::Commands) -> Result<Box<dyn IntensityCalculator>> {
         use cli::Commands::*;
         match command {
