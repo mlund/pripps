@@ -22,6 +22,7 @@ use std::{
     fmt::{self, Display, Formatter},
     path::Path,
 };
+use voronota::{Ball, RadicalTessellation};
 
 /// Ad hoc molecular structure containing atoms with positions, masses, charges, and radii
 #[derive(Debug, Clone, Default)]
@@ -30,8 +31,8 @@ pub struct Structure {
     pub pos: Vec<Vector3>,
     /// Atom kind ids
     pub ids: Vec<usize>,
-    /// Solvent accessible surface area for each atom
-    pub sasa: Option<Vec<f64>>,
+    /// Radii of each atom
+    pub radii: Vec<f64>,
 }
 
 impl Structure {
@@ -46,7 +47,7 @@ impl Structure {
         traj.read(&mut frame)?;
 
         let pos = frame.positions().iter().map(to_vector3).collect();
-        let ids = frame
+        let ids: Vec<_> = frame
             .iter_atoms()
             .map(|atom| {
                 atomkinds
@@ -55,11 +56,17 @@ impl Structure {
                     .context(format!("unknown atom name in file: {:?}", atom.name()))
             })
             .try_collect()?;
-        Ok(Self {
-            pos,
-            ids,
-            sasa: None,
-        })
+        let radii = frame
+            .iter_atoms()
+            .map(|atom| {
+                atomkinds
+                    .find_name(&atom.name())
+                    .map(|kind| kind.sigma().map(|sigma| 0.5 * sigma))
+                    .unwrap_or_default()
+                    .context(format!("unknown atom name in file: {:?}", atom.name()))
+            })
+            .try_collect()?;
+        Ok(Self { pos, ids, radii })
     }
 
     /// Calculate N x N distance matrix
@@ -87,6 +94,26 @@ impl Structure {
                 * Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
         }
         Ok(())
+    }
+    /// Calculate SASA for each atom
+    pub fn calc_sasa(&self, probe_radius: f64) -> Vec<f64> {
+        let balls = self
+            .pos
+            .iter()
+            .zip(&self.radii)
+            .map(|(pos, radius)| Ball {
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                r: *radius,
+            })
+            .collect();
+
+        RadicalTessellation::from_balls(probe_radius, &balls, None)
+            .cells
+            .iter()
+            .map(|c| c.sas_area)
+            .collect()
     }
 }
 
