@@ -23,7 +23,12 @@ use std::collections::BTreeMap;
 /// Used to deserialize from YAML file
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct AtomRecord {
+    /// Radius of the atom in Å
     radius: Option<f64>,
+    /// Solvent radius in Å. TODO: better name
+    dsv: Option<f64>,
+    /// Form factor for the atom
+    #[serde(alias = "ff")]
     formfactor: FormFactor,
 }
 
