@@ -12,13 +12,13 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::{AtomKind, AtomKindBuilder};
+use crate::{AtomKind, AtomKindBuilder, sinc};
 use anyhow::{Result, bail};
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use std::{collections::BTreeMap, ops::Deref};
+use std::collections::BTreeMap;
 
 /// Used to deserialize from YAML file
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -121,8 +121,7 @@ impl FormFactor {
         offset: f64,
         weight: Option<f64>,
     ) -> Result<f64> {
-        let intensity = self.eval(q)?
-            + weight.unwrap_or(1.0) * solvent.eval(q)? * f64::sin(q * offset) / (q * offset);
+        let intensity = self.eval(q)? + weight.unwrap_or(1.0) * solvent.eval(q)? * sinc(q * offset);
         Ok(intensity)
     }
 }
@@ -236,11 +235,12 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
         let FormFactor::United { center, orbit } = ff else {
             bail!("united form factor expected");
         };
-        let center_ff = no_united
+        let center_ff = &no_united
             .get(center)
-            .ok_or_else(|| anyhow::anyhow!("undefined central atom form factor '{center}'"))?;
+            .ok_or_else(|| anyhow::anyhow!("undefined central atom form factor '{center}'"))?
+            .formfactor;
 
-        let (qmin, mut qmax) = center_ff.formfactor.qrange();
+        let (qmin, mut qmax) = center_ff.qrange();
         if qmax.is_infinite() {
             log::debug!("Infinite q-range for '{center}'; setting max q to {MAX_Q} Å⁻¹");
             qmax = MAX_Q;
@@ -248,17 +248,17 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
 
         let mut table = (0..=TABLE_SIZE)
             .map(|i| qmin + (qmax - qmin) * i as f64 / TABLE_SIZE as f64)
-            .map(|q| center_ff.formfactor.eval(q).map(|f| (q, f)))
+            .map(|q| center_ff.eval(q).map(|f| (q, f)))
             .collect::<Result<Vec<_>>>()?;
 
         for (name, r, weight) in orbit {
-            let orbit_ff = no_united
+            let orbit_ff = &no_united
                 .get(name)
-                .ok_or_else(|| anyhow::anyhow!("undefined orbiting atom form factor '{name}'"))?;
+                .ok_or_else(|| anyhow::anyhow!("undefined orbiting atom form factor '{name}'"))?
+                .formfactor;
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
-                let qr = q.deref() * r;
-                *f += weight * orbit_ff.formfactor.eval(*q)? * qr.sin() / qr;
+                *f += weight * orbit_ff.eval(*q)? * sinc(*q * r);
             }
         }
         Ok(FormFactor::Table(table))

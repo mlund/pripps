@@ -56,6 +56,7 @@ impl Structure {
                     .context(format!("unknown atom name in file: {:?}", atom.name()))
             })
             .try_collect()?;
+
         let radii = frame
             .iter_atoms()
             .map(|atom| {
@@ -66,6 +67,7 @@ impl Structure {
                     .context(format!("unknown atom name in file: {:?}", atom.name()))
             })
             .try_collect()?;
+
         Ok(Self { pos, ids, radii })
     }
 
@@ -97,6 +99,7 @@ impl Structure {
     }
     /// Calculate SASA for each atom
     pub fn calc_sasa(&self, probe_radius: f64) -> Vec<f64> {
+        debug_assert_eq!(self.pos.len(), self.radii.len());
         let balls = self
             .pos
             .iter()
@@ -105,14 +108,13 @@ impl Structure {
                 x: pos.x,
                 y: pos.y,
                 z: pos.z,
-                r: *radius,
+                r: 3.0, // WARNING: USE RADIUS INSTEAD
             })
             .collect();
 
-        RadicalTessellation::from_balls(probe_radius, &balls, None)
-            .cells
-            .iter()
-            .map(|c| c.sas_area)
+        let tesselated = RadicalTessellation::from_balls(probe_radius, &balls, None);
+        (0..self.pos.len())
+            .map(|i| tesselated.available_area(i))
             .collect()
     }
 }

@@ -20,6 +20,17 @@ use anyhow::Result;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
 
+/// Returns sin(x)/x for x != 0, and 1 for x = 0
+#[inline]
+pub fn sinc(x: f64) -> f64 {
+    const NEARLY_ZERO: f64 = 1e-10;
+    if x.abs() < NEARLY_ZERO {
+        1.0
+    } else {
+        x.sin() / x
+    }
+}
+
 pub struct DebyeIntensity {
     /// List of q values
     q_values: Vec<f64>,
@@ -40,6 +51,8 @@ impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
         let distance_matrix = structure.distance_matrix();
+        let sasa = structure.calc_sasa(1.4);
+        println!("sasa: {:?}", sasa);
         let intensities = self
             .q_values
             .par_iter()
@@ -49,13 +62,14 @@ impl IntensityCalculator for DebyeIntensity {
                     &self.formfactors,
                     &distance_matrix,
                     *q,
-                    None,
+                    Some(sasa.clone()),
                 )
             })
             .collect::<Result<Vec<f64>>>()?;
 
         Ok(self.q_values.iter().cloned().zip(intensities).collect())
     }
+
     fn set_side_lengths(&self, _side_lengths: crate::Vector3) {
         // The Debye formula does not depend on box side lengths
     }
@@ -76,20 +90,39 @@ fn intensity_at_q(
     formfactors: &FormFactorMap,
     distance_matrix: &DMatrix<f64>,
     q: f64,
-    solvent_correction: Option<Vec<f64>>,
+    sasa: Option<Vec<f64>>,
 ) -> Result<f64> {
     log::trace!("Calculating I(q) for q = {}", q);
     const NEARLY_ZERO: f64 = 1e-10;
 
+    let water_ff = formfactors
+        .iter()
+        .find(|(id, _)| id.name() == "H2O")
+        .map(|(_, ff)| ff)
+        .expect("water form factor required");
+
+    // TODO: Optimize by storing in static table, see std::sync::LazyLock
     let mut formfactors = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
-    if let Some(solvent) = solvent_correction {
-        for (i, q) in formfactors.iter_mut().enumerate() {
-            *q += solvent[i];
+
+    // Solvent correction using SASA
+    if let Some(sasa) = sasa {
+        debug_assert_eq!(sasa.len(), formfactors.len());
+        let offset = 5.0; // Å
+        let scale = 1.0;
+        let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
+        let max_sasa = sasa
+            .iter()
+            .cloned()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        for (intensity, sasa) in formfactors.iter_mut().zip(sasa) {
+            *intensity += sasa / max_sasa * water_ff;
         }
     }
+
     let formfactor_product = &formfactors * formfactors.transpose();
 
-    // avoid division by zero: sin(𝑥)/𝑥 -> 1 as 𝑥 -> 0
+    // Avoid division by zero: sin(𝑥)/𝑥 -> 1 as 𝑥 -> 0
     // Taylor expansion: sin(𝑥)/𝑥 ≈ 1 - 𝑥²/6 + 𝑥⁴/120 - 𝑥⁶/5040 ...
     if q.abs() < NEARLY_ZERO {
         intensity_sum(atom_ids, &formfactor_product, distance_matrix, q, |_| 1.0)

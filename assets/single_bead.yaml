@@ -4,6 +4,22 @@
 C: { radius: 1.5, formfactor: !Constant 1.0 }
 H: { formfactor: !Constant 1.0 }
 CH: { formfactor: !United { center: "C", orbit: [["H", 1.5, null]] } }
+H2O:
+  {
+    formfactor:
+      !Gaussian {
+        qrange: [0.0, 1.0],
+        ab:
+          [
+            [2.960427, 14.182259],
+            [2.508818, 5.936858],
+            [0.637853, 0.112726],
+            [0.722838, 34.958481],
+            [1.142756, 0.39024],
+          ],
+        c: 0.027014,
+      },
+  }
 ALA:
   {
     formfactor:
