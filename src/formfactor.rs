@@ -53,7 +53,7 @@ pub enum FormFactor {
     Alias(String),
     /// United form factor where a central atom is flanked by multiple other atoms with distance offsets, 𝑟ᵢ
     ///
-    /// 𝐹′(𝑞) = 𝐹(𝑞) + ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)⋅sin(𝑞𝑟ᵢ)/𝑞𝑟ᵢ
+    /// 𝐹′(𝑞) = 𝐹(𝑞) + ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)⋅sinc(𝑞𝑟ᵢ)
     ///
     /// Used only during deserialization where it is replaced with a tabulated form factor
     United {
@@ -62,6 +62,10 @@ pub enum FormFactor {
         /// Orbiting atoms given by a list of tuples (name, offset in Å, optional weight). Default weights, 𝑤ᵢ=1.
         orbit: Vec<(String, f64, Option<f64>)>,
     },
+    /// Linear combination of two or more form factors
+    /// 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞) / ∑ 𝑤ᵢ
+    /// Used only during deserialization where it is replaced with a tabulated form factor
+    Linear(Vec<(String, f64)>),
 }
 
 impl FormFactor {
@@ -70,11 +74,13 @@ impl FormFactor {
         use FormFactor::*;
         match self {
             Constant(_) => (0.0, f64::INFINITY),
+            Gaussian { qrange, .. } => *qrange,
             Polynomial { qrange, .. } => *qrange,
             Table(table) => (table[0].0, table[table.len() - 1].0),
-            Gaussian { qrange, .. } => *qrange,
+            // These should be converted and filtered out during deserialization
             Alias(_) => (0.0, f64::INFINITY),
             United { .. } => (0.0, f64::INFINITY),
+            Linear { .. } => (0.0, f64::INFINITY),
         }
     }
     /// Determine if a q value is within valid q-range
@@ -102,18 +108,19 @@ impl FormFactor {
         }
         let formfactor = match self {
             Constant(c) => *c,
+            Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
             Polynomial { coeff, .. } => eval_polynomium(coeff, q),
             Table(table) => interpolate(table, q),
-            Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
             // These should be converted and filtered out during deserialization
             Alias(name) => bail!("Unexpected alias form factor '{name}'"),
+            Linear { .. } => bail!("unexpected linear form factor"),
             United { center, .. } => bail!("unexpected united form factor '{center}'"),
         };
         Ok(formfactor)
     }
     /// Evaluate form factor, 𝐹(𝑞), with added solvent
     ///
-    /// 𝐼(𝑞) = 𝐹(𝑞) + 𝑤⋅𝐹_solvent(𝑞)⋅sin(𝑞⋅offset)/(𝑞⋅offset)
+    /// 𝐼(𝑞) = 𝐹(𝑞) + 𝑤⋅𝐹_solvent(𝑞)⋅sinc(𝑞⋅offset)
     pub fn eval_with_solvent(
         &self,
         q: f64,
@@ -173,6 +180,7 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
 
     convert_alias(&mut formfactor)?;
+    convert_linear(&mut formfactor)?;
     convert_united(&mut formfactor)?;
 
     let formfactor: FormFactorMap = formfactor
@@ -195,6 +203,47 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
         formfactor.len(),
     );
     Ok(formfactor)
+}
+
+/// Helper to convert "Linear" form factors to tabulated form factors
+fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
+    const TABLE_SIZE: usize = 100;
+    const MAX_Q: f64 = 2.0; // Å⁻¹
+
+    let no_linear = &formfactor
+        .iter()
+        .filter(|(_, record)| !matches!(record.formfactor, FormFactor::Linear { .. }))
+        .map(|(name, ff)| (name.clone(), ff.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    for (_, record) in formfactor.iter_mut() {
+        let FormFactor::Linear(components) = record.formfactor.clone() else {
+            continue;
+        };
+
+        let weight_sum = components.iter().map(|(_, weight)| weight).sum::<f64>();
+
+        let eval = |name, weight, q| -> Result<f64> {
+            let ff = &no_linear
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("undefined form factor '{name}'"))?
+                .formfactor;
+            Ok(weight / weight_sum * ff.eval(q)?)
+        };
+
+        let table = (0..=TABLE_SIZE)
+            .map(|i| i as f64 / TABLE_SIZE as f64 * MAX_Q)
+            .map(|q| {
+                components
+                    .iter()
+                    .map(|(name, weight)| eval(name, weight, q))
+                    .sum::<Result<f64>>()
+                    .map(|f| (q, f))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        record.formfactor = FormFactor::Table(table);
+    }
+    Ok(())
 }
 
 /// Helper to convert alias form factors to the actual form factors
