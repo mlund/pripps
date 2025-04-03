@@ -20,7 +20,7 @@ use anyhow::Result;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
 
-/// Returns sin(x)/x for x != 0, and 1 for x = 0
+/// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0
 #[inline]
 pub fn sinc(x: f64) -> f64 {
     const NEARLY_ZERO: f64 = 1e-10;
@@ -70,7 +70,8 @@ impl IntensityCalculator for DebyeIntensity {
         Ok(self.q_values.iter().cloned().zip(intensities).collect())
     }
 
-    fn set_side_lengths(&self, _side_lengths: crate::Vector3) {
+    #[allow(unused_variables)]
+    fn set_side_lengths(&self, side_lengths: crate::Vector3) {
         // The Debye formula does not depend on box side lengths
     }
 }
@@ -92,9 +93,7 @@ fn intensity_at_q(
     q: f64,
     sasa: Option<Vec<f64>>,
 ) -> Result<f64> {
-    log::trace!("Calculating I(q) for q = {}", q);
-    const NEARLY_ZERO: f64 = 1e-10;
-
+    log::trace!("Calculating 𝐼(𝑞) for 𝑞 = {}", q);
     let water_ff = formfactors
         .iter()
         .find(|(id, _)| id.name() == "H2O")
@@ -107,8 +106,8 @@ fn intensity_at_q(
     // Solvent correction using SASA
     if let Some(sasa) = sasa {
         debug_assert_eq!(sasa.len(), formfactors.len());
-        let offset = 5.0; // Å
-        let scale = 1.0;
+        let offset = 0.0; // Å
+        let scale = 10.0;
         let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
         let max_sasa = sasa
             .iter()
@@ -121,15 +120,7 @@ fn intensity_at_q(
 
     let formfactor_product = &formfactors * formfactors.transpose();
 
-    // Avoid division by zero: sin(𝑥)/𝑥 -> 1 as 𝑥 -> 0
-    // Taylor expansion: sin(𝑥)/𝑥 ≈ 1 - 𝑥²/6 + 𝑥⁴/120 - 𝑥⁶/5040 ...
-    if q.abs() < NEARLY_ZERO {
-        intensity_sum(atom_ids, &formfactor_product, distance_matrix, q, |_| 1.0)
-    } else {
-        intensity_sum(atom_ids, &formfactor_product, distance_matrix, q, |qr| {
-            qr.sin() / qr
-        })
-    }
+    intensity_sum(atom_ids, &formfactor_product, distance_matrix, q)
 }
 
 /// Calculate I(q) using a generic function f(qr)
@@ -138,7 +129,6 @@ fn intensity_sum(
     formfactor_product: &DMatrix<f64>,
     distance_matrix: &DMatrix<f64>,
     q: f64,
-    func: impl Fn(f64) -> f64,
 ) -> Result<f64> {
     let n_atoms = atom_ids.len();
 
@@ -146,7 +136,7 @@ fn intensity_sum(
     for i in 0..n_atoms - 1 {
         for j in i + 1..n_atoms {
             let qr = q * distance_matrix[(i, j)];
-            off_diagonal += formfactor_product[(i, j)] * func(qr);
+            off_diagonal += formfactor_product[(i, j)] * sinc(qr);
         }
     }
 

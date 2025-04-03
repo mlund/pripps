@@ -112,11 +112,7 @@ pub fn do_main() -> Result<()> {
 }
 
 /// Write f(x) to a file
-fn write_table(
-    path: &std::path::Path,
-    intensity: &[(f64, f64)],
-    header: Option<&str>,
-) -> Result<()> {
+fn write_table(path: &std::path::Path, table: &[(f64, f64)], header: Option<&str>) -> Result<()> {
     let mut file = std::fs::File::create(path)
         .map_err(|e| anyhow::anyhow!("error writing intensity file: {e}"))?;
 
@@ -126,8 +122,8 @@ fn write_table(
         writeln!(file, "{header}")?;
     }
 
-    for (q, i) in intensity {
-        writeln!(file, "{q:.6} {i:.6}")?;
+    for (x, y) in table {
+        writeln!(file, "{x:.6} {y:.6}")?;
     }
     Ok(())
 }

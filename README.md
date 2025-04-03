@@ -45,7 +45,8 @@ Description                                | Keyword
 𝐹(𝑞) = 𝑐                                   | `!Constant`
 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ...                  | `!Polynomial`
 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)                  | `!Gaussian`
-𝐹′(𝑞) = 𝐹(𝑞) + ∑𝑤ᵢ𝐹ᵢ(𝑞)⋅sin(𝑞𝑟ᵢ)/𝑞𝑟ᵢ       | `!United`
+𝐹(𝑞) = 𝐹c(𝑞) + ∑𝑤ᵢ𝐹ᵢ(𝑞)⋅sinc(𝑞𝑟ᵢ)          | `!United`
+𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)                          | `!Linear`
 Array of `[𝑞, 𝐹]` pairs                    | `!Table`
 Alias for a previously defined form factor | `!Alias`
 
@@ -58,8 +59,8 @@ H: { formfactor: !Constant 1.0, radius: 1.0 }
 # 'ff' is an alias for 'formfactor'
 N: { ff: !Table [ [0.0, 8.9], [0.1, 7.8], ...] }
 C: { ff: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0], [0.2, 3.0], ...], c: 0.4 } }
-# United C and H where H is offset by 1.5 Å and added with weight 1 (`null`):
-CH: { ff: !United { center: C, orbit: [[H, 1.5, null]] } }
+# United C and H where H is offset by 1.5 Å and added with weight 1:
+CH: { ff: !United { center: C, orbit: [[H, 1.5, 1.0]] } }
 CA: { ff: !Alias C }
 ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]} }
 ```

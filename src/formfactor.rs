@@ -35,6 +35,8 @@ struct AtomRecord {
 
 impl AtomRecord {
     /// Helper to convert input file record to AtomKind
+    ///
+    /// The optional `dsv` field is saved as a custom property.
     fn to_atomkind(&self, name: &str, id: usize) -> Result<AtomKind> {
         let custom = match self.dsv {
             Some(dsv) => HashMap::from([("dsv".into(), Value::Float(dsv))]),
@@ -60,7 +62,7 @@ pub enum FormFactor {
     Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
     /// Interpolated 𝐹(𝑞) from a list of (𝑞,𝐹) pairs
     Table(Vec<(f64, f64)>),
-    /// Multi-exponential, 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)
+    /// Multi-exponential, 𝐹(𝑞) = 𝑐 + ∑ 𝑎ᵢ exp(−𝑏ᵢ𝑞²)
     Gaussian {
         /// Valid q range, inclusive
         qrange: (f64, f64),
@@ -85,7 +87,7 @@ pub enum FormFactor {
         orbit: Vec<(String, f64, Option<f64>)>,
     },
     /// Linear combination of two or more form factors
-    /// 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞) / ∑ 𝑤ᵢ
+    /// 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)
     /// Used only during deserialization where it is replaced with a tabulated form factor
     Linear(Vec<(String, f64)>),
 }
@@ -140,19 +142,6 @@ impl FormFactor {
         };
         Ok(formfactor)
     }
-    /// Evaluate form factor, 𝐹(𝑞), with added solvent
-    ///
-    /// 𝐼(𝑞) = 𝐹(𝑞) + 𝑤⋅𝐹_solvent(𝑞)⋅sinc(𝑞⋅offset)
-    pub fn eval_with_solvent(
-        &self,
-        q: f64,
-        solvent: &FormFactor,
-        offset: f64,
-        weight: Option<f64>,
-    ) -> Result<f64> {
-        let intensity = self.eval(q)? + weight.unwrap_or(1.0) * solvent.eval(q)? * sinc(q * offset);
-        Ok(intensity)
-    }
 }
 
 /// Evaluate Gaussian form factor, 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)
@@ -205,6 +194,7 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     convert_linear(&mut formfactor)?;
     convert_united(&mut formfactor)?;
 
+    // (String, AtomRecord) -> (AtomKind, FormFactor)
     let formfactor: FormFactorMap = formfactor
         .into_iter()
         .enumerate()
@@ -240,14 +230,12 @@ fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
             continue;
         };
 
-        let weight_sum = components.iter().map(|(_, weight)| weight).sum::<f64>();
-
         let eval = |name, weight, q| -> Result<f64> {
             let ff = &no_linear
                 .get(name)
                 .ok_or_else(|| anyhow::anyhow!("undefined form factor '{name}'"))?
                 .formfactor;
-            Ok(weight / weight_sum * ff.eval(q)?)
+            Ok(weight * ff.eval(q)?)
         };
 
         let table = (0..=TABLE_SIZE)
@@ -299,7 +287,7 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
         .collect::<BTreeMap<_, _>>();
 
     // Evaluates single united form factor to a tabulated form factor
-    let eval = |ff: &FormFactor| -> Result<FormFactor> {
+    let eval = |ff: &FormFactor| {
         let FormFactor::United { center, orbit } = ff else {
             bail!("united form factor expected");
         };
@@ -319,14 +307,14 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
             .map(|q| center_ff.eval(q).map(|f| (q, f)))
             .try_collect()?;
 
-        for (name, r, weight) in orbit {
+        for (name, offset, weight) in orbit {
             let orbit_ff = &no_united
                 .get(name)
                 .ok_or_else(|| anyhow::anyhow!("undefined orbiting atom form factor '{name}'"))?
                 .formfactor;
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
-                *f += weight * orbit_ff.eval(*q)? * sinc(*q * r);
+                *f += weight * orbit_ff.eval(*q)? * sinc(*q * offset);
             }
         }
         Ok(FormFactor::Table(table))
