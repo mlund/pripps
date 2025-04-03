@@ -52,7 +52,7 @@ impl IntensityCalculator for DebyeIntensity {
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
         let distance_matrix = structure.distance_matrix();
         let sasa = structure.calc_sasa(1.4);
-        println!("sasa: {:?}", sasa);
+        log::info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
         let intensities = self
             .q_values
             .par_iter()

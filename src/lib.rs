@@ -4,13 +4,16 @@ pub mod explicit;
 mod solvate;
 mod structure;
 mod trajectory;
+
 use anyhow::{Result, bail};
 use debye::DebyeIntensity;
 use explicit::DirectTransform;
 use indicatif::ProgressBar;
-use std::collections::BTreeMap;
-use std::iter::zip;
-use std::path::{self, Path};
+use std::{
+    collections::BTreeMap,
+    iter::zip,
+    path::{self, Path},
+};
 use trajectory::{XtcIterator, get_side_lengths};
 
 pub use structure::Structure;

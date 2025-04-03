@@ -14,11 +14,12 @@
 
 use crate::{AtomKind, AtomKindBuilder, sinc};
 use anyhow::{Result, bail};
+use faunus::topology::Value;
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Used to deserialize from YAML file
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -30,6 +31,22 @@ struct AtomRecord {
     /// Form factor for the atom
     #[serde(alias = "ff")]
     formfactor: FormFactor,
+}
+
+impl AtomRecord {
+    /// Helper to convert input file record to AtomKind
+    fn to_atomkind(&self, name: &str, id: usize) -> Result<AtomKind> {
+        let custom = match self.dsv {
+            Some(dsv) => HashMap::from([("dsv".into(), Value::Float(dsv))]),
+            None => HashMap::new(),
+        };
+        Ok(AtomKindBuilder::default()
+            .name(name)
+            .id(id)
+            .sigma(2.0 * self.radius.unwrap_or(0.0))
+            .custom(custom)
+            .build()?)
+    }
 }
 
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
@@ -101,7 +118,7 @@ impl FormFactor {
         let table = qvalues
             .into_iter()
             .map(|q| self.eval(q).map(|f| (q, f)))
-            .collect::<Result<Vec<_>>>()?;
+            .try_collect()?;
         Ok(FormFactor::Table(table))
     }
 
@@ -178,8 +195,8 @@ fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
 
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
 pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
-    let file =
-        std::fs::File::open(path).or_else(|e| bail!("error opening formfactor file: {e}"))?;
+    let file = std::fs::File::open(path)
+        .or_else(|e| bail!("error opening formfactor file {}: {}", path.display(), e))?;
 
     let mut formfactor: BTreeMap<String, AtomRecord> = serde_yaml::from_reader(file)
         .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
@@ -192,11 +209,8 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
         .into_iter()
         .enumerate()
         .map(|(id, (name, record))| {
-            AtomKindBuilder::default()
-                .name(name)
-                .id(id)
-                .sigma(2.0 * record.radius.unwrap_or(0.0))
-                .build()
+            record
+                .to_atomkind(&name, id)
                 .map(|kind| (kind, record.formfactor))
         })
         .try_collect()?;
@@ -245,7 +259,7 @@ fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
                     .sum::<Result<f64>>()
                     .map(|f| (q, f))
             })
-            .collect::<Result<Vec<_>>>()?;
+            .try_collect()?;
         record.formfactor = FormFactor::Table(table);
     }
     Ok(())
@@ -300,10 +314,10 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
             qmax = MAX_Q;
         }
 
-        let mut table = (0..=TABLE_SIZE)
+        let mut table: Vec<_> = (0..=TABLE_SIZE)
             .map(|i| qmin + (qmax - qmin) * i as f64 / TABLE_SIZE as f64)
             .map(|q| center_ff.eval(q).map(|f| (q, f)))
-            .collect::<Result<Vec<_>>>()?;
+            .try_collect()?;
 
         for (name, r, weight) in orbit {
             let orbit_ff = &no_united
@@ -333,10 +347,7 @@ pub fn formfactor_by_index(
     atom_ids: &[usize],
 ) -> Result<DVector<f64>> {
     // form factors for each atom kind
-    let ff_by_id = formfactors
-        .values()
-        .map(|f| f.eval(q))
-        .collect::<Result<Vec<_>>>()?;
+    let ff_by_id: Vec<_> = formfactors.values().map(|f| f.eval(q)).try_collect()?;
 
     Ok(DVector::from_iterator(
         atom_ids.len(),
@@ -346,10 +357,7 @@ pub fn formfactor_by_index(
 
 /// Create S x S matrix of form factor products at a given q value (S = atom id)
 pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
-    let f_vec = formfactors
-        .values()
-        .map(|f| f.eval(q))
-        .collect::<Result<Vec<_>>>()?;
+    let f_vec = formfactors.values().map(|f| f.eval(q)).try_collect()?;
     let f = DVector::from_vec(f_vec);
     Ok(&f * f.transpose())
 }

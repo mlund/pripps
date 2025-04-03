@@ -1,3 +1,12 @@
+#
+# Atomic properties for PRIPPS
+#
+# Units:
+# - length (Å)
+# - volume (Å3)
+# - wave vector, q (1/Å)
+#
+
 # Nitrogen
 N:
   {
