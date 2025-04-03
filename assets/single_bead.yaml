@@ -75,7 +75,7 @@ S:
       },
   }
 # Sulphur alias
-SE: { ff: !Alias S }
+SE: { radius: 1.68, dsv: 19.86, ff: !Alias S }
 
 # Hydrogen
 H:
