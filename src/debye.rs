@@ -112,10 +112,9 @@ fn intensity_at_q(
         let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
         let max_sasa = sasa
             .iter()
-            .cloned()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap();
-        for (intensity, sasa) in formfactors.iter_mut().zip(sasa) {
+        for (intensity, sasa) in formfactors.iter_mut().zip(&sasa) {
             *intensity += sasa / max_sasa * water_ff;
         }
     }
