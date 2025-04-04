@@ -478,30 +478,8 @@ I:
   }
 
 #
-# Single amino acid bead fitted to rotamer library (I. Vinterbladh)
+# Single amino acid beads fitted to atomic rotamer library using PepsiSAXS (I. Vinterbladh, 2025)
 #
-# - ASP  :  { radius: 3.6 }
-# - CTR  :  { radius: 2.0 }
-# - GLU  :  { radius: 3.8 }
-# - TYR  :  { radius: 4.1 }
-# - CYS  :  { radius: 3.6 }
-# - HIS  :  { radius: 3.9 }
-# - NTR  :  { radius: 2.0 }
-# - LYS  :  { radius: 3.7 }
-# - ARG  :  { radius: 4.0 }
-# - ALA  :  { radius: 3.1 }
-# - ILE  :  { radius: 3.6 }
-# - LEU  :  { radius: 3.6 }
-# - MET  :  { radius: 3.8 }
-# - PHE  :  { radius: 3.9 }
-# - PRO  :  { radius: 3.4 }
-# - TRP  :  { radius: 4.3 }
-# - VAL  :  { radius: 3.4 }
-# - SER  :  { radius: 3.3 }
-# - THR  :  { radius: 3.5 }
-# - ASN  :  { radius: 3.6 }
-# - GLN  :  { radius: 3.8 }
-# - GLY  :  { radius: 2.9 }
 
 ALA:
   {

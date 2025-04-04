@@ -108,7 +108,7 @@ impl Structure {
                 x: pos.x,
                 y: pos.y,
                 z: pos.z,
-                r: 3.0, // WARNING: USE RADIUS INSTEAD
+                r: *radius,
             })
             .collect();
 

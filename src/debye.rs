@@ -16,14 +16,14 @@ use crate::{
     IntensityCalculator, Structure,
     formfactor::{self, FormFactorMap},
 };
-use anyhow::Result;
-use nalgebra::DMatrix;
+use anyhow::{Result, anyhow};
+use nalgebra::{DMatrix, distance};
 use rayon::prelude::*;
 
 /// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0
 #[inline]
 pub fn sinc(x: f64) -> f64 {
-    const NEARLY_ZERO: f64 = 1e-10;
+    const NEARLY_ZERO: f64 = 1e-8;
     if x.abs() < NEARLY_ZERO {
         1.0
     } else {
@@ -98,7 +98,7 @@ fn intensity_at_q(
         .iter()
         .find(|(id, _)| id.name() == "H2O")
         .map(|(_, ff)| ff)
-        .expect("water form factor required");
+        .ok_or_else(|| anyhow!("water form factor 'H2O' not found"))?;
 
     // TODO: Optimize by storing in static table, see std::sync::LazyLock
     let mut formfactors = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
@@ -107,7 +107,7 @@ fn intensity_at_q(
     if let Some(sasa) = sasa {
         debug_assert_eq!(sasa.len(), formfactors.len());
         let offset = 0.0; // Å
-        let scale = 10.0;
+        let scale = 0.0;
         let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
         let max_sasa = sasa
             .iter()
@@ -118,19 +118,24 @@ fn intensity_at_q(
         }
     }
 
+    // N x N matrix of formfactor products (N = number of atoms)
     let formfactor_product = &formfactors * formfactors.transpose();
 
-    intensity_sum(atom_ids, &formfactor_product, distance_matrix, q)
+    intensity_sum(&formfactor_product, distance_matrix, q)
 }
 
-/// Calculate I(q) using a generic function f(qr)
+/// Calculate I(q)
+///
+/// The two input matrices must be N x N (N = number of atoms)
 fn intensity_sum(
-    atom_ids: &[usize],
     formfactor_product: &DMatrix<f64>,
     distance_matrix: &DMatrix<f64>,
     q: f64,
 ) -> Result<f64> {
-    let n_atoms = atom_ids.len();
+    assert!(distance_matrix.is_square());
+    assert_eq!(distance_matrix.shape(), formfactor_product.shape());
+
+    let n_atoms = distance_matrix.ncols();
 
     let mut off_diagonal = 0.0;
     for i in 0..n_atoms - 1 {
@@ -140,10 +145,7 @@ fn intensity_sum(
         }
     }
 
-    let diagonal: f64 = atom_ids
-        .iter()
-        .map(|&id| formfactor_product[(id, id)])
-        .sum();
+    let diagonal = formfactor_product.diagonal().sum();
 
     Ok(2.0 * off_diagonal + diagonal)
 }

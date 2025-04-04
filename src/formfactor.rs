@@ -13,7 +13,7 @@
 // limitations under the license.
 
 use crate::{AtomKind, AtomKindBuilder, sinc};
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use faunus::topology::Value;
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
@@ -144,7 +144,7 @@ impl FormFactor {
     }
 }
 
-/// Evaluate Gaussian form factor, 𝐹(𝑞) = 𝑐 + ∑𝑎ᵢ exp(−𝑏ᵢ𝑞²)
+/// Evaluate Gaussian form factor, 𝐹(𝑞) = 𝑐 + ∑ 𝑎ᵢ exp(−𝑏ᵢ𝑞²)
 #[inline]
 fn eval_gaussian(q: f64, ab: &[(f64, f64)], c: f64) -> f64 {
     ab.iter()
@@ -153,7 +153,7 @@ fn eval_gaussian(q: f64, ab: &[(f64, f64)], c: f64) -> f64 {
         + c
 }
 
-/// Evaluate polynomium form factor, 𝐹(𝑞) = c₀ + c₁𝑞 + c₂𝑞² + ...
+/// Evaluate polynomium form factor, 𝐹(𝑞) = ∑ 𝑐ᵢ𝑞ⁱ
 #[inline]
 fn eval_polynomium(coeff: &[f64], q: f64) -> f64 {
     coeff
@@ -187,8 +187,8 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
     let file = std::fs::File::open(path)
         .or_else(|e| bail!("error opening formfactor file {}: {}", path.display(), e))?;
 
-    let mut formfactor: BTreeMap<String, AtomRecord> = serde_yaml::from_reader(file)
-        .map_err(|e| anyhow::anyhow!("error parsing formfactor file: {e}"))?;
+    let mut formfactor: BTreeMap<String, AtomRecord> =
+        serde_yaml::from_reader(file).map_err(|e| anyhow!("error parsing formfactor file: {e}"))?;
 
     convert_alias(&mut formfactor)?;
     convert_linear(&mut formfactor)?;
@@ -230,16 +230,23 @@ fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
             continue;
         };
 
-        let eval = |name, weight, q| -> Result<f64> {
-            let ff = &no_linear
+        let get_ff = |name| {
+            no_linear
                 .get(name)
-                .ok_or_else(|| anyhow::anyhow!("undefined form factor '{name}'"))?
-                .formfactor;
-            Ok(weight * ff.eval(q)?)
+                .map(|r| &r.formfactor)
+                .ok_or_else(|| anyhow!("undefined form factor '{name}'"))
         };
 
+        // Find smallest q_max in the components
+        let mut qmax = MAX_Q;
+        for (name, ..) in components.iter() {
+            qmax = get_ff(name)?.qrange().1.min(qmax);
+        }
+
+        let eval = |name, weight, q| Ok(weight * get_ff(name)?.eval(q)?);
+
         let table = (0..=TABLE_SIZE)
-            .map(|i| i as f64 / TABLE_SIZE as f64 * MAX_Q)
+            .map(|i| i as f64 / TABLE_SIZE as f64 * qmax)
             .map(|q| {
                 components
                     .iter()
@@ -293,8 +300,8 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
         };
         let center_ff = &no_united
             .get(center)
-            .ok_or_else(|| anyhow::anyhow!("undefined central atom form factor '{center}'"))?
-            .formfactor;
+            .map(|r| &r.formfactor)
+            .ok_or_else(|| anyhow!("undefined central atom form factor '{center}'"))?;
 
         let (qmin, mut qmax) = center_ff.qrange();
         if qmax.is_infinite() {
@@ -310,8 +317,8 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
         for (name, offset, weight) in orbit {
             let orbit_ff = &no_united
                 .get(name)
-                .ok_or_else(|| anyhow::anyhow!("undefined orbiting atom form factor '{name}'"))?
-                .formfactor;
+                .map(|r| &r.formfactor)
+                .ok_or_else(|| anyhow!("undefined orbiting atom form factor '{name}'"))?;
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
                 *f += weight * orbit_ff.eval(*q)? * sinc(*q * offset);
