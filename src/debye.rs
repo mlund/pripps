@@ -17,7 +17,7 @@ use crate::{
     formfactor::{self, FormFactorMap},
 };
 use anyhow::{Result, anyhow};
-use nalgebra::{DMatrix, distance};
+use nalgebra::DMatrix;
 use rayon::prelude::*;
 
 /// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0
@@ -77,7 +77,7 @@ impl IntensityCalculator for DebyeIntensity {
 }
 
 /// Generate a list of q values from qmin to qmax
-fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
+pub fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
     (0..nq)
         .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
         .collect()
@@ -98,7 +98,7 @@ fn intensity_at_q(
         .iter()
         .find(|(id, _)| id.name() == "H2O")
         .map(|(_, ff)| ff)
-        .ok_or_else(|| anyhow!("water form factor 'H2O' not found"))?;
+        .ok_or_else(|| anyhow!("no water form factor 'H2O' needed for SASA calculation"))?;
 
     // TODO: Optimize by storing in static table, see std::sync::LazyLock
     let mut formfactors = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
@@ -108,13 +108,13 @@ fn intensity_at_q(
         debug_assert_eq!(sasa.len(), formfactors.len());
         let offset = 0.0; // Å
         let scale = 0.0;
-        let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
         let max_sasa = sasa
             .iter()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap();
-        for (intensity, sasa) in formfactors.iter_mut().zip(&sasa) {
-            *intensity += sasa / max_sasa * water_ff;
+        let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
+        for (ff, sasa) in formfactors.iter_mut().zip(&sasa) {
+            *ff += sasa / max_sasa * water_ff;
         }
     }
 

@@ -18,7 +18,7 @@ use trajectory::{XtcIterator, get_side_lengths};
 
 pub use structure::Structure;
 pub mod formfactor;
-pub use debye::sinc;
+pub use debye::{make_q_values, sinc};
 pub use faunus::Point as Vector3;
 pub use faunus::topology::{AtomKind, AtomKindBuilder};
 pub use formfactor::FormFactor;

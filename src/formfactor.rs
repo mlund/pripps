@@ -19,7 +19,10 @@ use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Add,
+};
 
 /// Used to deserialize from YAML file
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -51,6 +54,7 @@ impl AtomRecord {
     }
 }
 
+/// Map of form factors for each atomkind
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
 
 /// Models for site form factors, F(q)
@@ -150,7 +154,7 @@ fn eval_gaussian(q: f64, ab: &[(f64, f64)], c: f64) -> f64 {
     ab.iter()
         .map(|(a, b)| a * f64::exp(-b * q * q))
         .sum::<f64>()
-        + c
+        .add(c)
 }
 
 /// Evaluate polynomium form factor, 𝐹(𝑞) = ∑ 𝑐ᵢ𝑞ⁱ
@@ -216,7 +220,7 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
 
 /// Helper to convert "Linear" form factors to tabulated form factors
 fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
-    const TABLE_SIZE: usize = 100;
+    const TABLE_LEN: usize = 100;
     const MAX_Q: f64 = 2.0; // Å⁻¹
 
     let no_linear = &formfactor
@@ -237,24 +241,28 @@ fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
                 .ok_or_else(|| anyhow!("undefined form factor '{name}'"))
         };
 
-        // Find smallest q_max in the components
+        // 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)
+        let lin_combination = |q| -> Result<(f64, f64)> {
+            components
+                .iter()
+                .map(|(name, weight)| Ok(weight * get_ff(name)?.eval(q)?))
+                .sum::<Result<f64>>()
+                .map(|f| (q, f))
+        };
+
+        // Find highest q_min in the components
+        let mut qmin = 0.0;
+        for (name, ..) in components.iter() {
+            qmin = get_ff(name)?.qrange().0.max(qmin);
+        }
+        // Find lowest q_max in the components
         let mut qmax = MAX_Q;
         for (name, ..) in components.iter() {
             qmax = get_ff(name)?.qrange().1.min(qmax);
         }
+        let qvalues = crate::debye::make_q_values(qmin, qmax, TABLE_LEN);
 
-        let eval = |name, weight, q| Ok(weight * get_ff(name)?.eval(q)?);
-
-        let table = (0..=TABLE_SIZE)
-            .map(|i| i as f64 / TABLE_SIZE as f64 * qmax)
-            .map(|q| {
-                components
-                    .iter()
-                    .map(|(name, weight)| eval(name, weight, q))
-                    .sum::<Result<f64>>()
-                    .map(|f| (q, f))
-            })
-            .try_collect()?;
+        let table = qvalues.iter().cloned().map(lin_combination).try_collect()?;
         record.formfactor = FormFactor::Table(table);
     }
     Ok(())
@@ -342,18 +350,17 @@ pub fn formfactor_by_index(
     atom_ids: &[usize],
 ) -> Result<DVector<f64>> {
     // form factors for each atom kind
-    let ff_by_id: Vec<_> = formfactors.values().map(|f| f.eval(q)).try_collect()?;
+    let f: Vec<_> = formfactors.values().map(|f| f.eval(q)).try_collect()?;
 
     Ok(DVector::from_iterator(
         atom_ids.len(),
-        atom_ids.iter().map(|id| ff_by_id[*id]),
+        atom_ids.iter().map(|id| f[*id]),
     ))
 }
 
-/// Create S x S matrix of form factor products at a given q value (S = atom id)
+/// Create S x S matrix of form factor products at a given q value (S = number of atom types)
 pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
-    let f_vec = formfactors.values().map(|f| f.eval(q)).try_collect()?;
-    let f = DVector::from_vec(f_vec);
+    let f = DVector::from_vec(formfactors.values().map(|f| f.eval(q)).try_collect()?);
     Ok(&f * f.transpose())
 }
 

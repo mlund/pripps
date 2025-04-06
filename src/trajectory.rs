@@ -68,14 +68,14 @@ impl Iterator for XtcIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut frame = Frame::default();
-        match self.reader.read_frame(&mut frame) {
-            Ok(_) => {
+        self.reader
+            .read_frame(&mut frame)
+            .map(|_| {
                 let weight = self.weights.as_ref().map(|w| w[self.cnt]).unwrap_or(1.0);
                 self.cnt += 1;
-                Some((frame, weight))
-            }
-            Err(_) => None,
-        }
+                (frame, weight)
+            })
+            .ok()
     }
 }
 
