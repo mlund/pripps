@@ -41,15 +41,14 @@ impl AtomRecord {
     ///
     /// The optional `dsv` field is saved as a custom property.
     fn to_atomkind(&self, name: &str, id: usize) -> Result<AtomKind> {
-        let custom = match self.dsv {
-            Some(dsv) => HashMap::from([("dsv".into(), Value::Float(dsv))]),
-            None => HashMap::new(),
-        };
+        let custom = self
+            .dsv
+            .map(|dsv| HashMap::from([("dsv".to_owned(), Value::Float(dsv))]));
         Ok(AtomKindBuilder::default()
             .name(name)
             .id(id)
             .sigma(2.0 * self.radius.unwrap_or(0.0))
-            .custom(custom)
+            .custom(custom.unwrap_or_default())
             .build()?)
     }
 }
