@@ -283,10 +283,10 @@ fn convert_alias(name_formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<(
         let FormFactor::Alias(name) = record.formfactor.clone() else {
             continue;
         };
-        match no_alias.get(&name) {
-            Some(ff) => record.formfactor = ff.clone(),
-            None => bail!("undefined aliased form factor '{name}'"),
-        }
+        record.formfactor = no_alias
+            .get(&name)
+            .ok_or_else(|| anyhow!("undefined aliased form factor '{name}'"))?
+            .clone();
     }
     Ok(())
 }
