@@ -249,15 +249,13 @@ fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
                 .map(|f| (q, f))
         };
 
-        // Find highest q_min in the components
+        // Find highest q_min and lowest q_max in the components
         let mut qmin = 0.0;
-        for (name, ..) in components.iter() {
-            qmin = get_ff(name)?.qrange().0.max(qmin);
-        }
-        // Find lowest q_max in the components
         let mut qmax = MAX_Q;
         for (name, ..) in components.iter() {
-            qmax = get_ff(name)?.qrange().1.min(qmax);
+            let qrange = get_ff(name)?.qrange();
+            qmin = qrange.0.max(qmin);
+            qmax = qrange.1.min(qmax);
         }
         let qvalues = crate::debye::make_q_values(qmin, qmax, TABLE_LEN);
 
