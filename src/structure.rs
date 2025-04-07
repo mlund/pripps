@@ -36,6 +36,11 @@ pub struct Structure {
 }
 
 impl Structure {
+    /// Number of atoms in the structure
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.pos.len()
+    }
     /// Constructs a new structure from a file using chemfiles
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
         let mut traj = chemfiles::Trajectory::open(path, 'r')
@@ -47,7 +52,7 @@ impl Structure {
         traj.read(&mut frame)?;
 
         let pos = frame.positions().iter().map(to_vector3).collect();
-        let ids: Vec<_> = frame
+        let ids = frame
             .iter_atoms()
             .map(|atom| {
                 atomkinds
@@ -71,10 +76,10 @@ impl Structure {
         Ok(Self { pos, ids, radii })
     }
 
-    /// Calculate N x N distance matrix
+    /// Calculate N x N distance matrix between all atoms
     pub fn distance_matrix(&self) -> DMatrix<f64> {
-        let n = self.pos.len();
-        let mut matrix = DMatrix::<f64>::zeros(n, n);
+        let n = self.len();
+        let mut matrix = DMatrix::zeros(n, n);
         for i in 0..n - 1 {
             for j in i + 1..n {
                 let r = (self.pos[i] - self.pos[j]).norm();
