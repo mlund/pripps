@@ -1,0 +1,69 @@
+Version.......................................................... : 2.6 from 29 Jan 2020
+Run at........................................................... : ip41-190.eduroam-employee.wireless.lu.se on Tue Apr  8 09:48:19 2025
+Command-line arguments........................................... : ./Pepsi-SAXS 4lzt.cif 
+========================Reading PDB file=========================
+Read PDB file.................................................... : 4lzt.cif
+Number of chains read............................................ : 1
+Number of atoms read............................................. : 163
+====================Analysing input PDB data=====================
+Geometric center at.............................................. : [0 A, 110.117 A, 35.3067 A]
+Radius of gyration............................................... : 221.043 A
+Maximum extension from the center................................ : 838.07 A
+Number of residues............................................... : 4
+Chemical formula................................................. : O24Oh139
+Expected formula................................................. : O24Oh139 (different by 0.00%)
+Molecular weight of nonstandard residues......................... : 0.522986 kDa
+Total molecular weight........................................... : 0.522986 kDa
+Molecular concentration.......................................... : 1 mg/mL
+Intensity scaling................................................ : 9.14376e-08
+==================Computing the hydration layer==================
+Accessible solvent radius........................................ : 3 A
+Width of the hydration shell..................................... : 5 A
+Number of points in the hydration shell.......................... : 2054
+Radius of gyration of the hydration shell........................ : 284.838 A
+Radius of gyration of the envelope............................... : 282.803 A
+=========================Initialization==========================
+Angular units.................................................... : 1/A, q = 4pi sin(theta)/lambda
+Maximum scattering angle......................................... : 0.5
+Estimated resolution............................................. : 12.5664 A
+Number of points in the output curve............................. : 101
+Maximum number of processors..................................... : 12
+Number of processors online...................................... : 12
+Number of processors used........................................ : 12
+Estimated minimal expansion order of spherical harmonics......... : 142
+Actually used order of spherical harmonics....................... : 142
+====================Initializing form factors====================
+Number of X-ray atom groups used................................. : 69
+==========Computing amplitudes for the hydration shell===========
+=========Computing atomic and excluded volume amplitudes=========
+Number of atomic groups.......................................... : 163
+Average radius of the atomic group............................... : 1.30001 A
+Total number of electrons........................................ : 1303.95
+Displaced (Dry) Volume........................................... : 1500.09 A^3
+======================Computing intensities======================
+Bulk SLD......................................................... : 3.34 x10e-6/A^2
+Simulated contrast of the solvation shell........................ : 5.50898 %
+d_rho............................................................ : 0.0184 e/A^3
+r0............................................................... : 1.30001 A^3
+======================Computing intensities======================
+Bulk SLD......................................................... : 3.34 x10e-6/A^2
+=====================Writing the output file=====================
+Output file name................................................. : 4lzt.out
+Log file name.................................................... : 4lzt.log
+=================================================================
+=========================== Timing : ============================
+=================================================================
+Parsing arguments................................................ : 0.00152632 s
+Reading PDB file................................................. : 0.00143961 s
+Analysing input PDB data......................................... : 0.00146074 s
+Computing the hydration layer.................................... : 0.00849514 s
+Initialization................................................... : 0.00491163 s
+Initializing form factors........................................ : 0.0031996 s
+Computing amplitudes for the hydration shell..................... : 0.423821 s
+Computing atomic and excluded volume amplitudes.................. : 0.0623432 s
+Computing intensities............................................ : 0.00423926 s
+Computing intensities............................................ : 0.00381693 s
+Writing the output file.......................................... : 0.00060162 s
+.................................................................
+Total time : .................................................... : 0.515857 s
+=================================================================
