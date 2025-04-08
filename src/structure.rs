@@ -41,6 +41,10 @@ impl Structure {
     pub fn len(&self) -> usize {
         self.pos.len()
     }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.pos.is_empty()
+    }
     /// Constructs a new structure from a file using chemfiles
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
         let mut traj = chemfiles::Trajectory::open(path, 'r')

@@ -20,8 +20,11 @@ use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, HashMap},
+    fs::File,
     ops::Add,
+    path::Path,
 };
 
 /// Used to deserialize from YAML file
@@ -171,23 +174,26 @@ fn eval_polynomium(coeff: &[f64], q: f64) -> f64 {
 fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
     debug_assert!(table.is_sorted());
     debug_assert!(table.len() >= 2);
-    let last = table.len() - 1;
-    if x == table[0].0 {
-        table[0].1
-    } else if x >= table[last].0 {
-        table[last].1
-    } else {
-        let compare_x = |(xi, _): &(f64, f64)| xi.partial_cmp(&x).unwrap();
-        let i = table.binary_search_by(compare_x).unwrap_or(last - 1);
-        let (x1, y1) = table[i];
-        let (x2, y2) = table[i + 1];
-        y1 + (y2 - y1) / (x2 - x1) * (x - x1)
+    // Binary search to find the correct interval
+    let mut low = 0;
+    let mut high = table.len() - 1;
+    while low < high {
+        let mid = (low + high) / 2;
+        match x.partial_cmp(&table[mid].0).unwrap() {
+            Ordering::Less => high = mid,
+            Ordering::Greater => low = mid + 1,
+            Ordering::Equal => return table[mid].1,
+        }
     }
+    // After binary search, `low` should point to the second point in the interval
+    let (x0, y0) = table[low - 1];
+    let (x1, y1) = table[low];
+    y0 + (x - x0) * (y1 - y0) / (x1 - x0)
 }
 
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
-pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
-    let file = std::fs::File::open(path)
+pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
+    let file = File::open(path)
         .or_else(|e| bail!("error opening formfactor file {}: {}", path.display(), e))?;
 
     let mut formfactor: BTreeMap<String, AtomRecord> =
@@ -215,6 +221,26 @@ pub fn read_formfactors(path: &std::path::Path) -> Result<FormFactorMap> {
         formfactor.len(),
     );
     Ok(formfactor)
+}
+
+/// Write formfactors to a file
+pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> {
+    let mut file = File::create(path)?;
+    let qvalues = crate::debye::make_q_values(0.0, 0.5, 100);
+    // filter only "Table" formfactors
+    let formfactor = formfactor
+        .iter()
+        // .filter(|(_, ff)| matches!(ff, FormFactor::Table { .. }))
+        .map(|(kind, ff)| (kind, ff.to_tabulated(qvalues.clone()).unwrap()))
+        .map(|(kind, ff)| {
+            let FormFactor::Table(table) = ff.clone() else {
+                unreachable!("FormFactor::Table expected")
+            };
+            (kind.name(), table)
+        })
+        .collect::<BTreeMap<_, _>>();
+    serde_yaml::to_writer(&mut file, &formfactor)
+        .map_err(|e| anyhow!("error writing formfactor file {}: {e}", path.display()))
 }
 
 /// Helper to convert "Linear" form factors to tabulated form factors
@@ -381,18 +407,15 @@ mod tests {
     // Test Table and linear interpolation
     #[test]
     fn test_formfactor_eval_table() {
-        let ff = FormFactor::Table(vec![(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]);
-        assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
-        assert_relative_eq!(ff.eval(0.1).unwrap(), 1.1);
-        assert_relative_eq!(ff.eval(0.5).unwrap(), 1.5);
-        assert_relative_eq!(ff.eval(1.0).unwrap(), 2.0);
-        assert_relative_eq!(ff.eval(1.5).unwrap(), 2.5);
-        assert_relative_eq!(ff.eval(1.9).unwrap(), 2.9);
-        assert_relative_eq!(ff.eval(2.0).unwrap(), 3.0);
-        let ff = FormFactor::Table(vec![(0.0, 1.0), (1.0, 2.0)]);
-        assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
-        assert_relative_eq!(ff.eval(0.5).unwrap(), 1.5);
-        assert_relative_eq!(ff.eval(1.0).unwrap(), 2.0);
+        let ff = FormFactor::Table(vec![(0.0, 1.0), (0.5, 2.0), (1.0, 3.0), (1.5, 6.0)]);
+        assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0); // first
+        assert_relative_eq!(ff.eval(0.5).unwrap(), 2.0); // second
+        assert_relative_eq!(ff.eval(1.0).unwrap(), 3.0); // third
+        assert_relative_eq!(ff.eval(1.5).unwrap(), 6.0); // fourth
+        assert_relative_eq!(ff.eval(0.25).unwrap(), 1.5); // between first and second
+        assert_relative_eq!(ff.eval(0.75).unwrap(), 2.5); // between second and third
+        assert!(ff.eval(-0.1).is_err()); // out of q range
+        assert!(ff.eval(2.1).is_err()); // out of q range
     }
 
     #[test]

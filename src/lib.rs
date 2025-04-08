@@ -83,6 +83,9 @@ impl Pripps {
     pub fn from_yaml(path: &Path) -> Result<Self> {
         let formfactors = formfactor::read_formfactors(path)?;
         let atomkinds = formfactors.keys().cloned().collect::<Vec<AtomKind>>();
+
+        formfactor::write_formfactors(&formfactors, Path::new("formfactors.yaml"))?;
+
         Ok(Self {
             formfactors,
             atomkinds,
