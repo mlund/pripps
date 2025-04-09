@@ -12,11 +12,14 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
+use std::{fs::File, io::Read, path::Path, str::FromStr};
+
 use crate::{
     IntensityCalculator, Structure,
     formfactor::{self, FormFactorMap},
 };
 use anyhow::{Result, anyhow};
+use itertools::Itertools;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
 
@@ -106,6 +109,9 @@ fn intensity_at_q(
     // Solvent correction using SASA
     if let Some(sasa) = sasa {
         debug_assert_eq!(sasa.len(), formfactors.len());
+        // let sasa = load_vector_from_file::<f64>(Path::new("sasa.dat"))?;
+
+        log::trace!("SASA: {sasa:?}");
         let offset = 0.0; // Å
         let scale = 0.0;
         let max_sasa = sasa
@@ -122,6 +128,18 @@ fn intensity_at_q(
     let formfactor_product = &formfactors * formfactors.transpose();
 
     intensity_sum(&formfactor_product, distance_matrix, q)
+}
+
+/// Helper function to load space-separated values from a file to a vector
+#[allow(dead_code)]
+fn load_vector_from_file<T: FromStr>(path: &Path) -> Result<Vec<T>> {
+    let mut contents = String::new();
+    File::open(path)?.read_to_string(&mut contents)?;
+    contents
+        .split_whitespace()
+        .map(|s| s.parse())
+        .try_collect()
+        .map_err(|_| anyhow!("parse error while loading values from {}", path.display()))
 }
 
 /// Calculate I(q)
