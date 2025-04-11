@@ -49,8 +49,8 @@ pub trait IntensityCalculator {
         for (frame, weight) in reader {
             structure.set_positions(&frame)?;
 
-            if let Some(side_length) = get_side_lengths(&frame) {
-                self.set_side_lengths(side_length);
+            if let Some(side_lengths) = get_side_lengths(&frame) {
+                self.set_side_lengths(side_lengths);
             }
             let intensity = self.calc_intensities(&structure)?;
 
@@ -58,8 +58,8 @@ pub trait IntensityCalculator {
                 mean_intensity = intensity.iter().map(|(q, _)| (*q, 0.0)).collect();
             }
 
-            for ((_, m), (_, i)) in zip(mean_intensity.iter_mut(), intensity) {
-                *m += weight * i / num_frames as f64;
+            for ((_, mean), (_, intensity)) in zip(&mut mean_intensity, intensity) {
+                *mean += weight * intensity / num_frames as f64;
             }
 
             progress.inc(1);

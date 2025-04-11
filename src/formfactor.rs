@@ -47,12 +47,14 @@ impl AtomRecord {
         let custom = self
             .dsv
             .map(|dsv| HashMap::from([("dsv".to_owned(), Value::Float(dsv))]));
-        Ok(AtomKindBuilder::default()
+
+        AtomKindBuilder::default()
             .name(name)
             .id(id)
             .sigma(2.0 * self.radius.unwrap_or(0.0))
             .custom(custom.unwrap_or_default())
-            .build()?)
+            .build()
+            .map_err(|e| anyhow!("invalid atom info: {e}"))
     }
 }
 
@@ -173,8 +175,9 @@ fn eval_polynomium(coeff: &[f64], q: f64) -> f64 {
 #[inline]
 fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
     debug_assert!(table.is_sorted());
-    debug_assert!(table.len() >= 2);
-    // Binary search to find the correct interval
+    assert!(table.len() >= 2);
+
+    // Binary search to find interval
     let mut low = 0;
     let mut high = table.len() - 1;
     while low < high {
@@ -185,7 +188,7 @@ fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
             Ordering::Equal => return table[mid].1,
         }
     }
-    // After binary search, `low` should point to the second point in the interval
+    // After binary search, `low` points to the second point in the interval
     let (x0, y0) = table[low - 1];
     let (x1, y1) = table[low];
     y0 + (x - x0) * (y1 - y0) / (x1 - x0)
