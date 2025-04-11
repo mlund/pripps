@@ -223,11 +223,14 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     Ok(formfactor)
 }
 
-/// Write formfactors to a file
+/// Convert all formfactors to a TABLE and Write to YAML file
+///
+/// The q-interval is hard-coded to [0.0, 0.5] with 100 points.
 pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> {
+    log::info!("Exporting tabulated form factors to {}", path.display());
+
     let mut file = File::create(path)?;
     let qvalues = crate::debye::make_q_values(0.0, 0.5, 100);
-    // filter only "Table" formfactors
     let formfactor = formfactor
         .iter()
         // .filter(|(_, ff)| matches!(ff, FormFactor::Table { .. }))

@@ -8,3 +8,4 @@ Cargo.lock
 *.xtc
 *.trr
 \#*
+.DS_Store

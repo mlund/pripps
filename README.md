@@ -11,20 +11,7 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 - Unit tested
 - Excessive error handling and memory safetiness
 
-## Usage
-
-Explore available options with `--help`. Note that to run directly from the source repository,
-replace `pripps` with `cargo run --release --`, see section below.
-```sh
-pripps --help
-```
-
-Calculate the scattering intensity for a coarse grained lysozyme structure
-```sh
-pripps --atomfile assets/single_bead.yaml --input assets/4lzt.xyz debye
-```
-
-### Building from source
+## Building from source
 
 This requires a [Rust installation)](https://www.rust-lang.org/tools/install):
 
@@ -34,7 +21,20 @@ cd pripps/
 cargo run --release -- --help
 ```
 
-## Form Factor Models
+## Usage
+
+Explore available options with `--help`. Note that to run directly from the source repository,
+replace `pripps` with `cargo run --release --`, see section above.
+```sh
+pripps --help
+```
+
+Calculate the scattering intensity for a coarse grained lysozyme structure
+```sh
+pripps --atomfile assets/single_bead.yaml --input tests/4lzt/4lzt.xyz debye
+```
+
+### Form Factor Models
 
 Atom definitions, which may be atomic or coarse grained, are defined in a separate YAML file,
 see e.g. `assets/single_bead.yaml`.
@@ -50,7 +50,7 @@ Description                                | Keyword
 Array of `[𝑞, 𝐹]` pairs                    | `!Table`
 Alias for a previously defined form factor | `!Alias`
 
-### Examples
+#### Examples
 
 ```yaml
 # atoms.yaml
@@ -64,3 +64,14 @@ CH: { ff: !United { center: C, orbit: [[H, 1.5, 1.0]] } }
 CA: { ff: !Alias C }
 ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]} }
 ```
+
+### Environmental variables
+
+The following environmental variables can be used for additional configuration:
+
+Variable        | Description
+--------------- | -------------
+`FF_TABLE`      | If set formfactors will be exported as `tabulated_formfactors.yaml`
+`RUST_LOG`      | Set log level for Rust code (`Debug`, `Trace`, `Warn`, `Info`)
+`SASA_RADIUS`   | Radius used for SASA calculations (default: 1.4)
+`SASA_PATH`     | Load SASA from file instead of calculating it

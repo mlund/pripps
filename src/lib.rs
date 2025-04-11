@@ -1,7 +1,6 @@
 pub mod cli;
 mod debye;
 pub mod explicit;
-mod solvate;
 mod structure;
 mod trajectory;
 
@@ -84,7 +83,12 @@ impl Pripps {
         let formfactors = formfactor::read_formfactors(path)?;
         let atomkinds = formfactors.keys().cloned().collect::<Vec<AtomKind>>();
 
-        formfactor::write_formfactors(&formfactors, Path::new("formfactors.yaml"))?;
+        if let Ok(_) = std::env::var("FF_TABLE") {
+            let _ = formfactor::write_formfactors(
+                &formfactors,
+                Path::new("tabulated_formfactors.yaml"),
+            );
+        }
 
         Ok(Self {
             formfactors,

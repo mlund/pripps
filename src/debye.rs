@@ -12,7 +12,7 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use std::{fs::File, io::Read, path::Path, str::FromStr};
+use std::{env, fs::File, io::Read, path::Path, str::FromStr};
 
 use crate::{
     IntensityCalculator, Structure,
@@ -53,9 +53,19 @@ impl DebyeIntensity {
 impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
-        let distance_matrix = structure.distance_matrix();
-        let sasa = structure.calc_sasa(1.4);
+        let sasa = if let Ok(path) = env::var("SASA_PATH") {
+            log::info!("Loading SASA from {}", path);
+            vector_from_file(Path::new(&path))?
+        } else {
+            let probe_radius = env::var("SASA_RADIUS")
+                .unwrap_or("1.4".to_owned())
+                .parse()?;
+            structure.calc_sasa(probe_radius)
+        };
         log::info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
+
+        let distance_matrix = structure.distance_matrix();
+
         let intensities = self
             .q_values
             .par_iter()
@@ -108,10 +118,9 @@ fn intensity_at_q(
 
     // Solvent correction using SASA
     if let Some(sasa) = sasa {
-        debug_assert_eq!(sasa.len(), formfactors.len());
-        // let sasa = load_vector_from_file::<f64>(Path::new("sasa.dat"))?;
-
         log::trace!("SASA: {sasa:?}");
+        debug_assert_eq!(sasa.len(), formfactors.len());
+
         let offset = 0.0; // Å
         let scale = 0.0;
         let max_sasa = sasa
@@ -130,14 +139,19 @@ fn intensity_at_q(
     intensity_sum(&formfactor_product, distance_matrix, q)
 }
 
-/// Helper function to load space-separated values from a file to a vector
+/// Helper function to load values from a file to a vector
+///
+/// - Value type `T` must implement `FromStr`
+/// - One value per line
+/// - Lines starting with `#` are ignored
 #[allow(dead_code)]
-fn load_vector_from_file<T: FromStr>(path: &Path) -> Result<Vec<T>> {
+fn vector_from_file<T: FromStr>(path: &Path) -> Result<Vec<T>> {
     let mut contents = String::new();
     File::open(path)?.read_to_string(&mut contents)?;
     contents
-        .split_whitespace()
-        .map(|s| s.parse())
+        .lines()
+        .filter(|s| !s.starts_with("#"))
+        .map(|s| s.trim().parse())
         .try_collect()
         .map_err(|_| anyhow!("parse error while loading values from {}", path.display()))
 }

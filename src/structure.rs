@@ -108,22 +108,30 @@ impl Structure {
     }
     /// Calculate SASA for each atom
     pub fn calc_sasa(&self, probe_radius: f64) -> Vec<f64> {
-        debug_assert_eq!(self.pos.len(), self.radii.len());
+        assert_eq!(self.pos.len(), self.radii.len());
+
+        log::info!(
+            "Calculating SASA for {} atoms with probe radius {:.1} Å",
+            self.pos.len(),
+            probe_radius
+        );
+
         let balls = self
             .pos
             .iter()
             .zip(&self.radii)
-            .map(|(pos, radius)| Ball {
-                x: pos.x,
-                y: pos.y,
-                z: pos.z,
-                r: *radius,
+            .map(|(p, r)| Ball {
+                x: p.x,
+                y: p.y,
+                z: p.z,
+                r: *r,
             })
             .collect();
 
-        let tesselated = RadicalTessellation::from_balls(probe_radius, &balls, None);
-        (0..self.pos.len())
-            .map(|i| tesselated.available_area(i))
+        RadicalTessellation::from_balls(probe_radius, &balls, None, false)
+            .cells
+            .iter()
+            .map(|c| c.sas_area)
             .collect()
     }
 }
