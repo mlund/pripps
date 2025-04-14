@@ -124,12 +124,11 @@ impl FormFactor {
     /// Convert any form factor to a tabulated form factor in the given q range
     ///
     /// Errors if the q values are outside valid range (checked by `eval()`)
-    pub fn to_tabulated(&self, qvalues: impl IntoIterator<Item = f64>) -> Result<FormFactor> {
-        let table = qvalues
+    pub fn to_table(&self, qvalues: impl IntoIterator<Item = f64>) -> Result<Vec<(f64, f64)>> {
+        qvalues
             .into_iter()
             .map(|q| self.eval(q).map(|f| (q, f)))
-            .try_collect()?;
-        Ok(FormFactor::Table(table))
+            .try_collect()
     }
 
     /// Evaluate form factor, 𝐹(𝑞)
@@ -138,6 +137,7 @@ impl FormFactor {
         if !self.in_qrange(q) {
             bail!("q value outside of form factor range");
         }
+
         let formfactor = match self {
             Constant(c) => *c,
             Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
@@ -232,19 +232,13 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
 pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> {
     log::info!("Exporting tabulated form factors to {}", path.display());
 
-    let mut file = File::create(path)?;
     let qvalues = crate::debye::make_q_values(0.0, 0.5, 100);
-    let formfactor = formfactor
+    let formfactor: Vec<_> = formfactor
         .iter()
-        // .filter(|(_, ff)| matches!(ff, FormFactor::Table { .. }))
-        .map(|(kind, ff)| (kind, ff.to_tabulated(qvalues.clone()).unwrap()))
-        .map(|(kind, ff)| {
-            let FormFactor::Table(table) = ff.clone() else {
-                unreachable!("FormFactor::Table expected")
-            };
-            (kind.name(), table)
-        })
-        .collect::<BTreeMap<_, _>>();
+        .map(|(kind, ff)| ff.to_table(qvalues.clone()).map(|t| (kind.name(), t)))
+        .try_collect()?;
+
+    let mut file = File::create(path)?;
     serde_yaml::to_writer(&mut file, &formfactor)
         .map_err(|e| anyhow!("error writing formfactor file {}: {e}", path.display()))
 }
