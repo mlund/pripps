@@ -119,7 +119,7 @@ fn intensity_at_q(
     // Solvent correction using SASA
     if let Some(sasa) = sasa {
         log::trace!("SASA: {sasa:?}");
-        debug_assert_eq!(sasa.len(), formfactors.len());
+        assert_eq!(sasa.len(), formfactors.len());
 
         let offset = 0.0; // Å
         let scale = 0.0;
