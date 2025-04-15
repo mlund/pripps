@@ -12,7 +12,7 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use std::{env, fs::File, io::Read, path::Path, str::FromStr};
+use std::{env, fs::File, io::Read, ops::Div, path::Path, str::FromStr};
 
 use crate::{
     IntensityCalculator, Structure,
@@ -35,10 +35,12 @@ pub fn sinc(x: f64) -> f64 {
 }
 
 pub struct DebyeIntensity {
-    /// List of q values
+    /// List of q values - must be evenly spaced and sorted in ascending order
     q_values: Vec<f64>,
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
+    /// Form factors evaluated at eachq value
+    _formfactors_at_q: Vec<std::sync::OnceLock<DMatrix<f64>>>,
 }
 
 impl DebyeIntensity {
@@ -46,6 +48,7 @@ impl DebyeIntensity {
         Ok(Self {
             q_values: make_q_values(q_minmax.0, q_minmax.1, num_q),
             formfactors,
+            _formfactors_at_q: Vec::with_capacity(num_q),
         })
     }
 }
@@ -96,6 +99,43 @@ pub fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
         .collect()
 }
 
+/// Computes the index of a value `x` within a regularly spaced grid,
+/// based on the spacing `dx` and an optional starting offset `x0`.
+///
+/// # Arguments
+///
+/// * `x` - The value for which the corresponding index is to be computed.
+/// * `dx` - The spacing between grid points. Must be positive.
+/// * `x0` - The optional offset (starting point) of the grid. Defaults to `0.0` if `None`.
+///
+/// # Returns
+///
+/// Returns `Some(index)` if the computed index is negative,
+/// otherwise returns `None`.
+///
+/// # Panics
+///
+/// Panics in debug mode if `dx` is not greater than `0.0`.
+#[inline]
+#[allow(dead_code)]
+pub fn grid_lookup(x: f64, dx: f64, x0: Option<f64>) -> Option<usize> {
+    debug_assert!(dx > 0.0);
+    let x0 = x0.unwrap_or(0.0);
+    let index = (x - x0).div(dx).round() as isize;
+    index.ge(&0).then_some(index as usize)
+}
+
+// Test lookup()
+#[test]
+fn test_lookup() {
+    assert_eq!(grid_lookup(0.0, 1.0, None), Some(0));
+    assert_eq!(grid_lookup(2.4, 1.0, Some(0.0)), Some(2));
+    assert_eq!(grid_lookup(2.5, 1.0, Some(0.0)), Some(3));
+    assert_eq!(grid_lookup(0.5, 0.5, Some(-1.0)), Some(3));
+    assert_eq!(grid_lookup(3.0, 1.0, None), Some(3)); // Uses default x0 = 0.0
+    assert_eq!(grid_lookup(-1.0, 1.0, None), None); // Negative index
+}
+
 /// Calculate I(q) using the Debye formula
 ///
 /// If given, the solvent correction is a list of corrections for each atom that is added to the form factor.
@@ -113,7 +153,7 @@ fn intensity_at_q(
         .map(|(_, ff)| ff)
         .ok_or_else(|| anyhow!("no water form factor 'H2O' needed for SASA calculation"))?;
 
-    // TODO: Optimize by storing in static table, see std::sync::LazyLock
+    // TODO: Optimize by storing in static table, see std::sync::OnceLock
     let mut formfactors = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
 
     // Solvent correction using SASA
