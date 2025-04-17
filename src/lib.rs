@@ -22,7 +22,7 @@ pub use debye::{make_q_values, sinc};
 pub use faunus::Point as Vector3;
 pub use faunus::topology::{AtomKind, AtomKindBuilder};
 pub use formfactor::FormFactor;
-pub use grid::{Implicit2DGrid, RegularGrid};
+pub use grid::RegularGrid;
 
 /// Trait for calculating scattering intensities
 pub trait IntensityCalculator {
