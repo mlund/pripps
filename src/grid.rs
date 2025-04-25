@@ -17,7 +17,7 @@ use std::ops::{Div, IndexMut};
 
 /// Struct representing a 2D table where one axis ("x") is linear.
 ///
-/// x values are mapped to indices in the grid and only y-data is stored.
+/// x values are mapped to indices in the grid whereby only y-data is stored.
 /// Lookup complexity is O(1):
 ///
 /// `(𝑥ᵢ, 𝑦ᵢ) = (𝑥₀ + 𝑖Δx, data[𝑖])`
@@ -26,15 +26,18 @@ use std::ops::{Div, IndexMut};
 ///
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegularGrid<T> {
-    /// Mapped data (y-values)
-    data: Vec<T>,
     /// Constant spacing between x values
     dx: f64,
     /// Offset (starting point) of the x values.
     x0: f64,
+    /// Mapped data (y-values)
+    data: Vec<T>,
 }
 
 impl<T: Default + Clone> RegularGrid<T> {
+    /// Create new regular grid with given range and spacing.
+    ///
+    /// Elements are initialized with the default value of `T`.
     pub fn new(xrange: &(f64, f64), dx: f64) -> Result<Self> {
         if dx <= 0.0 {
             bail!("dx must be positive");
@@ -45,9 +48,9 @@ impl<T: Default + Clone> RegularGrid<T> {
         }
         let data = vec![T::default(); len as usize];
         Ok(RegularGrid {
-            data,
             dx,
             x0: xrange.0,
+            data,
         })
     }
     pub fn len(&self) -> usize {
@@ -56,15 +59,17 @@ impl<T: Default + Clone> RegularGrid<T> {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-    fn lookup_index(&self, x: f64) -> usize {
+    /// Find index of element at given x coordinate.
+    fn index(&self, x: f64) -> usize {
         (x - self.x0).div(self.dx).round() as usize
     }
+    /// Get reference to element at given x coordinate.
     pub fn get(&self, x: f64) -> &T {
-        &self.data[self.lookup_index(x)]
+        &self.data[self.index(x)]
     }
-
+    /// Get mutable reference to element at given x coordinate.
     pub fn get_mut(&mut self, x: f64) -> &mut T {
-        self.data.index_mut(self.lookup_index(x))
+        self.data.index_mut(self.index(x))
     }
     /// Iterator over `(x, &y)` pairs
     pub fn iter(&self) -> impl Iterator<Item = (f64, &T)> {
@@ -104,7 +109,7 @@ impl RegularGrid<f64> {
 }
 
 #[test]
-fn test_implicit2dgrid() {
+fn test_regulargrid() {
     let mut grid = RegularGrid::<usize>::new(&(-1.0, 1.0), 0.5).unwrap();
     assert!(!grid.is_empty());
     assert_eq!(grid.len(), 5);
