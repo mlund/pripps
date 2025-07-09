@@ -11,14 +11,11 @@ Multiple models are supported, including constant, polynomial, gaussian, and tab
 - Unit tested
 - Excessive error handling and memory safetiness
 
-## Building from source
+## Installing
 
 This requires a [Rust installation)](https://www.rust-lang.org/tools/install):
-
 ```sh
-git clone git@github.com:mlund/pripps.git
-cd pripps/
-cargo run --release -- --help
+cargo install --git git@github.com:mlund/pripps.git
 ```
 
 ## Usage
