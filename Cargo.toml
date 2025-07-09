@@ -33,4 +33,4 @@ approx = "0.5.1"
 
 [profile.release]
 strip = true # Automatically strip symbols from the binary.
-lto = true   # Link-time optimization
+#lto = true   # Link-time optimization
