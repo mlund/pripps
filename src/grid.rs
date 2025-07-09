@@ -12,7 +12,7 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, ensure};
 use std::ops::{Div, IndexMut};
 
 /// Struct representing a 2D table where one axis ("x") is linear.
@@ -39,13 +39,9 @@ impl<T: Default + Clone> RegularGrid<T> {
     ///
     /// Elements are initialized with the default value of `T`.
     pub fn new(xrange: &(f64, f64), dx: f64) -> Result<Self> {
-        if dx <= 0.0 {
-            bail!("dx must be positive");
-        }
+        ensure!(dx >= 0.0, "dx must be non-negative");
         let len = (xrange.1 - xrange.0).div(dx).round() as isize + 1;
-        if len <= 0 {
-            bail!("invalid or empty grid size");
-        }
+        ensure!(len > 0, "invalid or empty grid size");
         let data = vec![T::default(); len as usize];
         Ok(RegularGrid {
             dx,

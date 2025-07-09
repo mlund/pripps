@@ -20,6 +20,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use itertools::Itertools;
+use log::info;
 use nalgebra::DMatrix;
 use rayon::prelude::*;
 
@@ -57,7 +58,7 @@ impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
         let sasa = if let Ok(path) = env::var("SASA_PATH") {
-            log::info!("Loading SASA from {}", path);
+            info!("Loading SASA from {path}");
             vector_from_file(Path::new(&path))?
         } else {
             let probe_radius = env::var("SASA_RADIUS")
@@ -65,7 +66,7 @@ impl IntensityCalculator for DebyeIntensity {
                 .parse()?;
             structure.calc_sasa(probe_radius)
         };
-        log::info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
+        info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
 
         let distance_matrix = structure.distance_matrix();
 
@@ -109,7 +110,7 @@ fn intensity_at_q(
     q: f64,
     sasa: Option<Vec<f64>>,
 ) -> Result<f64> {
-    log::trace!("Calculating 𝐼(𝑞) for 𝑞 = {}", q);
+    log::trace!("Calculating 𝐼(𝑞) for 𝑞 = {q}");
     let water_ff = formfactors
         .iter()
         .find(|(id, _)| id.name() == "H2O")

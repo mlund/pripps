@@ -12,7 +12,7 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
 use std::{f64, path};
@@ -98,11 +98,7 @@ fn read_weights(path: &path::Path) -> Result<Vec<f64>> {
 /// Normalize a vector so that the sum of its elements is 1
 fn normalize_vector(v: &mut [f64]) -> Result<()> {
     let sum: f64 = v.iter().sum();
-
-    if sum.abs() < 1e-6 {
-        bail!("sum of weights is zero");
-    }
-
+    ensure!(sum.abs().is_normal(), "sum of weights is zero or infinite");
     for w in v.iter_mut() {
         *w /= sum;
     }
@@ -117,6 +113,6 @@ pub fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
     let sides = frame.boxvec.to_cols_array_2d();
     let sides =
         ANGSTROM_PER_NM * Vector3::new(sides[0][0] as f64, sides[1][1] as f64, sides[2][2] as f64);
-    log::trace!("frame side-length = {:?}", sides);
+    log::trace!("frame side-length = {sides:?}");
     sides.norm_squared().gt(&f64::EPSILON).then_some(sides)
 }

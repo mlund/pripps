@@ -5,7 +5,7 @@ mod grid;
 mod structure;
 mod trajectory;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, ensure};
 use debye::DebyeIntensity;
 use explicit::DirectTransform;
 use indicatif::ProgressBar;
@@ -126,9 +126,10 @@ impl Pripps {
     ) -> Result<Vec<(f64, f64)>> {
         let structure = Structure::from_file(xyzfile, &self.atomkinds)?;
         if let Some(xtcfile) = xtcfile {
-            if side_lengths.is_some() {
-                bail!("manual box length cannot be used with trajectories");
-            }
+            ensure!(
+                side_lengths.is_none(),
+                "manual box length cannot be used with trajectories"
+            );
             method.calc_intensities_xtc(&structure, xtcfile, weight_path)
         } else {
             method.calc_intensities(&structure)

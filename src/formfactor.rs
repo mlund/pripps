@@ -13,7 +13,7 @@
 // limitations under the license.
 
 use crate::{AtomKind, AtomKindBuilder, sinc};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail, ensure};
 use faunus::topology::Value;
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
@@ -134,9 +134,10 @@ impl FormFactor {
     /// Evaluate form factor, 𝐹(𝑞)
     pub fn eval(&self, q: f64) -> Result<f64> {
         use FormFactor::*;
-        if !self.in_qrange(q) {
-            bail!("q value outside of form factor range");
-        }
+        ensure!(
+            self.in_qrange(q),
+            "q value {q} outside of form factor range {q}",
+        );
 
         let formfactor = match self {
             Constant(c) => *c,
