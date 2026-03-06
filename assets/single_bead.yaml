@@ -843,3 +843,15 @@ VAL:
   }
 CTR: { radius: 2.0, formfactor: !Alias C }
 NTR: { radius: 2.0, formfactor: !Alias N }
+HNTR: { ff: !Alias N }
+HLYS: { ff: !Alias LYS }
+HARG: { ff: !Alias ARG }
+HHIS: { ff: !Alias HIS }
+HGLU: { ff: !Alias GLU }
+HASP: { ff: !Alias ASP }
+HCTR: { ff: !Alias C }
+HLYS: { ff: !Alias LYS }
+HLYS: { ff: !Alias LYS }
+HTYR: { ff: !Alias TYR }
+HCYS: { ff: !Alias CYS }
+CYX: { ff: !Alias CYS }

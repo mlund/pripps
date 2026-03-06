@@ -15,13 +15,12 @@
 use std::{env, fs::File, io::Read, path::Path, str::FromStr};
 
 use crate::{
-    IntensityCalculator, Structure,
+    IntensityCalculator, Structure, Vector3,
     formfactor::{self, FormFactorMap},
 };
 use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use log::info;
-use nalgebra::DMatrix;
 use rayon::prelude::*;
 
 /// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0
@@ -40,8 +39,6 @@ pub struct DebyeIntensity {
     q_values: Vec<f64>,
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
-    /// Form factors evaluated at eachq value
-    _formfactors_at_q: Vec<std::sync::OnceLock<DMatrix<f64>>>,
 }
 
 impl DebyeIntensity {
@@ -49,7 +46,6 @@ impl DebyeIntensity {
         Ok(Self {
             q_values: make_q_values(q_minmax.0, q_minmax.1, num_q),
             formfactors,
-            _formfactors_at_q: Vec::with_capacity(num_q),
         })
     }
 }
@@ -57,18 +53,21 @@ impl DebyeIntensity {
 impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
-        let sasa = if let Ok(path) = env::var("SASA_PATH") {
+        let sasa = if env::var("SASA_DISABLE").is_ok() {
+            info!("SASA calculation disabled");
+            None
+        } else if let Ok(path) = env::var("SASA_PATH") {
             info!("Loading SASA from {path}");
-            vector_from_file(Path::new(&path))?
+            Some(vector_from_file(Path::new(&path))?)
         } else {
             let probe_radius = env::var("SASA_RADIUS")
                 .unwrap_or("1.4".to_owned())
                 .parse()?;
-            structure.calc_sasa(probe_radius)
+            Some(structure.calc_sasa(probe_radius))
         };
-        info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
-
-        let distance_matrix = structure.distance_matrix();
+        if let Some(ref sasa) = sasa {
+            info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
+        }
 
         let intensities = self
             .q_values
@@ -76,10 +75,10 @@ impl IntensityCalculator for DebyeIntensity {
             .map(|q| {
                 intensity_at_q(
                     &structure.ids,
+                    &structure.pos,
                     &self.formfactors,
-                    &distance_matrix,
                     *q,
-                    Some(sasa.clone()),
+                    sasa.as_deref(),
                 )
             })
             .collect::<Result<Vec<f64>>>()?;
@@ -102,13 +101,14 @@ pub fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
 
 /// Calculate I(q) using the Debye formula
 ///
+/// Distances and form factor products are computed on-the-fly to avoid N×N matrix allocations.
 /// If given, the solvent correction is a list of corrections for each atom that is added to the form factor.
 fn intensity_at_q(
     atom_ids: &[usize],
+    positions: &[Vector3],
     formfactors: &FormFactorMap,
-    distance_matrix: &DMatrix<f64>,
     q: f64,
-    sasa: Option<Vec<f64>>,
+    sasa: Option<&[f64]>,
 ) -> Result<f64> {
     log::trace!("Calculating 𝐼(𝑞) for 𝑞 = {q}");
     let water_ff = formfactors
@@ -118,12 +118,12 @@ fn intensity_at_q(
         .ok_or_else(|| anyhow!("no water form factor 'H2O' needed for SASA calculation"))?;
 
     // TODO: Optimize by storing in static table, see std::sync::OnceLock
-    let mut formfactors = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
+    let mut ff = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
 
     // Solvent correction using SASA
     if let Some(sasa) = sasa {
         log::trace!("SASA: {sasa:?}");
-        assert_eq!(sasa.len(), formfactors.len());
+        assert_eq!(sasa.len(), ff.len());
 
         let offset = 0.0; // Å
         let scale = 0.0;
@@ -132,15 +132,28 @@ fn intensity_at_q(
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap();
         let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
-        for (ff, sasa) in formfactors.iter_mut().zip(&sasa) {
-            *ff += sasa / max_sasa * water_ff;
+        for (f, sasa) in ff.iter_mut().zip(sasa) {
+            *f += sasa / max_sasa * water_ff;
         }
     }
 
-    // N x N matrix of formfactor products (N = number of atoms)
-    let formfactor_product = &formfactors * formfactors.transpose();
+    let n = ff.len();
+    let ff = ff.as_slice();
 
-    intensity_sum(&formfactor_product, distance_matrix, q)
+    // Compute I(q) = Σ_i f_i² + 2 Σ_{i<j} f_i * f_j * sinc(q * r_ij)
+    let diagonal: f64 = ff.iter().map(|f| f * f).sum();
+
+    let mut off_diagonal = 0.0;
+    for i in 0..n - 1 {
+        let fi = ff[i];
+        let pi = &positions[i];
+        for j in i + 1..n {
+            let r = (pi - positions[j]).norm();
+            off_diagonal += fi * ff[j] * sinc(q * r);
+        }
+    }
+
+    Ok(2.0 * off_diagonal + diagonal)
 }
 
 /// Helper function to load values from a file to a vector
@@ -160,28 +173,3 @@ fn vector_from_file<T: FromStr>(path: &Path) -> Result<Vec<T>> {
         .map_err(|_| anyhow!("parse error while loading values from {}", path.display()))
 }
 
-/// Calculate I(q)
-///
-/// The two input matrices must be N x N (N = number of atoms)
-fn intensity_sum(
-    formfactor_product: &DMatrix<f64>,
-    distance_matrix: &DMatrix<f64>,
-    q: f64,
-) -> Result<f64> {
-    assert!(distance_matrix.is_square());
-    assert_eq!(distance_matrix.shape(), formfactor_product.shape());
-
-    let n_atoms = distance_matrix.ncols();
-
-    let mut off_diagonal = 0.0;
-    for i in 0..n_atoms - 1 {
-        for j in i + 1..n_atoms {
-            let qr = q * distance_matrix[(i, j)];
-            off_diagonal += formfactor_product[(i, j)] * sinc(qr);
-        }
-    }
-
-    let diagonal = formfactor_product.diagonal().sum();
-
-    Ok(2.0 * off_diagonal + diagonal)
-}

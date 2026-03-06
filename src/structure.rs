@@ -17,7 +17,6 @@ use anyhow::{Context, Result, bail};
 use faunus::topology::{AtomKind, FindByName};
 use itertools::Itertools;
 use molly::Frame;
-use nalgebra::DMatrix;
 use std::{
     fmt::{self, Display, Formatter},
     path::Path,
@@ -80,20 +79,6 @@ impl Structure {
         Ok(Self { pos, ids, radii })
     }
 
-    /// Calculate N x N distance matrix between all atoms
-    pub fn distance_matrix(&self) -> DMatrix<f64> {
-        let n = self.len();
-        let mut matrix = DMatrix::zeros(n, n);
-        for i in 0..n - 1 {
-            for j in i + 1..n {
-                let r = (self.pos[i] - self.pos[j]).norm();
-                matrix[(i, j)] = r;
-                matrix[(j, i)] = r;
-            }
-        }
-        matrix
-    }
-
     /// Set positions from a trajectory frame
     pub fn set_positions(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
@@ -128,7 +113,7 @@ impl Structure {
             })
             .collect();
 
-        RadicalTessellation::from_balls(probe_radius, &balls, None, false)
+        RadicalTessellation::from_balls(probe_radius, &balls, None, None, false)
             .cells
             .iter()
             .map(|c| c.sas_area)
