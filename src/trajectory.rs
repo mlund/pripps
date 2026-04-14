@@ -40,11 +40,10 @@ impl XtcIterator {
             num_frames: 0,
         };
         xtc.num_frames = xtc.num_frames()?;
-        if let Some(w) = xtc.weights.as_ref() {
-            if w.len() != xtc.num_frames {
+        if let Some(w) = xtc.weights.as_ref()
+            && w.len() != xtc.num_frames {
                 bail!("number of weights does not match number of frames in trajectory");
             }
-        }
         Ok(xtc)
     }
 
