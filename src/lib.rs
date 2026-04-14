@@ -1,3 +1,4 @@
+#[cfg(feature = "cli")]
 pub mod cli;
 mod debye;
 pub mod explicit;
@@ -6,8 +7,7 @@ mod structure;
 mod trajectory;
 
 use anyhow::{Result, ensure};
-use debye::DebyeIntensity;
-use explicit::DirectTransform;
+#[cfg(feature = "cli")]
 use indicatif::ProgressBar;
 use std::{
     collections::BTreeMap,
@@ -16,6 +16,7 @@ use std::{
 };
 use trajectory::{XtcIterator, get_side_lengths};
 
+pub use debye::DebyeIntensity;
 pub use structure::Structure;
 pub mod formfactor;
 pub use debye::{make_q_values, sinc};
@@ -41,6 +42,7 @@ pub trait IntensityCalculator {
     ) -> Result<Vec<(f64, f64)>> {
         let reader = XtcIterator::open(xtc_path, weights)?;
         let num_frames = reader.num_frames;
+        #[cfg(feature = "cli")]
         let progress = ProgressBar::new(reader.num_frames as u64);
 
         log::info!("Averaging 𝐼(𝑞) over {num_frames} frames");
@@ -64,6 +66,7 @@ pub trait IntensityCalculator {
                 *mean += weight * intensity / num_frames as f64;
             }
 
+            #[cfg(feature = "cli")]
             progress.inc(1);
         }
 
@@ -80,6 +83,11 @@ pub struct Pripps {
 }
 
 impl Pripps {
+    /// Form factors for each atom kind.
+    pub fn formfactors(&self) -> &formfactor::FormFactorMap {
+        &self.formfactors
+    }
+
     /// Create a new a YAML file with form factors
     pub fn from_yaml(path: &Path) -> Result<Self> {
         let formfactors = formfactor::read_formfactors(path)?;
@@ -93,23 +101,6 @@ impl Pripps {
             formfactors,
             atomkinds,
         })
-    }
-
-    /// Construct a new instance of `IntensityCalculator` based on CLI input
-    pub fn make_method(&self, command: cli::Commands) -> Result<Box<dyn IntensityCalculator>> {
-        use cli::Commands::*;
-        match command {
-            Debye { qmin, qmax, nq } => {
-                log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
-                let method = DebyeIntensity::new(self.formfactors.clone(), (qmin, qmax), nq)?;
-                Ok(Box::new(method) as Box<dyn IntensityCalculator>)
-            }
-            Direct { pmax, side_length } => {
-                let side_lengths = Vector3::new(side_length, side_length, side_length);
-                let method = DirectTransform::new(self.formfactors.clone(), pmax, side_lengths);
-                Ok(Box::new(method) as Box<dyn IntensityCalculator>)
-            }
-        }
     }
 
     /// Calculate I(q) for a given structure using the Debye formula

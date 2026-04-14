@@ -14,7 +14,7 @@
 
 //! Definition of command line interfaces (CLI)
 
-use crate::{Pripps, cli};
+use crate::{DebyeIntensity, IntensityCalculator, Pripps, Vector3, cli, explicit::DirectTransform};
 use anyhow::Result;
 use clap::{Parser, Subcommand, builder::styling::AnsiColor};
 
@@ -97,7 +97,7 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
-    let method = pripps.make_method(args.command)?;
+    let method = make_method(&pripps, args.command)?;
 
     let intensity = pripps.calc_intensities(
         method.as_ref(),
@@ -109,6 +109,23 @@ pub fn do_main() -> Result<()> {
     write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
 
     Ok(())
+}
+
+/// Construct an `IntensityCalculator` from parsed CLI arguments.
+pub fn make_method(pripps: &Pripps, command: Commands) -> Result<Box<dyn IntensityCalculator>> {
+    use Commands::*;
+    match command {
+        Debye { qmin, qmax, nq } => {
+            log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
+            let method = DebyeIntensity::new(pripps.formfactors().clone(), (qmin, qmax), nq)?;
+            Ok(Box::new(method) as Box<dyn IntensityCalculator>)
+        }
+        Direct { pmax, side_length } => {
+            let side_lengths = Vector3::new(side_length, side_length, side_length);
+            let method = DirectTransform::new(pripps.formfactors().clone(), pmax, side_lengths);
+            Ok(Box::new(method) as Box<dyn IntensityCalculator>)
+        }
+    }
 }
 
 /// Write f(x) to a file

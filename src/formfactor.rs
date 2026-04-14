@@ -27,20 +27,176 @@ use std::{
     path::Path,
 };
 
-/// Used to deserialize from YAML file
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-struct AtomRecord {
+/// Map of form factors for each atomkind
+pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
+
+/// Runtime form factor model, 𝐹(𝑞).
+///
+/// Always directly usable: every variant can be evaluated on a valid q. The
+/// declarative variants (`Alias`, `United`, `Linear`) only exist on
+/// [`FormFactorSpec`] and are flattened into one of the four variants below
+/// by [`read_formfactors`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FormFactor {
+    /// 𝐹(𝑞) = 𝑐
+    Constant(f64),
+    /// 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + … valid within an inclusive q range
+    Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
+    /// Interpolated 𝐹(𝑞) from a list of (𝑞, 𝐹) pairs
+    Table(Vec<(f64, f64)>),
+    /// Multi-exponential, 𝐹(𝑞) = 𝑐 + ∑ 𝑎ᵢ exp(−𝑏ᵢ𝑞²), valid within an inclusive q range
+    Gaussian {
+        qrange: (f64, f64),
+        ab: Vec<(f64, f64)>,
+        c: f64,
+    },
+}
+
+impl FormFactor {
+    pub fn qrange(&self) -> (f64, f64) {
+        use FormFactor::*;
+        match self {
+            Constant(_) => (0.0, f64::INFINITY),
+            Gaussian { qrange, .. } => *qrange,
+            Polynomial { qrange, .. } => *qrange,
+            Table(table) => (table[0].0, table[table.len() - 1].0),
+        }
+    }
+
+    pub fn in_qrange(&self, q: f64) -> bool {
+        let (lo, hi) = self.qrange();
+        q >= lo && q <= hi
+    }
+
+    /// Tabulate `F(q)` at the given q values. Errors if any q is out of range.
+    pub fn to_table(&self, qvalues: impl IntoIterator<Item = f64>) -> Result<Vec<(f64, f64)>> {
+        qvalues
+            .into_iter()
+            .map(|q| self.eval(q).map(|f| (q, f)))
+            .try_collect()
+    }
+
+    pub fn eval(&self, q: f64) -> Result<f64> {
+        use FormFactor::*;
+        let (lo, hi) = self.qrange();
+        ensure!(
+            q >= lo && q <= hi,
+            "q value {q} outside of form factor range [{lo}, {hi}]",
+        );
+        Ok(match self {
+            Constant(c) => *c,
+            Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
+            Polynomial { coeff, .. } => eval_polynomium(coeff, q),
+            Table(table) => interpolate(table, q),
+        })
+    }
+}
+
+/// Declarative form-factor specification as read from YAML.
+///
+/// Contains the four runtime variants plus three symbolic ones (`Alias`,
+/// `United`, `Linear`) that reference other entries in the spec map by name.
+/// Resolved into a [`FormFactor`] by [`read_formfactors`]; never seen by the
+/// scattering calculators or by library consumers.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+enum FormFactorSpec {
+    Constant(f64),
+    Polynomial {
+        qrange: (f64, f64),
+        coeff: Vec<f64>,
+    },
+    Table(Vec<(f64, f64)>),
+    Gaussian {
+        qrange: (f64, f64),
+        ab: Vec<(f64, f64)>,
+        c: f64,
+    },
+    /// Refers by name to another entry in the spec map; replaced with a clone
+    /// of that entry during resolution.
+    Alias(String),
+    /// United atom: a central site flanked by orbiters with distance offsets.
+    /// 𝐹′(𝑞) = 𝐹(𝑞) + ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)⋅sinc(𝑞𝑟ᵢ). Resolved to a `Table`.
+    United {
+        center: String,
+        orbit: Vec<(String, f64, Option<f64>)>,
+    },
+    /// Linear combination, 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞). Resolved to a `Table`.
+    Linear(Vec<(String, f64)>),
+}
+
+impl FormFactorSpec {
+    /// Symbolic variants return `(0, ∞)` — the resolver passes rely on this to
+    /// skip range filtering for not-yet-flattened entries, not as a correctness
+    /// claim.
+    fn qrange(&self) -> (f64, f64) {
+        use FormFactorSpec::*;
+        match self {
+            Constant(_) => (0.0, f64::INFINITY),
+            Gaussian { qrange, .. } => *qrange,
+            Polynomial { qrange, .. } => *qrange,
+            Table(table) => (table[0].0, table[table.len() - 1].0),
+            Alias(_) | United { .. } | Linear(_) => (0.0, f64::INFINITY),
+        }
+    }
+
+    /// Bails on unresolved symbolic variants. Only called from the resolver
+    /// passes, after the relevant pass has flattened its own variant.
+    fn eval(&self, q: f64) -> Result<f64> {
+        use FormFactorSpec::*;
+        let (lo, hi) = self.qrange();
+        ensure!(
+            q >= lo && q <= hi,
+            "q value {q} outside of form factor range [{lo}, {hi}]",
+        );
+        Ok(match self {
+            Constant(c) => *c,
+            Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
+            Polynomial { coeff, .. } => eval_polynomium(coeff, q),
+            Table(table) => interpolate(table, q),
+            Alias(name) => bail!("unexpected alias form factor '{name}'"),
+            Linear(_) => bail!("unexpected linear form factor"),
+            United { center, .. } => bail!("unexpected united form factor '{center}'"),
+        })
+    }
+}
+
+impl TryFrom<FormFactorSpec> for FormFactor {
+    type Error = anyhow::Error;
+
+    fn try_from(spec: FormFactorSpec) -> Result<Self> {
+        use FormFactorSpec as S;
+        Ok(match spec {
+            S::Constant(c) => Self::Constant(c),
+            S::Polynomial { qrange, coeff } => Self::Polynomial { qrange, coeff },
+            S::Table(t) => Self::Table(t),
+            S::Gaussian { qrange, ab, c } => Self::Gaussian { qrange, ab, c },
+            S::Alias(name) => {
+                bail!("internal: unresolved alias '{name}' reached conversion boundary")
+            }
+            S::United { center, .. } => {
+                bail!("internal: unresolved united '{center}' reached conversion boundary")
+            }
+            S::Linear(_) => {
+                bail!("internal: unresolved linear form factor reached conversion boundary")
+            }
+        })
+    }
+}
+
+/// Atom specification as read from YAML.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+struct AtomSpec {
     /// Radius of the atom in Å
     radius: Option<f64>,
     /// Solvent radius in Å. TODO: better name
     dsv: Option<f64>,
     /// Form factor for the atom
     #[serde(alias = "ff")]
-    formfactor: FormFactor,
+    formfactor: FormFactorSpec,
 }
 
-impl AtomRecord {
-    /// Helper to convert input file record to AtomKind
+impl AtomSpec {
+    /// Convert the spec into a runtime `AtomKind`.
     ///
     /// The optional `dsv` field is saved as a custom property.
     fn to_atomkind(&self, name: &str, id: usize) -> Result<AtomKind> {
@@ -55,101 +211,6 @@ impl AtomRecord {
             .custom(custom.unwrap_or_default())
             .build()
             .map_err(|e| anyhow!("invalid atom info: {e}"))
-    }
-}
-
-/// Map of form factors for each atomkind
-pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
-
-/// Models for site form factors, F(q)
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub enum FormFactor {
-    /// 𝐹(𝑞) = constant for all q values
-    Constant(f64),
-    /// 𝐹(𝑞) = 𝑎 + 𝑏𝑞 + 𝑐𝑞² + ... valid within an inclusive q range
-    Polynomial { qrange: (f64, f64), coeff: Vec<f64> },
-    /// Interpolated 𝐹(𝑞) from a list of (𝑞,𝐹) pairs
-    Table(Vec<(f64, f64)>),
-    /// Multi-exponential, 𝐹(𝑞) = 𝑐 + ∑ 𝑎ᵢ exp(−𝑏ᵢ𝑞²)
-    Gaussian {
-        /// Valid q range, inclusive
-        qrange: (f64, f64),
-        /// List of (a, b) pairs for each of the exponential terms
-        ab: Vec<(f64, f64)>,
-        /// Offset
-        c: f64,
-    },
-    /// 𝐹(𝑞) is the same an another defined form factor.
-    ///
-    /// Used only during deserialization where it is replaced with the actual form factor
-    Alias(String),
-    /// United form factor where a central atom is flanked by multiple other atoms with distance offsets, 𝑟ᵢ
-    ///
-    /// 𝐹′(𝑞) = 𝐹(𝑞) + ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)⋅sinc(𝑞𝑟ᵢ)
-    ///
-    /// Used only during deserialization where it is replaced with a tabulated form factor
-    United {
-        /// Central atom
-        center: String,
-        /// Orbiting atoms given by a list of tuples (name, offset in Å, optional weight). Default weights, 𝑤ᵢ=1.
-        orbit: Vec<(String, f64, Option<f64>)>,
-    },
-    /// Linear combination of two or more form factors
-    /// 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)
-    /// Used only during deserialization where it is replaced with a tabulated form factor
-    Linear(Vec<(String, f64)>),
-}
-
-impl FormFactor {
-    /// Get the q-range for the form factor
-    pub fn qrange(&self) -> (f64, f64) {
-        use FormFactor::*;
-        match self {
-            Constant(_) => (0.0, f64::INFINITY),
-            Gaussian { qrange, .. } => *qrange,
-            Polynomial { qrange, .. } => *qrange,
-            Table(table) => (table[0].0, table[table.len() - 1].0),
-            // These should be converted and filtered out during deserialization
-            Alias(_) => (0.0, f64::INFINITY),
-            United { .. } => (0.0, f64::INFINITY),
-            Linear { .. } => (0.0, f64::INFINITY),
-        }
-    }
-    /// Determine if a q value is within valid q-range
-    pub fn in_qrange(&self, q: f64) -> bool {
-        let qrange = self.qrange();
-        q >= qrange.0 && q <= qrange.1
-    }
-
-    /// Convert any form factor to a tabulated form factor in the given q range
-    ///
-    /// Errors if the q values are outside valid range (checked by `eval()`)
-    pub fn to_table(&self, qvalues: impl IntoIterator<Item = f64>) -> Result<Vec<(f64, f64)>> {
-        qvalues
-            .into_iter()
-            .map(|q| self.eval(q).map(|f| (q, f)))
-            .try_collect()
-    }
-
-    /// Evaluate form factor, 𝐹(𝑞)
-    pub fn eval(&self, q: f64) -> Result<f64> {
-        use FormFactor::*;
-        ensure!(
-            self.in_qrange(q),
-            "q value {q} outside of form factor range {q}",
-        );
-
-        let formfactor = match self {
-            Constant(c) => *c,
-            Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
-            Polynomial { coeff, .. } => eval_polynomium(coeff, q),
-            Table(table) => interpolate(table, q),
-            // These should be converted and filtered out during deserialization
-            Alias(name) => bail!("Unexpected alias form factor '{name}'"),
-            Linear { .. } => bail!("unexpected linear form factor"),
-            United { center, .. } => bail!("unexpected united form factor '{center}'"),
-        };
-        Ok(formfactor)
     }
 }
 
@@ -200,23 +261,25 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     let file = File::open(path)
         .or_else(|e| bail!("error opening formfactor file {}: {}", path.display(), e))?;
 
-    let mut formfactor: BTreeMap<String, AtomRecord> =
+    let mut specs: BTreeMap<String, AtomSpec> =
         serde_yaml::from_reader(file).map_err(|e| anyhow!("error parsing formfactor file: {e}"))?;
 
-    convert_alias(&mut formfactor)?;
-    convert_linear(&mut formfactor)?;
-    convert_united(&mut formfactor)?;
+    convert_alias(&mut specs)?;
+    convert_linear(&mut specs)?;
+    convert_united(&mut specs)?;
 
-    // (String, AtomRecord) -> (AtomKind, FormFactor)
-    let formfactor: FormFactorMap = formfactor
+    // Spec → runtime: the three resolvers above guarantee every remaining
+    // variant is one of the four concrete ones, so `try_from` only errors if
+    // a resolver pass has a bug.
+    let formfactor: FormFactorMap = specs
         .into_iter()
         .enumerate()
-        .map(|(id, (name, record))| {
-            record
-                .to_atomkind(&name, id)
-                .map(|kind| (kind, record.formfactor))
+        .map(|(id, (name, spec))| {
+            let kind = spec.to_atomkind(&name, id)?;
+            let ff = FormFactor::try_from(spec.formfactor)?;
+            Ok((kind, ff))
         })
-        .try_collect()?;
+        .collect::<Result<_>>()?;
 
     assert!(formfactor.keys().map(|kind| kind.id()).is_sorted());
     log::info!(
@@ -244,26 +307,26 @@ pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> 
         .map_err(|e| anyhow!("error writing formfactor file {}: {e}", path.display()))
 }
 
-/// Helper to convert "Linear" form factors to tabulated form factors
-fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
+fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
     const TABLE_LEN: usize = 100;
     const MAX_Q: f64 = 2.0; // Å⁻¹
 
-    let no_linear = &formfactor
+    let no_linear: BTreeMap<String, AtomSpec> = specs
         .iter()
-        .filter(|(_, record)| !matches!(record.formfactor, FormFactor::Linear { .. }))
-        .map(|(name, ff)| (name.clone(), ff.clone()))
-        .collect::<BTreeMap<_, _>>();
+        .filter(|(_, spec)| !matches!(spec.formfactor, FormFactorSpec::Linear(_)))
+        .map(|(name, spec)| (name.clone(), spec.clone()))
+        .collect();
 
-    for (_, record) in formfactor.iter_mut() {
-        let FormFactor::Linear(components) = record.formfactor.clone() else {
+    for spec in specs.values_mut() {
+        let FormFactorSpec::Linear(components) = &spec.formfactor else {
             continue;
         };
+        let components = components.clone();
 
         let get_ff = |name| {
             no_linear
                 .get(name)
-                .map(|r| &r.formfactor)
+                .map(|s| &s.formfactor)
                 .ok_or_else(|| anyhow!("undefined form factor '{name}'"))
         };
 
@@ -287,53 +350,48 @@ fn convert_linear(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
         let qvalues = crate::debye::make_q_values(qmin, qmax, TABLE_LEN);
 
         let table = qvalues.iter().cloned().map(lin_combination).try_collect()?;
-        record.formfactor = FormFactor::Table(table);
+        spec.formfactor = FormFactorSpec::Table(table);
     }
     Ok(())
 }
 
-/// Helper to convert alias form factors to the actual form factors
-fn convert_alias(name_formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
-    // Map of form without aliases
-    let no_alias = &name_formfactor
+fn convert_alias(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
+    let no_alias: BTreeMap<String, FormFactorSpec> = specs
         .iter()
-        .map(|(name, record)| (name, record.formfactor.clone()))
-        .filter(|(_, ff)| !matches!(ff, FormFactor::Alias(_)))
-        .map(|(name, ff)| (name.clone(), ff.clone()))
-        .collect::<BTreeMap<_, _>>();
+        .filter(|(_, spec)| !matches!(spec.formfactor, FormFactorSpec::Alias(_)))
+        .map(|(name, spec)| (name.clone(), spec.formfactor.clone()))
+        .collect();
 
-    // Convert all alias variants to the actual form factor variant that they refer to
-    for (_, record) in name_formfactor.iter_mut() {
-        let FormFactor::Alias(name) = record.formfactor.clone() else {
+    for spec in specs.values_mut() {
+        let FormFactorSpec::Alias(name) = &spec.formfactor else {
             continue;
         };
-        record.formfactor = no_alias
-            .get(&name)
+        spec.formfactor = no_alias
+            .get(name)
             .ok_or_else(|| anyhow!("undefined aliased form factor '{name}'"))?
             .clone();
     }
     Ok(())
 }
 
-/// Helper to convert all united variants to combined, tabulated form factors using the Debye formula
-fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
+fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
     const TABLE_SIZE: usize = 100;
     const MAX_Q: f64 = 2.0; // Å⁻¹
 
-    let no_united = &formfactor
+    let no_united: BTreeMap<String, AtomSpec> = specs
         .iter()
-        .filter(|(_, record)| !matches!(record.formfactor, FormFactor::United { .. }))
-        .map(|(name, ff)| (name.clone(), ff.clone()))
-        .collect::<BTreeMap<_, _>>();
+        .filter(|(_, spec)| !matches!(spec.formfactor, FormFactorSpec::United { .. }))
+        .map(|(name, spec)| (name.clone(), spec.clone()))
+        .collect();
 
     // Evaluates single united form factor to a tabulated form factor
-    let eval = |ff: &FormFactor| {
-        let FormFactor::United { center, orbit } = ff else {
+    let eval = |ff: &FormFactorSpec| {
+        let FormFactorSpec::United { center, orbit } = ff else {
             bail!("united form factor expected");
         };
         let center_ff = &no_united
             .get(center)
-            .map(|r| &r.formfactor)
+            .map(|s| &s.formfactor)
             .ok_or_else(|| anyhow!("undefined central atom form factor '{center}'"))?;
 
         let (qmin, mut qmax) = center_ff.qrange();
@@ -350,19 +408,19 @@ fn convert_united(formfactor: &mut BTreeMap<String, AtomRecord>) -> Result<()> {
         for (name, offset, weight) in orbit {
             let orbit_ff = &no_united
                 .get(name)
-                .map(|r| &r.formfactor)
+                .map(|s| &s.formfactor)
                 .ok_or_else(|| anyhow!("undefined orbiting atom form factor '{name}'"))?;
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
                 *f += weight * orbit_ff.eval(*q)? * sinc(*q * offset);
             }
         }
-        Ok(FormFactor::Table(table))
+        Ok(FormFactorSpec::Table(table))
     };
 
-    for (_, record) in formfactor.iter_mut() {
-        if let FormFactor::United { .. } = record.formfactor {
-            record.formfactor = eval(&record.formfactor)?;
+    for spec in specs.values_mut() {
+        if matches!(spec.formfactor, FormFactorSpec::United { .. }) {
+            spec.formfactor = eval(&spec.formfactor)?;
         }
     }
     Ok(())
@@ -437,5 +495,22 @@ mod tests {
         assert_relative_eq!(matrix[(0, 0)], 1.0);
         assert_relative_eq!(matrix[(0, 1)], 2.0);
         assert_relative_eq!(matrix[(1, 1)], 4.0);
+    }
+
+    /// Round-trip the shipped YAML through `read_formfactors` and verify every
+    /// resolved entry evaluates finitely at a q inside all declared ranges.
+    /// Exercises the `Alias` / `United` / `Gaussian` / `Table` resolver paths
+    /// end-to-end and pins the spec→runtime pipeline.
+    #[test]
+    fn test_read_formfactors_single_bead() {
+        let path = Path::new("assets/single_bead.yaml");
+        let ff = read_formfactors(path).expect("parse single_bead.yaml");
+        assert!(!ff.is_empty(), "expected at least one species");
+        for (kind, f) in &ff {
+            let v = f.eval(0.1).unwrap_or_else(|e| {
+                panic!("eval failed for {} at q=0.1: {e}", kind.name());
+            });
+            assert!(v.is_finite(), "non-finite F(0.1) for {}", kind.name());
+        }
     }
 }
