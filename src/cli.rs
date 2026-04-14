@@ -15,7 +15,7 @@
 //! Definition of command line interfaces (CLI)
 
 use crate::error::IoResultExt;
-use crate::{IntensityScheme, Pripps, Result, cli};
+use crate::{Intensity, IntensityScheme, Pripps, Result, cli};
 use clap::{Parser, Subcommand, builder::styling::AnsiColor};
 
 use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
@@ -154,8 +154,8 @@ fn command_to_scheme(command: Commands) -> (IntensityScheme, Option<[f64; 3]>) {
     }
 }
 
-/// Write f(x) to a file
-fn write_table(path: &std::path::Path, table: &[(f64, f64)], header: Option<&str>) -> Result<()> {
+/// Write a `(q, I(q))` curve to a file as two-column text.
+fn write_table(path: &std::path::Path, curve: &Intensity, header: Option<&str>) -> Result<()> {
     let mut file = std::fs::File::create(path).with_path(path)?;
 
     log::info!("Writing {}", path.display());
@@ -164,8 +164,8 @@ fn write_table(path: &std::path::Path, table: &[(f64, f64)], header: Option<&str
         writeln!(file, "{header}")?;
     }
 
-    for (x, y) in table {
-        writeln!(file, "{x:.6} {y:.6}")?;
+    for (q, i) in curve.q.iter().zip(&curve.i) {
+        writeln!(file, "{q:.6} {i:.6}")?;
     }
     Ok(())
 }

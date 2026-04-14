@@ -37,7 +37,7 @@ mod math;
 
 use crate::q_sampler::QSampler;
 use crate::{
-    IntensityCalculator, Result, Structure,
+    Intensity, IntensityCalculator, Result, Structure,
     formfactor::{self, FormFactorMap},
 };
 use math::{I_POW, LowerTriangle, Spherical, spherical_bessel, spherical_harmonics};
@@ -133,7 +133,7 @@ impl SvergunIntensity {
 }
 
 impl IntensityCalculator for SvergunIntensity {
-    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
+    fn calc_intensities(&self, structure: &Structure) -> Result<Intensity> {
         let l_max = self.effective_l_max(structure);
         log::info!(
             "Svergun expansion: l_max = {} over {} atoms, {} q-points",
@@ -233,7 +233,7 @@ mod tests {
         let calc = SvergunIntensity::new(constant_ff(c), (0.1, 0.5), 10, None).unwrap();
         let structure = structure_with_ids(vec![(0.0, 0.0, 0.0)]);
         let out = calc.calc_intensities(&structure).unwrap();
-        for (_q, i) in out {
+        for i in &out.i {
             assert!((i - c * c).abs() < 1e-10, "expected {}, got {i}", c * c);
         }
     }
@@ -252,11 +252,11 @@ mod tests {
 
         let svergun = SvergunIntensity::new(constant_ff(c), (0.0, 0.1), 5, None).unwrap();
         let s_out = svergun.calc_intensities(&structure).unwrap();
-        let (_, s0) = s_out[0];
+        let s0 = s_out.i[0];
 
         let debye = DebyeIntensity::new(constant_ff(c), (0.0, 0.1), 5).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
-        let (_, d0) = d_out[0];
+        let d0 = d_out.i[0];
 
         let expected = (n * c) * (n * c);
         assert!(
@@ -289,12 +289,12 @@ mod tests {
         let s_out = svergun.calc_intensities(&structure).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
 
-        for ((qs, is), (qd, id)) in s_out.iter().zip(d_out.iter()) {
-            assert!((qs - qd).abs() < 1e-15);
+        assert_eq!(s_out.q, d_out.q);
+        for ((q, &is), &id) in s_out.q.iter().zip(&s_out.i).zip(&d_out.i) {
             let rel = (is - id).abs() / id.max(1e-10);
             assert!(
                 rel < 1e-4,
-                "q = {qs}: svergun = {is}, debye = {id}, rel err = {rel}"
+                "q = {q}: svergun = {is}, debye = {id}, rel err = {rel}"
             );
         }
     }
@@ -323,11 +323,11 @@ mod tests {
         let s_out = svergun.calc_intensities(&structure).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
 
-        for ((qs, is), (_qd, id)) in s_out.iter().zip(d_out.iter()) {
+        for ((q, &is), &id) in s_out.q.iter().zip(&s_out.i).zip(&d_out.i) {
             let rel = (is - id).abs() / id.max(1e-10);
             assert!(
                 rel < 0.01,
-                "q = {qs}: svergun = {is}, debye = {id}, rel err = {rel}"
+                "q = {q}: svergun = {is}, debye = {id}, rel err = {rel}"
             );
         }
     }

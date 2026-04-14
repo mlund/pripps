@@ -22,7 +22,7 @@ use indicatif::ProgressBar;
 
 use crate::error::IoResultExt;
 use crate::structure::Structure;
-use crate::{Error, IntensityCalculator, Result, Vector3};
+use crate::{Error, Intensity, IntensityCalculator, Result, Vector3};
 
 /// Iterator over (weighted) frames in an XTC file
 pub struct XtcIterator {
@@ -139,7 +139,7 @@ pub fn trajectory_average(
     structure: &Structure,
     xtc_path: &path::Path,
     weights: Option<&path::Path>,
-) -> Result<Vec<(f64, f64)>> {
+) -> Result<Intensity> {
     let reader = XtcIterator::open(xtc_path, weights)?;
     let num_frames = reader.num_frames;
     #[cfg(feature = "cli")]
@@ -147,24 +147,25 @@ pub fn trajectory_average(
 
     log::info!("Averaging 𝐼(𝑞) over {num_frames} frames");
 
-    let mut mean_intensity = Vec::new();
+    let mut mean = Intensity::default();
     let mut structure = structure.clone();
 
     for (frame, weight) in reader {
         structure.set_positions(&frame)?;
-        let intensity = calc.calc_intensities(&structure)?;
+        let curve = calc.calc_intensities(&structure)?;
 
-        if mean_intensity.is_empty() {
-            mean_intensity = intensity.iter().map(|(q, _)| (*q, 0.0)).collect();
+        if mean.q.is_empty() {
+            mean.q = curve.q.clone();
+            mean.i = vec![0.0; curve.i.len()];
         }
 
-        for ((_, mean), (_, i)) in zip(&mut mean_intensity, intensity) {
-            *mean += weight * i / num_frames as f64;
+        for (acc, v) in zip(&mut mean.i, &curve.i) {
+            *acc += weight * v / num_frames as f64;
         }
 
         #[cfg(feature = "cli")]
         progress.inc(1);
     }
 
-    Ok(mean_intensity)
+    Ok(mean)
 }

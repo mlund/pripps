@@ -5,7 +5,7 @@
 
 use crate::q_sampler::QSampler;
 use crate::{
-    IntensityCalculator, Result, Structure, Vector3,
+    Intensity, IntensityCalculator, Result, Structure, Vector3,
     formfactor::{self, FormFactorMap},
 };
 
@@ -38,7 +38,7 @@ impl DebyeIntensity {
 
 impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
-    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
+    fn calc_intensities(&self, structure: &Structure) -> Result<Intensity> {
         self.sampler.run_parallel(|q| {
             intensity_at_q(&structure.ids, &structure.pos, &self.sampler.formfactors, q)
         })

@@ -36,6 +36,19 @@ pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfact
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
 pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 
+/// A scattering intensity curve: parallel q and I(q) vectors with
+/// `q.len() == i.len()` by construction.
+///
+/// Two parallel `Vec<f64>` (instead of `Vec<(f64, f64)>`) so the
+/// future `pyo3` / `numpy` bindings can expose each vector as a
+/// zero-copy `ndarray` view. All pripps calculators return this type;
+/// callers typically iterate via `.q.iter().zip(&curve.i)`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Intensity {
+    pub q: Vec<f64>,
+    pub i: Vec<f64>,
+}
+
 /// Computational scheme for scattering intensity calculation, with its
 /// parameters. Passed to [`Pripps::intensity`].
 #[derive(Debug, Clone, Copy)]
@@ -64,7 +77,7 @@ pub enum IntensityScheme {
 /// Internal dispatch interface. Implementations compute I(q) for a single
 /// structure; library consumers don't implement or name this trait.
 pub(crate) trait IntensityCalculator: Sync {
-    fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
+    fn calc_intensities(&self, structure: &Structure) -> Result<Intensity>;
 }
 
 /// High-level interface to the Pripps library
@@ -109,7 +122,7 @@ impl Pripps {
         xtcfile: Option<&path::Path>,
         weights: Option<&path::Path>,
         box_sides: Option<[f64; 3]>,
-    ) -> Result<Vec<(f64, f64)>> {
+    ) -> Result<Intensity> {
         let mut structure = Structure::from_file(xyzfile, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
             if xtcfile.is_some() {

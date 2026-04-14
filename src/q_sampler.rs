@@ -12,7 +12,7 @@
 //! calculator precomputed. [`QSampler`] captures exactly that pattern
 //! so the calculators themselves only have to supply the per-q body.
 
-use crate::{Result, formfactor::FormFactorMap};
+use crate::{Intensity, Result, formfactor::FormFactorMap};
 use rayon::prelude::*;
 
 /// Linearly-spaced q grid from `qmin` to `qmax` (inclusive) sampled at
@@ -60,7 +60,7 @@ impl QSampler {
     }
 
     /// Evaluate `f(q)` for every stored q in parallel and return the
-    /// `(q, I(q))` table in input order.
+    /// `(q, I(q))` curve in input order.
     ///
     /// `f` may close over any per-structure state the calculator
     /// precomputed before calling `run_parallel` — that's the whole
@@ -68,16 +68,19 @@ impl QSampler {
     /// (e.g. per-atom spherical harmonics) lives outside the closure
     /// and is shared by all workers via immutable reference; per-q
     /// scratch lives inside the closure and is per-worker.
-    pub fn run_parallel<F>(&self, f: F) -> Result<Vec<(f64, f64)>>
+    pub fn run_parallel<F>(&self, f: F) -> Result<Intensity>
     where
         F: Fn(f64) -> Result<f64> + Sync,
     {
-        let intensities: Vec<f64> = self
+        let i: Vec<f64> = self
             .q_values
             .par_iter()
             .map(|&q| f(q))
             .collect::<Result<Vec<_>>>()?;
-        Ok(self.q_values.iter().copied().zip(intensities).collect())
+        Ok(Intensity {
+            q: self.q_values.clone(),
+            i,
+        })
     }
 }
 
@@ -113,15 +116,11 @@ mod tests {
     fn run_parallel_preserves_input_order() {
         let s = QSampler::new(empty_ffs(), [0.3, 0.1, 0.2]);
         let out = s.run_parallel(|q| Ok(q * q + 1.0)).unwrap();
-        let expected = [
-            (0.3, 0.3 * 0.3 + 1.0),
-            (0.1, 0.1 * 0.1 + 1.0),
-            (0.2, 0.2 * 0.2 + 1.0),
-        ];
-        for ((q1, i1), (q2, i2)) in out.iter().zip(expected.iter()) {
-            assert!((q1 - q2).abs() < 1e-15);
-            assert!((i1 - i2).abs() < 1e-15);
-        }
+        assert_eq!(out.q, vec![0.3, 0.1, 0.2]);
+        assert_eq!(
+            out.i,
+            vec![0.3 * 0.3 + 1.0, 0.1 * 0.1 + 1.0, 0.2 * 0.2 + 1.0]
+        );
     }
 
     #[test]
@@ -154,14 +153,16 @@ mod tests {
     fn run_parallel_empty_q_values() {
         let s = QSampler::new(empty_ffs(), Vec::<f64>::new());
         let out = s.run_parallel(|_q| Ok(1.0)).unwrap();
-        assert!(out.is_empty());
+        assert!(out.q.is_empty());
+        assert!(out.i.is_empty());
     }
 
     #[test]
     fn run_parallel_single_q_value() {
         let s = QSampler::new(empty_ffs(), [0.42]);
         let out = s.run_parallel(|q| Ok(q * 2.0)).unwrap();
-        assert_eq!(out, vec![(0.42, 0.84)]);
+        assert_eq!(out.q, vec![0.42]);
+        assert_eq!(out.i, vec![0.84]);
     }
 
     #[test]
