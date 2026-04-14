@@ -172,4 +172,3 @@ fn vector_from_file<T: FromStr>(path: &Path) -> Result<Vec<T>> {
         .try_collect()
         .map_err(|_| anyhow!("parse error while loading values from {}", path.display()))
 }
-
