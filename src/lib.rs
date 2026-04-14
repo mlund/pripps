@@ -54,7 +54,6 @@ pub(crate) trait IntensityCalculator: Sync {
 /// High-level interface to the Pripps library
 pub struct Pripps {
     formfactors: BTreeMap<AtomKind, FormFactor>,
-    atomkinds: Vec<AtomKind>,
 }
 
 impl Pripps {
@@ -65,16 +64,16 @@ impl Pripps {
     /// Construct from a YAML form-factor definition file.
     pub fn from_yaml(path: &Path) -> Result<Self> {
         let formfactors = read_formfactors(path)?;
-        let atomkinds = formfactors.keys().cloned().collect::<Vec<AtomKind>>();
 
         if std::env::var("FF_TABLE").is_ok() {
             write_formfactors(&formfactors, Path::new("tabulated_formfactors.yaml"))?;
         }
 
-        Ok(Self {
-            formfactors,
-            atomkinds,
-        })
+        Ok(Self { formfactors })
+    }
+
+    fn atomkinds(&self) -> Vec<AtomKind> {
+        self.formfactors.keys().cloned().collect()
     }
 
     /// Compute I(q) for a structure under the given [`IntensityScheme`].
@@ -95,7 +94,7 @@ impl Pripps {
         weights: Option<&path::Path>,
         box_sides: Option<[f64; 3]>,
     ) -> Result<Vec<(f64, f64)>> {
-        let mut structure = Structure::from_file(xyzfile, &self.atomkinds)?;
+        let mut structure = Structure::from_file(xyzfile, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
             ensure!(
                 xtcfile.is_none(),

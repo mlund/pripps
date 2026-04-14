@@ -59,7 +59,7 @@ impl Structure {
         })
     }
 
-    /// Refresh positions (and box sides, if present) from a trajectory frame.
+    /// Refresh positions and box sides from a trajectory frame.
     pub fn set_positions(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
             bail!("number of atoms in structure does not match trajectory frame");
