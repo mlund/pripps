@@ -9,3 +9,4 @@ Cargo.lock
 *.trr
 \#*
 .DS_Store
+CLAUDE.md
