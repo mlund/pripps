@@ -28,6 +28,8 @@ voronota-ltr = "0.4.0"
 
 [dev-dependencies]
 approx = "0.5.1"
+criterion = "0.5"
+tempfile = "3"
 
 [features]
 default = ["cli"]
@@ -37,6 +39,10 @@ cli = ["dep:clap", "dep:pretty_env_logger", "dep:indicatif"]
 name = "pripps"
 path = "src/main.rs"
 required-features = ["cli"]
+
+[[bench]]
+name = "intensity"
+harness = false
 
 [profile.release]
 strip = true # Automatically strip symbols from the binary.
