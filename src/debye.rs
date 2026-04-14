@@ -12,15 +12,11 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use std::{env, fs::File, io::Read, path::Path, str::FromStr};
-
 use crate::{
     IntensityCalculator, Structure, Vector3,
     formfactor::{self, FormFactorMap},
 };
-use anyhow::{Result, anyhow};
-use itertools::Itertools;
-use log::info;
+use anyhow::Result;
 use rayon::prelude::*;
 
 /// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0
@@ -53,34 +49,10 @@ impl DebyeIntensity {
 impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
-        let sasa = if env::var("SASA_DISABLE").is_ok() {
-            info!("SASA calculation disabled");
-            None
-        } else if let Ok(path) = env::var("SASA_PATH") {
-            info!("Loading SASA from {path}");
-            Some(vector_from_file(Path::new(&path))?)
-        } else {
-            let probe_radius = env::var("SASA_RADIUS")
-                .unwrap_or("1.4".to_owned())
-                .parse()?;
-            Some(structure.calc_sasa(probe_radius))
-        };
-        if let Some(ref sasa) = sasa {
-            info!("Total SASA = {:.1} Å²", sasa.iter().sum::<f64>());
-        }
-
         let intensities = self
             .q_values
             .par_iter()
-            .map(|q| {
-                intensity_at_q(
-                    &structure.ids,
-                    &structure.pos,
-                    &self.formfactors,
-                    *q,
-                    sasa.as_deref(),
-                )
-            })
+            .map(|q| intensity_at_q(&structure.ids, &structure.pos, &self.formfactors, *q))
             .collect::<Result<Vec<f64>>>()?;
 
         Ok(self.q_values.iter().cloned().zip(intensities).collect())
@@ -99,44 +71,19 @@ pub fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
         .collect()
 }
 
-/// Calculate I(q) using the Debye formula
+/// Calculate I(q) using the Debye formula.
 ///
 /// Distances and form factor products are computed on-the-fly to avoid N×N matrix allocations.
-/// If given, the solvent correction is a list of corrections for each atom that is added to the form factor.
 fn intensity_at_q(
     atom_ids: &[usize],
     positions: &[Vector3],
     formfactors: &FormFactorMap,
     q: f64,
-    sasa: Option<&[f64]>,
 ) -> Result<f64> {
     log::trace!("Calculating 𝐼(𝑞) for 𝑞 = {q}");
-    let water_ff = formfactors
-        .iter()
-        .find(|(id, _)| id.name() == "H2O")
-        .map(|(_, ff)| ff)
-        .ok_or_else(|| anyhow!("no water form factor 'H2O' needed for SASA calculation"))?;
 
     // TODO: Optimize by storing in static table, see std::sync::OnceLock
-    let mut ff = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
-
-    // Solvent correction using SASA
-    if let Some(sasa) = sasa {
-        log::trace!("SASA: {sasa:?}");
-        assert_eq!(sasa.len(), ff.len());
-
-        let offset = 0.0; // Å
-        let scale = 0.0;
-        let max_sasa = sasa
-            .iter()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        let water_ff = scale * water_ff.eval(q)? * sinc(q * offset);
-        for (f, sasa) in ff.iter_mut().zip(sasa) {
-            *f += sasa / max_sasa * water_ff;
-        }
-    }
-
+    let ff = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
     let n = ff.len();
     let ff = ff.as_slice();
 
@@ -154,21 +101,4 @@ fn intensity_at_q(
     }
 
     Ok(2.0 * off_diagonal + diagonal)
-}
-
-/// Helper function to load values from a file to a vector
-///
-/// - Value type `T` must implement `FromStr`
-/// - One value per line
-/// - Lines starting with `#` are ignored
-#[allow(dead_code)]
-fn vector_from_file<T: FromStr>(path: &Path) -> Result<Vec<T>> {
-    let mut contents = String::new();
-    File::open(path)?.read_to_string(&mut contents)?;
-    contents
-        .lines()
-        .filter(|s| !s.starts_with("#"))
-        .map(|s| s.trim().parse())
-        .try_collect()
-        .map_err(|_| anyhow!("parse error while loading values from {}", path.display()))
 }

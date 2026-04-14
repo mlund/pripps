@@ -70,5 +70,3 @@ Variable        | Description
 --------------- | -------------
 `FF_TABLE`      | If set formfactors will be exported as `tabulated_formfactors.yaml`
 `RUST_LOG`      | Set log level for Rust code (`Debug`, `Trace`, `Warn`, `Info`)
-`SASA_RADIUS`   | Radius used for SASA calculations (default: 1.4)
-`SASA_PATH`     | Load SASA from file instead of calculating it

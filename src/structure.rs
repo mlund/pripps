@@ -21,17 +21,14 @@ use std::{
     fmt::{self, Display, Formatter},
     path::Path,
 };
-use voronota_ltr::{Ball, Results, compute_tessellation};
 
-/// Ad hoc molecular structure containing atoms with positions, masses, charges, and radii
+/// Ad hoc molecular structure: per-atom positions and kind ids.
 #[derive(Debug, Clone, Default)]
 pub struct Structure {
     /// Particle positions
     pub pos: Vec<Vector3>,
     /// Atom kind ids
     pub ids: Vec<usize>,
-    /// Radii of each atom
-    pub radii: Vec<f64>,
 }
 
 impl Structure {
@@ -45,32 +42,26 @@ impl Structure {
         self.pos.is_empty()
     }
     /// Construct a structure from a PDB or XYZ file, looking each atom name up
-    /// in the provided [`AtomKind`] list for its id and radius (half its
-    /// sigma). Unknown atom names error out.
+    /// in the provided [`AtomKind`] list for its id. Unknown atom names error.
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
         let atoms = read_structure(path)?;
 
         let mut pos = Vec::with_capacity(atoms.len());
         let mut ids = Vec::with_capacity(atoms.len());
-        let mut radii = Vec::with_capacity(atoms.len());
 
         for atom in atoms {
             let kind = atomkinds
                 .find_name(&atom.name)
                 .with_context(|| format!("unknown atom name in file: {:?}", atom.name))?;
-            let sigma = kind
-                .sigma()
-                .with_context(|| format!("atom kind {:?} has no radius", atom.name))?;
             pos.push(Vector3::new(
                 atom.position[0],
                 atom.position[1],
                 atom.position[2],
             ));
             ids.push(kind.id());
-            radii.push(0.5 * sigma);
         }
 
-        Ok(Self { pos, ids, radii })
+        Ok(Self { pos, ids })
     }
 
     /// Set positions from a trajectory frame
@@ -84,29 +75,6 @@ impl Structure {
                 * Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
         }
         Ok(())
-    }
-    /// Calculate SASA for each atom. Lonely atoms (no contacts) report 0.0.
-    pub fn calc_sasa(&self, probe_radius: f64) -> Vec<f64> {
-        assert_eq!(self.pos.len(), self.radii.len());
-
-        log::info!(
-            "Calculating SASA for {} atoms with probe radius {:.1} Å",
-            self.pos.len(),
-            probe_radius
-        );
-
-        let balls: Vec<Ball> = self
-            .pos
-            .iter()
-            .zip(&self.radii)
-            .map(|(p, r)| Ball::new(p.x, p.y, p.z, *r))
-            .collect();
-
-        compute_tessellation(&balls, probe_radius, None, None, false)
-            .sas_areas()
-            .into_iter()
-            .map(|sas| sas.unwrap_or(0.0))
-            .collect()
     }
 }
 
