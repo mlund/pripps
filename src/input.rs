@@ -9,7 +9,8 @@
 //! that pripps needs: positions and per-atom names for lookup in an
 //! [`AtomKind`] list.
 
-use anyhow::{Context, Result, bail};
+use crate::error::IoResultExt;
+use crate::{Error, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -27,8 +28,7 @@ pub struct AtomRecord {
 /// Format is chosen from the path extension: `.pdb` / `.ent` / `.pdb1` for
 /// PDB, everything else is parsed as XYZ.
 pub fn read_structure(path: &Path) -> Result<Vec<AtomRecord>> {
-    let file = File::open(path)
-        .with_context(|| format!("couldn't open structure file {}", path.display()))?;
+    let file = File::open(path).with_path(path)?;
     let reader = BufReader::new(file);
 
     let format = path
@@ -42,7 +42,10 @@ pub fn read_structure(path: &Path) -> Result<Vec<AtomRecord>> {
     };
 
     if atoms.is_empty() {
-        bail!("no atoms found in {}", path.display());
+        return Err(Error::validation(format!(
+            "no atoms found in {}",
+            path.display()
+        )));
     }
     Ok(atoms)
 }
@@ -82,7 +85,7 @@ fn normalize_atom_name(name: &str) -> String {
 /// model ensembles stop at the first `ENDMDL`; `END` terminates the file.
 fn parse_pdb<R: BufRead>(reader: R) -> Vec<AtomRecord> {
     let mut atoms = Vec::new();
-    for line in reader.lines().map_while(Result::ok) {
+    for line in reader.lines().map_while(|r| r.ok()) {
         let record = extract_column(&line, 1, 6);
         match record {
             "ATOM" | "HETATM" => {
@@ -121,7 +124,7 @@ fn parse_pdb<R: BufRead>(reader: R) -> Vec<AtomRecord> {
 /// comment header, no count) parse without configuration.
 fn parse_xyz<R: BufRead>(reader: R) -> Vec<AtomRecord> {
     let mut atoms = Vec::new();
-    for line in reader.lines().map_while(Result::ok) {
+    for line in reader.lines().map_while(|r| r.ok()) {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
             continue;

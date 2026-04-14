@@ -8,13 +8,13 @@ mod atomkind;
 #[cfg(feature = "cli")]
 pub mod cli;
 mod debye;
+mod error;
 mod explicit;
 mod formfactor;
 mod input;
 mod structure;
 mod trajectory;
 
-use anyhow::{Result, ensure};
 use std::{
     collections::BTreeMap,
     path::{self, Path},
@@ -26,6 +26,7 @@ use structure::Structure;
 use trajectory::trajectory_average;
 
 pub use atomkind::{AtomKind, FindByName};
+pub use error::{Error, Result};
 pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
 
 /// Crate-internal short alias. Not re-exported; public signatures use
@@ -96,10 +97,11 @@ impl Pripps {
     ) -> Result<Vec<(f64, f64)>> {
         let mut structure = Structure::from_file(xyzfile, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
-            ensure!(
-                xtcfile.is_none(),
-                "manual box length cannot be used with trajectories"
-            );
+            if xtcfile.is_some() {
+                return Err(Error::usage(
+                    "manual box length cannot be used with trajectories",
+                ));
+            }
             structure.box_sides = Some(Vector3::from(box_sides));
         }
 

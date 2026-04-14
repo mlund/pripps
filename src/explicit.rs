@@ -14,8 +14,7 @@
 
 //! Explicit calculation using discrete q vector
 
-use crate::{IntensityCalculator, Structure, Vector3, formfactor::FormFactorMap};
-use anyhow::{Result, anyhow};
+use crate::{Error, IntensityCalculator, Result, Structure, Vector3, formfactor::FormFactorMap};
 use itertools::Itertools;
 use num_complex::Complex;
 use rayon::prelude::*;
@@ -60,7 +59,7 @@ impl IntensityCalculator for DirectTransform {
     /// Calculate I(q) for a given structure inside its cuboidal box.
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
         let box_sides = structure.box_sides.ok_or_else(|| {
-            anyhow!("direct Fourier transform requires box side lengths on the structure")
+            Error::usage("direct Fourier transform requires box side lengths on the structure")
         })?;
 
         let intensity = |q: Vector3| calc_intensity(&q, structure, &self.formfactors);

@@ -13,10 +13,9 @@
 // limitations under the license.
 
 use crate::{
-    IntensityCalculator, Structure, Vector3,
+    IntensityCalculator, Result, Structure, Vector3,
     formfactor::{self, FormFactorMap},
 };
-use anyhow::Result;
 use rayon::prelude::*;
 
 /// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0

@@ -12,9 +12,9 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::AtomKind;
 use crate::debye::sinc;
-use anyhow::{Result, anyhow, bail, ensure};
+use crate::error::IoResultExt;
+use crate::{AtomKind, Error, Result};
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
@@ -72,10 +72,9 @@ impl FormFactor {
     pub fn eval(&self, q: f64) -> Result<f64> {
         use FormFactor::*;
         let (lo, hi) = self.qrange();
-        ensure!(
-            q >= lo && q <= hi,
-            "q value {q} outside of form factor range [{lo}, {hi}]",
-        );
+        if !(lo..=hi).contains(&q) {
+            return Err(Error::QOutOfRange { q, lo, hi });
+        }
         Ok(match self {
             Constant(c) => *c,
             Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
@@ -137,24 +136,31 @@ impl FormFactorSpec {
     fn eval(&self, q: f64) -> Result<f64> {
         use FormFactorSpec::*;
         let (lo, hi) = self.qrange();
-        ensure!(
-            q >= lo && q <= hi,
-            "q value {q} outside of form factor range [{lo}, {hi}]",
-        );
+        if !(lo..=hi).contains(&q) {
+            return Err(Error::QOutOfRange { q, lo, hi });
+        }
         Ok(match self {
             Constant(c) => *c,
             Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
             Polynomial { coeff, .. } => eval_polynomium(coeff, q),
             Table(table) => interpolate(table, q),
-            Alias(name) => bail!("unexpected alias form factor '{name}'"),
-            Linear(_) => bail!("unexpected linear form factor"),
-            United { center, .. } => bail!("unexpected united form factor '{center}'"),
+            Alias(name) => {
+                return Err(Error::internal(format!(
+                    "unexpected alias form factor '{name}'"
+                )));
+            }
+            Linear(_) => return Err(Error::internal("unexpected linear form factor")),
+            United { center, .. } => {
+                return Err(Error::internal(format!(
+                    "unexpected united form factor '{center}'"
+                )));
+            }
         })
     }
 }
 
 impl TryFrom<FormFactorSpec> for FormFactor {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn try_from(spec: FormFactorSpec) -> Result<Self> {
         use FormFactorSpec as S;
@@ -164,13 +170,19 @@ impl TryFrom<FormFactorSpec> for FormFactor {
             S::Table(t) => Self::Table(t),
             S::Gaussian { qrange, ab, c } => Self::Gaussian { qrange, ab, c },
             S::Alias(name) => {
-                bail!("internal: unresolved alias '{name}' reached conversion boundary")
+                return Err(Error::internal(format!(
+                    "unresolved alias '{name}' reached conversion boundary"
+                )));
             }
             S::United { center, .. } => {
-                bail!("internal: unresolved united '{center}' reached conversion boundary")
+                return Err(Error::internal(format!(
+                    "unresolved united '{center}' reached conversion boundary"
+                )));
             }
             S::Linear(_) => {
-                bail!("internal: unresolved linear form factor reached conversion boundary")
+                return Err(Error::internal(
+                    "unresolved linear form factor reached conversion boundary",
+                ));
             }
         })
     }
@@ -245,11 +257,8 @@ fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
 
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
 pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
-    let file = File::open(path)
-        .or_else(|e| bail!("error opening formfactor file {}: {}", path.display(), e))?;
-
-    let mut specs: BTreeMap<String, AtomSpec> =
-        serde_yaml::from_reader(file).map_err(|e| anyhow!("error parsing formfactor file: {e}"))?;
+    let file = File::open(path).with_path(path)?;
+    let mut specs: BTreeMap<String, AtomSpec> = serde_yaml::from_reader(file)?;
 
     convert_alias(&mut specs)?;
     convert_linear(&mut specs)?;
@@ -289,9 +298,9 @@ pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> 
         .map(|(kind, ff)| ff.to_table(qvalues.clone()).map(|t| (kind.name(), t)))
         .try_collect()?;
 
-    let mut file = File::create(path)?;
-    serde_yaml::to_writer(&mut file, &formfactor)
-        .map_err(|e| anyhow!("error writing formfactor file {}: {e}", path.display()))
+    let mut file = File::create(path).with_path(path)?;
+    serde_yaml::to_writer(&mut file, &formfactor)?;
+    Ok(())
 }
 
 fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
@@ -310,11 +319,11 @@ fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         };
         let components = components.clone();
 
-        let get_ff = |name| {
+        let get_ff = |name: &str| {
             no_linear
                 .get(name)
                 .map(|s| &s.formfactor)
-                .ok_or_else(|| anyhow!("undefined form factor '{name}'"))
+                .ok_or_else(|| Error::UndefinedFormFactor(name.to_string()))
         };
 
         // 𝐹(𝑞) = ∑ 𝑤ᵢ⋅𝐹ᵢ(𝑞)
@@ -355,7 +364,7 @@ fn convert_alias(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         };
         spec.formfactor = no_alias
             .get(name)
-            .ok_or_else(|| anyhow!("undefined aliased form factor '{name}'"))?
+            .ok_or_else(|| Error::UndefinedFormFactor(name.to_string()))?
             .clone();
     }
     Ok(())
@@ -372,14 +381,14 @@ fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         .collect();
 
     // Evaluates single united form factor to a tabulated form factor
-    let eval = |ff: &FormFactorSpec| {
+    let eval = |ff: &FormFactorSpec| -> Result<FormFactorSpec> {
         let FormFactorSpec::United { center, orbit } = ff else {
-            bail!("united form factor expected");
+            return Err(Error::internal("united form factor expected"));
         };
         let center_ff = &no_united
             .get(center)
             .map(|s| &s.formfactor)
-            .ok_or_else(|| anyhow!("undefined central atom form factor '{center}'"))?;
+            .ok_or_else(|| Error::UndefinedFormFactor(center.clone()))?;
 
         let (qmin, mut qmax) = center_ff.qrange();
         if qmax.is_infinite() {
@@ -396,7 +405,7 @@ fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
             let orbit_ff = &no_united
                 .get(name)
                 .map(|s| &s.formfactor)
-                .ok_or_else(|| anyhow!("undefined orbiting atom form factor '{name}'"))?;
+                .ok_or_else(|| Error::UndefinedFormFactor(name.clone()))?;
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
                 *f += weight * orbit_ff.eval(*q)? * sinc(*q * offset);
@@ -450,6 +459,19 @@ mod tests {
         };
         assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
         assert_relative_eq!(ff.eval(1.0).unwrap(), 15.0);
+    }
+
+    #[test]
+    fn error_variant_for_out_of_range_q() {
+        let ff = FormFactor::Polynomial {
+            qrange: (0.0, 1.0),
+            coeff: vec![1.0],
+        };
+        let err = ff.eval(2.0).unwrap_err();
+        assert!(
+            matches!(err, Error::QOutOfRange { .. }),
+            "expected QOutOfRange, got {err:?}",
+        );
     }
 
     // Test Table and linear interpolation

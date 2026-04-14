@@ -14,8 +14,7 @@
 
 use crate::input::read_structure;
 use crate::trajectory::get_side_lengths;
-use crate::{AtomKind, FindByName, Vector3};
-use anyhow::{Context, Result, bail};
+use crate::{AtomKind, Error, FindByName, Result, Vector3};
 use molly::Frame;
 use std::{
     fmt::{self, Display, Formatter},
@@ -43,7 +42,7 @@ impl Structure {
         for atom in atoms {
             let kind = atomkinds
                 .find_name(&atom.name)
-                .with_context(|| format!("unknown atom name in file: {:?}", atom.name))?;
+                .ok_or_else(|| Error::UnknownAtom(atom.name.clone()))?;
             pos.push(Vector3::new(
                 atom.position[0],
                 atom.position[1],
@@ -62,7 +61,11 @@ impl Structure {
     /// Refresh positions and box sides from a trajectory frame.
     pub fn set_positions(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
-            bail!("number of atoms in structure does not match trajectory frame");
+            return Err(Error::validation(format!(
+                "number of atoms in structure ({}) does not match trajectory frame ({})",
+                self.pos.len(),
+                frame.natoms(),
+            )));
         }
         const ANGSTROM_PER_NM: f64 = 10.0;
         for (pos, new_pos) in self.pos.iter_mut().zip(frame.coords()) {

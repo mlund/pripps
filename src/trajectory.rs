@@ -12,7 +12,6 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use anyhow::{Result, bail, ensure};
 use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
 use std::iter::zip;
@@ -21,8 +20,9 @@ use std::{f64, path};
 #[cfg(feature = "cli")]
 use indicatif::ProgressBar;
 
+use crate::error::IoResultExt;
 use crate::structure::Structure;
-use crate::{IntensityCalculator, Vector3};
+use crate::{Error, IntensityCalculator, Result, Vector3};
 
 /// Iterator over (weighted) frames in an XTC file
 pub struct XtcIterator {
@@ -36,7 +36,7 @@ pub struct XtcIterator {
 impl XtcIterator {
     /// Open an XTC file for iteration with an optional file with weights for each frame
     pub fn open(path: &path::Path, weights: Option<&path::Path>) -> Result<Self> {
-        let reader = XTCReader::open(path)?;
+        let reader = XTCReader::open(path).with_path(path)?;
         let weights = weights.map(read_weights).transpose()?;
         let mut xtc = Self {
             reader,
@@ -48,7 +48,11 @@ impl XtcIterator {
         if let Some(w) = xtc.weights.as_ref()
             && w.len() != xtc.num_frames
         {
-            bail!("number of weights does not match number of frames in trajectory");
+            return Err(Error::validation(format!(
+                "number of weights ({}) does not match number of frames in trajectory ({})",
+                w.len(),
+                xtc.num_frames,
+            )));
         }
         Ok(xtc)
     }
@@ -85,14 +89,14 @@ impl Iterator for XtcIterator {
 }
 
 fn read_weights(path: &path::Path) -> Result<Vec<f64>> {
-    let read_error = |e| bail!("error reading weights: {e}");
-
-    let mut weights: Vec<_> = std::fs::read_to_string(path)
-        .or_else(read_error)?
+    let mut weights: Vec<f64> = std::fs::read_to_string(path)
+        .with_path(path)?
         .lines()
         .map(|w| w.parse())
         .try_collect()
-        .map_err(|e| anyhow::anyhow!("weight error: {e}"))?;
+        .map_err(|e: std::num::ParseFloatError| {
+            Error::validation(format!("weight parse error: {e}"))
+        })?;
 
     normalize_vector(weights.as_mut_slice())?;
 
@@ -103,7 +107,9 @@ fn read_weights(path: &path::Path) -> Result<Vec<f64>> {
 /// Normalize a vector so that the sum of its elements is 1
 fn normalize_vector(v: &mut [f64]) -> Result<()> {
     let sum: f64 = v.iter().sum();
-    ensure!(sum.abs().is_normal(), "sum of weights is zero or infinite");
+    if !sum.abs().is_normal() {
+        return Err(Error::validation("sum of weights is zero or infinite"));
+    }
     for w in v.iter_mut() {
         *w /= sum;
     }
