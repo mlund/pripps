@@ -12,10 +12,9 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::Vector3;
 use crate::input::read_structure;
+use crate::{AtomKind, FindByName, Vector3};
 use anyhow::{Context, Result, bail};
-use faunus::topology::{AtomKind, FindByName};
 use molly::Frame;
 use std::{
     fmt::{self, Display, Formatter},
@@ -25,10 +24,8 @@ use std::{
 /// Ad hoc molecular structure: per-atom positions and kind ids.
 #[derive(Debug, Clone, Default)]
 pub struct Structure {
-    /// Particle positions
-    pub pos: Vec<Vector3>,
-    /// Atom kind ids
-    pub ids: Vec<usize>,
+    pub(crate) pos: Vec<Vector3>,
+    pub(crate) ids: Vec<usize>,
 }
 
 impl Structure {

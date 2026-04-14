@@ -14,7 +14,7 @@
 
 //! Definition of command line interfaces (CLI)
 
-use crate::{DebyeIntensity, IntensityCalculator, Pripps, Vector3, cli, explicit::DirectTransform};
+use crate::{IntensityCalculator, Pripps, cli, debye::DebyeIntensity, explicit::DirectTransform};
 use anyhow::Result;
 use clap::{Parser, Subcommand, builder::styling::AnsiColor};
 
@@ -121,7 +121,7 @@ pub fn make_method(pripps: &Pripps, command: Commands) -> Result<Box<dyn Intensi
             Ok(Box::new(method) as Box<dyn IntensityCalculator>)
         }
         Direct { pmax, side_length } => {
-            let side_lengths = Vector3::new(side_length, side_length, side_length);
+            let side_lengths = [side_length; 3];
             let method = DirectTransform::new(pripps.formfactors().clone(), pmax, side_lengths);
             Ok(Box::new(method) as Box<dyn IntensityCalculator>)
         }

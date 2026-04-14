@@ -12,20 +12,13 @@
 // See the license for the specific language governing permissions and
 // limitations under the license.
 
-use crate::{AtomKind, AtomKindBuilder, sinc};
+use crate::AtomKind;
+use crate::debye::sinc;
 use anyhow::{Result, anyhow, bail, ensure};
-use faunus::topology::Value;
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
-use serde_yaml;
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, HashMap},
-    fs::File,
-    ops::Add,
-    path::Path,
-};
+use std::{cmp::Ordering, collections::BTreeMap, fs::File, ops::Add, path::Path};
 
 /// Map of form factors for each atomkind
 pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
@@ -196,21 +189,15 @@ struct AtomSpec {
 }
 
 impl AtomSpec {
-    /// Convert the spec into a runtime `AtomKind`.
-    ///
-    /// The optional `dsv` field is saved as a custom property.
-    fn to_atomkind(&self, name: &str, id: usize) -> Result<AtomKind> {
-        let custom = self
-            .dsv
-            .map(|dsv| HashMap::from([("dsv".to_owned(), Value::Float(dsv))]));
-
-        AtomKindBuilder::default()
-            .name(name)
-            .id(id)
-            .sigma(2.0 * self.radius.unwrap_or(0.0))
-            .custom(custom.unwrap_or_default())
-            .build()
-            .map_err(|e| anyhow!("invalid atom info: {e}"))
+    /// Build a runtime [`AtomKind`] from the declared name, id, and the
+    /// optional `radius` / `dsv` fields. Infallible.
+    fn to_atomkind(&self, name: &str, id: usize) -> AtomKind {
+        AtomKind {
+            id,
+            name: name.to_string(),
+            sigma: self.radius.map(|r| 2.0 * r),
+            dsv: self.dsv,
+        }
     }
 }
 
@@ -275,7 +262,7 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
         .into_iter()
         .enumerate()
         .map(|(id, (name, spec))| {
-            let kind = spec.to_atomkind(&name, id)?;
+            let kind = spec.to_atomkind(&name, id);
             let ff = FormFactor::try_from(spec.formfactor)?;
             Ok((kind, ff))
         })
@@ -441,7 +428,10 @@ pub fn formfactor_by_index(
     ))
 }
 
-/// Create S x S matrix of form factor products at a given q value (S = number of atom types)
+/// Create an S x S matrix of form factor products at a given q value
+/// (S = number of atom kinds). Library-facing helper; not called from
+/// the CLI path but exercised by a unit test.
+#[allow(dead_code)]
 pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
     let f = DVector::from_vec(formfactors.values().map(|f| f.eval(q)).try_collect()?);
     Ok(&f * f.transpose())
@@ -450,7 +440,6 @@ pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<D
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AtomKindBuilder;
     use approx::assert_relative_eq;
 
     #[test]
@@ -480,14 +469,8 @@ mod tests {
     #[test]
     fn test_formfactor_product_at_q() {
         let formfactors = vec![
-            (
-                AtomKindBuilder::default().name("A").id(0).build().unwrap(),
-                FormFactor::Constant(1.0),
-            ),
-            (
-                AtomKindBuilder::default().name("B").id(1).build().unwrap(),
-                FormFactor::Constant(2.0),
-            ),
+            (AtomKind::new("A", 0), FormFactor::Constant(1.0)),
+            (AtomKind::new("B", 1), FormFactor::Constant(2.0)),
         ]
         .into_iter()
         .collect();

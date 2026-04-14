@@ -59,7 +59,7 @@ impl IntensityCalculator for DebyeIntensity {
     }
 
     #[allow(unused_variables)]
-    fn set_side_lengths(&self, side_lengths: crate::Vector3) {
+    fn set_side_lengths(&self, side_lengths: [f64; 3]) {
         // The Debye formula does not depend on box side lengths
     }
 }

@@ -81,13 +81,13 @@ impl IntensityCalculator for DirectTransform {
         Ok(average_duplicates(table))
     }
 
-    fn set_side_lengths(&self, side_lengths: Vector3) {
-        *self.box_sides.write().unwrap() = side_lengths;
+    fn set_side_lengths(&self, side_lengths: [f64; 3]) {
+        *self.box_sides.write().unwrap() = Vector3::from(side_lengths);
     }
 }
 
 impl DirectTransform {
-    pub fn new(formfactors: FormFactorMap, p_max: usize, side_lengths: Vector3) -> Self {
+    pub fn new(formfactors: FormFactorMap, p_max: usize, side_lengths: [f64; 3]) -> Self {
         let directions: Vec<_> = MILLER_INDEX
             .iter()
             .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
@@ -102,7 +102,7 @@ impl DirectTransform {
         Self {
             formfactors,
             directions,
-            box_sides: side_lengths.into(),
+            box_sides: Vector3::from(side_lengths).into(),
         }
     }
 }
