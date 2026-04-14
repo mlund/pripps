@@ -2,21 +2,12 @@
 //
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
-// You may obtain a copy of the license at
-//
-//     http://www.apache.org/licenses/license-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the license is distributed on an "as is" basis,
-// without warranties or conditions of any kind, either express or implied.
-// See the license for the specific language governing permissions and
-// limitations under the license.
 
+use crate::q_sampler::QSampler;
 use crate::{
     IntensityCalculator, Result, Structure, Vector3,
     formfactor::{self, FormFactorMap},
 };
-use rayon::prelude::*;
 
 /// Returns sinc(x) = sin(x)/x with graceful handling of x -> 0
 #[inline]
@@ -30,10 +21,7 @@ pub fn sinc(x: f64) -> f64 {
 }
 
 pub(crate) struct DebyeIntensity {
-    /// List of q values - must be evenly spaced and sorted in ascending order
-    q_values: Vec<f64>,
-    /// Form factors for each atom kind
-    formfactors: FormFactorMap,
+    sampler: QSampler,
 }
 
 impl DebyeIntensity {
@@ -43,8 +31,7 @@ impl DebyeIntensity {
         num_q: usize,
     ) -> Result<Self> {
         Ok(Self {
-            q_values: make_q_values(q_minmax.0, q_minmax.1, num_q),
-            formfactors,
+            sampler: QSampler::linear(formfactors, q_minmax.0, q_minmax.1, num_q),
         })
     }
 }
@@ -52,21 +39,10 @@ impl DebyeIntensity {
 impl IntensityCalculator for DebyeIntensity {
     /// Calculate I(q) over a range of q values using the Debye formula
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
-        let intensities = self
-            .q_values
-            .par_iter()
-            .map(|q| intensity_at_q(&structure.ids, &structure.pos, &self.formfactors, *q))
-            .collect::<Result<Vec<f64>>>()?;
-
-        Ok(self.q_values.iter().cloned().zip(intensities).collect())
+        self.sampler.run_parallel(|q| {
+            intensity_at_q(&structure.ids, &structure.pos, &self.sampler.formfactors, q)
+        })
     }
-}
-
-/// Generate a list of q values from qmin to qmax
-pub fn make_q_values(qmin: f64, qmax: f64, nq: usize) -> Vec<f64> {
-    (0..nq)
-        .map(|i| qmin + (qmax - qmin) * i as f64 / (nq - 1) as f64)
-        .collect()
 }
 
 /// Calculate I(q) using the Debye formula.

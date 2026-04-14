@@ -12,7 +12,9 @@ mod error;
 mod explicit;
 mod formfactor;
 mod input;
+mod q_sampler;
 mod structure;
+mod svergun;
 mod trajectory;
 
 use std::{
@@ -23,6 +25,7 @@ use std::{
 use debye::DebyeIntensity;
 use explicit::DirectTransform;
 use structure::Structure;
+use svergun::SvergunIntensity;
 use trajectory::trajectory_average;
 
 pub use atomkind::{AtomKind, FindByName};
@@ -38,12 +41,24 @@ pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 #[derive(Debug, Clone, Copy)]
 pub enum IntensityScheme {
     /// Debye formula sampled on `nq` points in `[qmin, qmax]` (Å⁻¹).
+    /// O(N²·Q) — simple, exact, best for small structures.
     Debye { qmin: f64, qmax: f64, nq: usize },
     /// Direct Fourier transform on `pmax` Miller-index multiples. The
     /// periodic box is taken from the [`Structure`] — from a trajectory
     /// frame when averaging over an XTC, or via the `box_sides` override
     /// parameter of [`Pripps::intensity`] for single-frame calls.
     Direct { pmax: usize },
+    /// Svergun's spherical-harmonic multipole expansion
+    /// (*Acta Cryst. A51*, 1995). O(N·Q·L²), linear in atom count —
+    /// preferred for large structures and iterative fitting. `l_max`
+    /// is the multipole truncation order; `None` auto-selects from
+    /// the structure's extent and `qmax`.
+    Svergun {
+        qmin: f64,
+        qmax: f64,
+        nq: usize,
+        l_max: Option<usize>,
+    },
 }
 
 /// Internal dispatch interface. Implementations compute I(q) for a single
@@ -117,6 +132,22 @@ impl Pripps {
             IntensityScheme::Direct { pmax } => {
                 log::info!("Using direct Fourier transform with p_max = {pmax}");
                 Box::new(DirectTransform::new(self.formfactors.clone(), pmax))
+            }
+            IntensityScheme::Svergun {
+                qmin,
+                qmax,
+                nq,
+                l_max,
+            } => {
+                log::info!(
+                    "Using Svergun multipole expansion for 𝐼(𝑞) over {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹"
+                );
+                Box::new(SvergunIntensity::new(
+                    self.formfactors.clone(),
+                    (qmin, qmax),
+                    nq,
+                    l_max,
+                )?)
             }
         };
 

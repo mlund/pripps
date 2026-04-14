@@ -292,7 +292,7 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
 pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> {
     log::info!("Exporting tabulated form factors to {}", path.display());
 
-    let qvalues = crate::debye::make_q_values(0.0, 0.5, 100);
+    let qvalues = crate::q_sampler::linear_q_values(0.0, 0.5, 100);
     let formfactor: Vec<_> = formfactor
         .iter()
         .map(|(kind, ff)| ff.to_table(qvalues.clone()).map(|t| (kind.name(), t)))
@@ -343,7 +343,7 @@ fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
             qmin = qrange.0.max(qmin);
             qmax = qrange.1.min(qmax);
         }
-        let qvalues = crate::debye::make_q_values(qmin, qmax, TABLE_LEN);
+        let qvalues = crate::q_sampler::linear_q_values(qmin, qmax, TABLE_LEN);
 
         let table = qvalues.iter().cloned().map(lin_combination).try_collect()?;
         spec.formfactor = FormFactorSpec::Table(table);

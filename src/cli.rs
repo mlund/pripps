@@ -48,6 +48,24 @@ pub enum Commands {
         #[clap(short = 'b', long = "box", default_value = "200.0")]
         side_length: f64,
     },
+    /// Scattering intensity via Svergun's spherical-harmonic multipole
+    /// expansion (Acta Cryst. A51, 1995). Linear in atom count —
+    /// preferred for large structures and iterative fitting.
+    Svergun {
+        /// Minimum q value (1/Å)
+        #[clap(long, default_value = "0.0")]
+        qmin: f64,
+        /// Maximum q value (1/Å)
+        #[clap(long, default_value = "0.75")]
+        qmax: f64,
+        /// Number of q values
+        #[clap(long, default_value = "100")]
+        nq: usize,
+        /// Expansion order (multipole truncation). If unset,
+        /// auto-computed from the structure's extent and qmax.
+        #[clap(long)]
+        lmax: Option<usize>,
+    },
 }
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
@@ -119,6 +137,20 @@ fn command_to_scheme(command: Commands) -> (IntensityScheme, Option<[f64; 3]>) {
         Commands::Direct { pmax, side_length } => {
             (IntensityScheme::Direct { pmax }, Some([side_length; 3]))
         }
+        Commands::Svergun {
+            qmin,
+            qmax,
+            nq,
+            lmax,
+        } => (
+            IntensityScheme::Svergun {
+                qmin,
+                qmax,
+                nq,
+                l_max: lmax,
+            },
+            None,
+        ),
     }
 }
 
