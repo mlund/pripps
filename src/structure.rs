@@ -13,6 +13,7 @@
 // limitations under the license.
 
 use crate::input::read_structure;
+use crate::trajectory::get_side_lengths;
 use crate::{AtomKind, FindByName, Vector3};
 use anyhow::{Context, Result, bail};
 use molly::Frame;
@@ -21,23 +22,16 @@ use std::{
     path::Path,
 };
 
-/// Ad hoc molecular structure: per-atom positions and kind ids.
+/// Ad hoc molecular structure: per-atom positions, kind ids, and optional
+/// periodic box.
 #[derive(Debug, Clone, Default)]
-pub struct Structure {
+pub(crate) struct Structure {
     pub(crate) pos: Vec<Vector3>,
     pub(crate) ids: Vec<usize>,
+    pub(crate) box_sides: Option<Vector3>,
 }
 
 impl Structure {
-    /// Number of atoms in the structure
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.pos.len()
-    }
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.pos.is_empty()
-    }
     /// Construct a structure from a PDB or XYZ file, looking each atom name up
     /// in the provided [`AtomKind`] list for its id. Unknown atom names error.
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
@@ -58,10 +52,14 @@ impl Structure {
             ids.push(kind.id());
         }
 
-        Ok(Self { pos, ids })
+        Ok(Self {
+            pos,
+            ids,
+            box_sides: None,
+        })
     }
 
-    /// Set positions from a trajectory frame
+    /// Refresh positions (and box sides, if present) from a trajectory frame.
     pub fn set_positions(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {
             bail!("number of atoms in structure does not match trajectory frame");
@@ -70,6 +68,9 @@ impl Structure {
         for (pos, new_pos) in self.pos.iter_mut().zip(frame.coords()) {
             *pos = ANGSTROM_PER_NM
                 * Vector3::new(new_pos[0] as f64, new_pos[1] as f64, new_pos[2] as f64);
+        }
+        if let Some(sides) = get_side_lengths(frame) {
+            self.box_sides = Some(sides);
         }
         Ok(())
     }

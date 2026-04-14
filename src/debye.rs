@@ -30,7 +30,7 @@ pub fn sinc(x: f64) -> f64 {
     }
 }
 
-pub struct DebyeIntensity {
+pub(crate) struct DebyeIntensity {
     /// List of q values - must be evenly spaced and sorted in ascending order
     q_values: Vec<f64>,
     /// Form factors for each atom kind
@@ -38,7 +38,11 @@ pub struct DebyeIntensity {
 }
 
 impl DebyeIntensity {
-    pub fn new(formfactors: FormFactorMap, q_minmax: (f64, f64), num_q: usize) -> Result<Self> {
+    pub(crate) fn new(
+        formfactors: FormFactorMap,
+        q_minmax: (f64, f64),
+        num_q: usize,
+    ) -> Result<Self> {
         Ok(Self {
             q_values: make_q_values(q_minmax.0, q_minmax.1, num_q),
             formfactors,
@@ -56,11 +60,6 @@ impl IntensityCalculator for DebyeIntensity {
             .collect::<Result<Vec<f64>>>()?;
 
         Ok(self.q_values.iter().cloned().zip(intensities).collect())
-    }
-
-    #[allow(unused_variables)]
-    fn set_side_lengths(&self, side_lengths: [f64; 3]) {
-        // The Debye formula does not depend on box side lengths
     }
 }
 

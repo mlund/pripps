@@ -1,5 +1,5 @@
 // Library-only builds (no `cli` feature) have no in-crate caller for the
-// intensity calculators — they're only instantiated through `cli::make_method`.
+// intensity calculators — they're only instantiated through `Pripps::intensity`.
 // Suppress the per-item dead-code warnings in that configuration; external
 // consumers (pyo3 bindings, other library users) reach them via `Pripps`.
 #![cfg_attr(not(feature = "cli"), allow(dead_code))]
@@ -15,15 +15,15 @@ mod structure;
 mod trajectory;
 
 use anyhow::{Result, ensure};
-#[cfg(feature = "cli")]
-use indicatif::ProgressBar;
 use std::{
     collections::BTreeMap,
-    iter::zip,
     path::{self, Path},
 };
+
+use debye::DebyeIntensity;
+use explicit::DirectTransform;
 use structure::Structure;
-use trajectory::{XtcIterator, get_side_lengths};
+use trajectory::trajectory_average;
 
 pub use atomkind::{AtomKind, FindByName};
 pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
@@ -32,53 +32,23 @@ pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfact
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
 pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 
-/// Trait for calculating scattering intensities
-pub trait IntensityCalculator {
-    /// Calculate I(q) for a single structure
+/// Computational scheme for scattering intensity calculation, with its
+/// parameters. Passed to [`Pripps::intensity`].
+#[derive(Debug, Clone, Copy)]
+pub enum IntensityScheme {
+    /// Debye formula sampled on `nq` points in `[qmin, qmax]` (Å⁻¹).
+    Debye { qmin: f64, qmax: f64, nq: usize },
+    /// Direct Fourier transform on `pmax` Miller-index multiples. The
+    /// periodic box is taken from the [`Structure`] — from a trajectory
+    /// frame when averaging over an XTC, or via the `box_sides` override
+    /// parameter of [`Pripps::intensity`] for single-frame calls.
+    Direct { pmax: usize },
+}
+
+/// Internal dispatch interface. Implementations compute I(q) for a single
+/// structure; library consumers don't implement or name this trait.
+pub(crate) trait IntensityCalculator: Sync {
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>>;
-
-    /// Set the side lengths of the box, if applicable
-    fn set_side_lengths(&self, _side_lengths: [f64; 3]);
-
-    /// Average I(q) over a trajectory of structures
-    fn calc_intensities_xtc(
-        &self,
-        structure: &Structure,
-        xtc_path: &path::Path,
-        weights: Option<&path::Path>,
-    ) -> Result<Vec<(f64, f64)>> {
-        let reader = XtcIterator::open(xtc_path, weights)?;
-        let num_frames = reader.num_frames;
-        #[cfg(feature = "cli")]
-        let progress = ProgressBar::new(reader.num_frames as u64);
-
-        log::info!("Averaging 𝐼(𝑞) over {num_frames} frames");
-
-        let mut mean_intensity = Vec::new();
-        let mut structure = structure.clone();
-
-        for (frame, weight) in reader {
-            structure.set_positions(&frame)?;
-
-            if let Some(side_lengths) = get_side_lengths(&frame) {
-                self.set_side_lengths(side_lengths.into());
-            }
-            let intensity = self.calc_intensities(&structure)?;
-
-            if mean_intensity.is_empty() {
-                mean_intensity = intensity.iter().map(|(q, _)| (*q, 0.0)).collect();
-            }
-
-            for ((_, mean), (_, intensity)) in zip(&mut mean_intensity, intensity) {
-                *mean += weight * intensity / num_frames as f64;
-            }
-
-            #[cfg(feature = "cli")]
-            progress.inc(1);
-        }
-
-        Ok(mean_intensity)
-    }
 }
 
 /// High-level interface to the Pripps library
@@ -107,27 +77,52 @@ impl Pripps {
         })
     }
 
-    /// Calculate I(q) for a structure, optionally averaged over an XTC
-    /// trajectory. If `xtcfile` is provided, the single-frame structure is
-    /// used only for atom names/ids; the frames are iterated from the XTC
-    /// and averaged (the template structure is not part of the average).
-    pub fn calc_intensities(
+    /// Compute I(q) for a structure under the given [`IntensityScheme`].
+    ///
+    /// When `xtcfile` is `Some`, the structure is used as a template (for
+    /// atom identities and count); each frame of the XTC is iterated,
+    /// substituted into the template, and the resulting I(q) curves are
+    /// averaged (weighted by the optional `weights` file if provided).
+    ///
+    /// `box_sides` provides an explicit periodic box for single-frame
+    /// calls; it must be `None` when a trajectory is supplied (the per-
+    /// frame box from the XTC takes precedence).
+    pub fn intensity(
         &self,
-        method: &dyn IntensityCalculator,
-        xyzfile: &std::path::Path,
+        scheme: IntensityScheme,
+        xyzfile: &path::Path,
         xtcfile: Option<&path::Path>,
-        weight_path: Option<&path::Path>,
-        side_lengths: Option<[f64; 3]>,
+        weights: Option<&path::Path>,
+        box_sides: Option<[f64; 3]>,
     ) -> Result<Vec<(f64, f64)>> {
-        let structure = Structure::from_file(xyzfile, &self.atomkinds)?;
-        if let Some(xtcfile) = xtcfile {
+        let mut structure = Structure::from_file(xyzfile, &self.atomkinds)?;
+        if let Some(box_sides) = box_sides {
             ensure!(
-                side_lengths.is_none(),
+                xtcfile.is_none(),
                 "manual box length cannot be used with trajectories"
             );
-            method.calc_intensities_xtc(&structure, xtcfile, weight_path)
+            structure.box_sides = Some(Vector3::from(box_sides));
+        }
+
+        let calc: Box<dyn IntensityCalculator> = match scheme {
+            IntensityScheme::Debye { qmin, qmax, nq } => {
+                log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
+                Box::new(DebyeIntensity::new(
+                    self.formfactors.clone(),
+                    (qmin, qmax),
+                    nq,
+                )?)
+            }
+            IntensityScheme::Direct { pmax } => {
+                log::info!("Using direct Fourier transform with p_max = {pmax}");
+                Box::new(DirectTransform::new(self.formfactors.clone(), pmax))
+            }
+        };
+
+        if let Some(xtc) = xtcfile {
+            trajectory_average(calc.as_ref(), &structure, xtc, weights)
         } else {
-            method.calc_intensities(&structure)
+            calc.calc_intensities(&structure)
         }
     }
 }

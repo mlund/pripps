@@ -15,9 +15,14 @@
 use anyhow::{Result, bail, ensure};
 use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
+use std::iter::zip;
 use std::{f64, path};
 
-use crate::Vector3;
+#[cfg(feature = "cli")]
+use indicatif::ProgressBar;
+
+use crate::structure::Structure;
+use crate::{IntensityCalculator, Vector3};
 
 /// Iterator over (weighted) frames in an XTC file
 pub struct XtcIterator {
@@ -115,4 +120,45 @@ pub fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
         ANGSTROM_PER_NM * Vector3::new(sides[0][0] as f64, sides[1][1] as f64, sides[2][2] as f64);
     log::trace!("frame side-length = {sides:?}");
     sides.norm_squared().gt(&f64::EPSILON).then_some(sides)
+}
+
+/// Weighted average of I(q) over all frames in an XTC trajectory.
+///
+/// The template `structure` is cloned and used as per-frame scratch —
+/// `set_positions` refreshes both coordinates and (if the frame carries
+/// one) the periodic box on every iteration. The frame loop is serial;
+/// each calculator parallelizes internally over q values / q vectors.
+pub fn trajectory_average(
+    calc: &dyn IntensityCalculator,
+    structure: &Structure,
+    xtc_path: &path::Path,
+    weights: Option<&path::Path>,
+) -> Result<Vec<(f64, f64)>> {
+    let reader = XtcIterator::open(xtc_path, weights)?;
+    let num_frames = reader.num_frames;
+    #[cfg(feature = "cli")]
+    let progress = ProgressBar::new(num_frames as u64);
+
+    log::info!("Averaging 𝐼(𝑞) over {num_frames} frames");
+
+    let mut mean_intensity = Vec::new();
+    let mut structure = structure.clone();
+
+    for (frame, weight) in reader {
+        structure.set_positions(&frame)?;
+        let intensity = calc.calc_intensities(&structure)?;
+
+        if mean_intensity.is_empty() {
+            mean_intensity = intensity.iter().map(|(q, _)| (*q, 0.0)).collect();
+        }
+
+        for ((_, mean), (_, i)) in zip(&mut mean_intensity, intensity) {
+            *mean += weight * i / num_frames as f64;
+        }
+
+        #[cfg(feature = "cli")]
+        progress.inc(1);
+    }
+
+    Ok(mean_intensity)
 }

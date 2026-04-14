@@ -14,7 +14,7 @@
 
 //! Definition of command line interfaces (CLI)
 
-use crate::{IntensityCalculator, Pripps, cli, debye::DebyeIntensity, explicit::DirectTransform};
+use crate::{IntensityScheme, Pripps, cli};
 use anyhow::Result;
 use clap::{Parser, Subcommand, builder::styling::AnsiColor};
 
@@ -97,33 +97,27 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
-    let method = make_method(&pripps, args.command)?;
+    let (scheme, box_override) = command_to_scheme(args.command);
 
-    let intensity = pripps.calc_intensities(
-        method.as_ref(),
+    let intensity = pripps.intensity(
+        scheme,
         &args.input,
         args.xtcfile.as_deref(),
         args.weights.as_deref(),
-        None,
+        box_override,
     )?;
     write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
 
     Ok(())
 }
 
-/// Construct an `IntensityCalculator` from parsed CLI arguments.
-pub fn make_method(pripps: &Pripps, command: Commands) -> Result<Box<dyn IntensityCalculator>> {
-    use Commands::*;
+/// Translate parsed CLI arguments into an [`IntensityScheme`] plus an
+/// optional explicit box override (used by the `Direct` subcommand).
+fn command_to_scheme(command: Commands) -> (IntensityScheme, Option<[f64; 3]>) {
     match command {
-        Debye { qmin, qmax, nq } => {
-            log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
-            let method = DebyeIntensity::new(pripps.formfactors().clone(), (qmin, qmax), nq)?;
-            Ok(Box::new(method) as Box<dyn IntensityCalculator>)
-        }
-        Direct { pmax, side_length } => {
-            let side_lengths = [side_length; 3];
-            let method = DirectTransform::new(pripps.formfactors().clone(), pmax, side_lengths);
-            Ok(Box::new(method) as Box<dyn IntensityCalculator>)
+        Commands::Debye { qmin, qmax, nq } => (IntensityScheme::Debye { qmin, qmax, nq }, None),
+        Commands::Direct { pmax, side_length } => {
+            (IntensityScheme::Direct { pmax }, Some([side_length; 3]))
         }
     }
 }

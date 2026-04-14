@@ -15,13 +15,12 @@
 //! Explicit calculation using discrete q vector
 
 use crate::{IntensityCalculator, Structure, Vector3, formfactor::FormFactorMap};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use num_complex::Complex;
 use rayon::prelude::*;
 use std::iter::zip;
 use std::ops::Mul;
-use std::sync;
 use std::{cmp::Ordering, f64::consts::PI};
 
 /// Sample directions (h,k,l)
@@ -49,25 +48,20 @@ const MILLER_INDEX: [Vector3; 13] = [
 ///
 /// - http://doi.org/d8zgw5
 /// - http://doi.org/10.1063/1.449987
-///
-/// @TODO: Add form factors
 #[derive(Debug)]
-pub struct DirectTransform {
+pub(crate) struct DirectTransform {
     /// q directions; divided by box side lengths to get q
     directions: Vec<Vector3>,
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
-    /// Cuboidal box side lengths
-    box_sides: sync::RwLock<Vector3>,
 }
 
 impl IntensityCalculator for DirectTransform {
-    /// Calculate I(q) for a given structure inside cuboidal box
+    /// Calculate I(q) for a given structure inside its cuboidal box.
     fn calc_intensities(&self, structure: &Structure) -> Result<Vec<(f64, f64)>> {
-        let box_sides = self
-            .box_sides
-            .read()
-            .map_err(|e| anyhow::anyhow!("could not read side length: {e}"))?;
+        let box_sides = structure.box_sides.ok_or_else(|| {
+            anyhow!("direct Fourier transform requires box side lengths on the structure")
+        })?;
 
         let intensity = |q: Vector3| calc_intensity(&q, structure, &self.formfactors);
 
@@ -80,14 +74,10 @@ impl IntensityCalculator for DirectTransform {
 
         Ok(average_duplicates(table))
     }
-
-    fn set_side_lengths(&self, side_lengths: [f64; 3]) {
-        *self.box_sides.write().unwrap() = Vector3::from(side_lengths);
-    }
 }
 
 impl DirectTransform {
-    pub fn new(formfactors: FormFactorMap, p_max: usize, side_lengths: [f64; 3]) -> Self {
+    pub(crate) fn new(formfactors: FormFactorMap, p_max: usize) -> Self {
         let directions: Vec<_> = MILLER_INDEX
             .iter()
             .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
@@ -102,7 +92,6 @@ impl DirectTransform {
         Self {
             formfactors,
             directions,
-            box_sides: Vector3::from(side_lengths).into(),
         }
     }
 }
