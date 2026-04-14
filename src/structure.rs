@@ -13,15 +13,15 @@
 // limitations under the license.
 
 use crate::Vector3;
+use crate::input::read_structure;
 use anyhow::{Context, Result, bail};
 use faunus::topology::{AtomKind, FindByName};
-use itertools::Itertools;
 use molly::Frame;
 use std::{
     fmt::{self, Display, Formatter},
     path::Path,
 };
-use voronota::{Ball, RadicalTessellation};
+use voronota_ltr::{Ball, Results, compute_tessellation};
 
 /// Ad hoc molecular structure containing atoms with positions, masses, charges, and radii
 #[derive(Debug, Clone, Default)]
@@ -44,37 +44,31 @@ impl Structure {
     pub fn is_empty(&self) -> bool {
         self.pos.is_empty()
     }
-    /// Constructs a new structure from a file using chemfiles
+    /// Construct a structure from a PDB or XYZ file, looking each atom name up
+    /// in the provided [`AtomKind`] list for its id and radius (half its
+    /// sigma). Unknown atom names error out.
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
-        let mut traj = chemfiles::Trajectory::open(path, 'r')
-            .context(format!("couldn't open file {}", path.display()))?;
+        let atoms = read_structure(path)?;
 
-        let to_vector3 = |pos: &[_; 3]| Vector3::new(pos[0], pos[1], pos[2]);
+        let mut pos = Vec::with_capacity(atoms.len());
+        let mut ids = Vec::with_capacity(atoms.len());
+        let mut radii = Vec::with_capacity(atoms.len());
 
-        let mut frame = chemfiles::Frame::new();
-        traj.read(&mut frame)?;
-
-        let pos = frame.positions().iter().map(to_vector3).collect();
-        let ids = frame
-            .iter_atoms()
-            .map(|atom| {
-                atomkinds
-                    .find_name(&atom.name())
-                    .map(|kind| kind.id())
-                    .context(format!("unknown atom name in file: {:?}", atom.name()))
-            })
-            .try_collect()?;
-
-        let radii = frame
-            .iter_atoms()
-            .map(|atom| {
-                atomkinds
-                    .find_name(&atom.name())
-                    .map(|kind| kind.sigma().map(|sigma| 0.5 * sigma))
-                    .unwrap_or_default()
-                    .context(format!("unknown atom name in file: {:?}", atom.name()))
-            })
-            .try_collect()?;
+        for atom in atoms {
+            let kind = atomkinds
+                .find_name(&atom.name)
+                .with_context(|| format!("unknown atom name in file: {:?}", atom.name))?;
+            let sigma = kind
+                .sigma()
+                .with_context(|| format!("atom kind {:?} has no radius", atom.name))?;
+            pos.push(Vector3::new(
+                atom.position[0],
+                atom.position[1],
+                atom.position[2],
+            ));
+            ids.push(kind.id());
+            radii.push(0.5 * sigma);
+        }
 
         Ok(Self { pos, ids, radii })
     }
@@ -91,7 +85,7 @@ impl Structure {
         }
         Ok(())
     }
-    /// Calculate SASA for each atom
+    /// Calculate SASA for each atom. Lonely atoms (no contacts) report 0.0.
     pub fn calc_sasa(&self, probe_radius: f64) -> Vec<f64> {
         assert_eq!(self.pos.len(), self.radii.len());
 
@@ -101,22 +95,17 @@ impl Structure {
             probe_radius
         );
 
-        let balls = self
+        let balls: Vec<Ball> = self
             .pos
             .iter()
             .zip(&self.radii)
-            .map(|(p, r)| Ball {
-                x: p.x,
-                y: p.y,
-                z: p.z,
-                r: *r,
-            })
+            .map(|(p, r)| Ball::new(p.x, p.y, p.z, *r))
             .collect();
 
-        RadicalTessellation::from_balls(probe_radius, &balls, None, None, false)
-            .cells
-            .iter()
-            .map(|c| c.sas_area)
+        compute_tessellation(&balls, probe_radius, None, None, false)
+            .sas_areas()
+            .into_iter()
+            .map(|sas| sas.unwrap_or(0.0))
             .collect()
     }
 }

@@ -3,6 +3,7 @@ pub mod cli;
 mod debye;
 pub mod explicit;
 mod grid;
+mod input;
 mod structure;
 mod trajectory;
 
