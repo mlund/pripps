@@ -28,20 +28,23 @@
 //! The numerical primitives (`Spherical`, `LowerTriangle`,
 //! `legendre_normalized`, `spherical_bessel`, `spherical_harmonics`,
 //! `I_POW`) live in the [`math`] submodule to keep this file focused
-//! on the calculator pipeline. Solvent corrections (`Clm` excluded
-//! volume, `Blm` hydration shell) that PepsiSAXS combines into
-//! `|A - C + dp·B|²` are deliberately out of scope and belong to a
-//! separate `SolventConfig` follow-up.
+//! on the calculator pipeline. Solvent corrections (excluded volume
+//! and hydration shell) feed into the same multipole kernel as dummy
+//! scatterer sets via [`crate::solvent::SolventConfig`]; the
+//! three-contribution combine lives in [`combine_contributions`].
 
 mod math;
 
 use crate::q_sampler::QSampler;
+use crate::solvent::{DummySet, SolventConfig};
 use crate::{
-    Intensity, IntensityCalculator, Result, Structure,
+    Contributions, Intensity, IntensityCalculator, Result, Structure, Vector3,
     formfactor::{self, FormFactorMap},
 };
+use itertools::Itertools;
 use math::{I_POW, LowerTriangle, Spherical, spherical_bessel, spherical_harmonics};
 use num_complex::Complex;
+use rayon::prelude::*;
 
 /// Per-atom spherical-harmonic basis values: the spherical coordinates
 /// of every atom and the conjugated `Y_l^m*` tables Svergun's
@@ -59,9 +62,8 @@ struct SphericalBasis {
 }
 
 impl SphericalBasis {
-    fn build(structure: &Structure, l_max: usize) -> Self {
-        let spherical: Vec<Spherical> =
-            structure.pos.iter().copied().map(Spherical::from).collect();
+    fn new(positions: &[Vector3], l_max: usize) -> Self {
+        let spherical: Vec<Spherical> = positions.iter().copied().map(Spherical::from).collect();
 
         let angular: Vec<LowerTriangle<Complex<f64>>> = spherical
             .iter()
@@ -88,6 +90,7 @@ impl SphericalBasis {
 pub(crate) struct SvergunIntensity {
     sampler: QSampler,
     l_max_override: Option<usize>,
+    solvent: Option<SolventConfig>,
 }
 
 impl SvergunIntensity {
@@ -96,10 +99,12 @@ impl SvergunIntensity {
         q_minmax: (f64, f64),
         num_q: usize,
         l_max: Option<usize>,
+        solvent: Option<SolventConfig>,
     ) -> Result<Self> {
         Ok(Self {
             sampler: QSampler::linear(formfactors, q_minmax.0, q_minmax.1, num_q),
             l_max_override: l_max,
+            solvent,
         })
     }
 
@@ -141,58 +146,307 @@ impl IntensityCalculator for SvergunIntensity {
             structure.pos.len(),
             self.sampler.q_values.len(),
         );
-        let basis = SphericalBasis::build(structure, l_max);
-        self.sampler
-            .run_parallel(|q| svergun_at_q(&basis, &self.sampler.formfactors, &structure.ids, q))
+        // Built here (before the branch) so both the vacuum and the
+        // three-contribution paths share one `O(N · L²)` basis
+        // construction. Building it twice would be wasted work in
+        // the solvent path — only the excluded/hydration dummy bases
+        // need to be fresh.
+        let atoms_basis = SphericalBasis::new(&structure.pos, l_max);
+
+        match self.solvent.as_ref().filter(|cfg| cfg.is_active()) {
+            None => vacuum_intensity(&self.sampler, &atoms_basis, &structure.ids, l_max),
+            Some(cfg) => solvent_intensity(&self.sampler, structure, &atoms_basis, cfg),
+        }
     }
 }
 
-/// Compute `I(q)` at a single q from the precomputed angular basis.
+/// Per-worker scratch reused across every q iteration inside one
+/// rayon worker. `bessel` is the `j_l(q·r)` scratch for
+/// [`multipole_coefficients`]; `form_factors` is refilled per q to
+/// hold the evaluated per-atom form factors.
+//
+// Bundled into one struct because rayon's `par_iter().map_init(…)`
+// takes a single per-worker state value; splitting into two
+// independent scratch buffers would require two parallel `map_init`
+// passes, one per buffer, which is not what rayon offers.
+#[derive(Clone)]
+struct PerQBuffers {
+    bessel: Vec<f64>,
+    form_factors: Vec<f64>,
+}
+
+impl PerQBuffers {
+    fn new(l_max: usize) -> Self {
+        Self {
+            bessel: vec![0.0; l_max + 1],
+            form_factors: Vec::new(),
+        }
+    }
+}
+
+/// A single scatterer set (protein atoms or a dummy-atom collection)
+/// paired with its precomputed spherical-harmonic basis. Bundling
+/// the two together keeps call sites from passing three parallel
+/// slices by accident.
+//
+// The basis is borrowed, not owned: each `SphericalBasis` is built
+// once in the enclosing function and reused across rayon workers,
+// so every `Contribution` holds a shared reference with the same
+// `'a` lifetime as the dummy set (when present).
+struct Contribution<'a> {
+    dummies: Option<&'a DummySet>,
+    basis: &'a SphericalBasis,
+}
+
+impl<'a> Contribution<'a> {
+    fn atoms(basis: &'a SphericalBasis) -> Self {
+        Self {
+            dummies: None,
+            basis,
+        }
+    }
+
+    // Both parameters separate (instead of constructing `basis` from
+    // `dummies.positions()`) so the caller can build one basis per
+    // contribution up front and share it across all rayon workers;
+    // building inside would force each worker to re-run the
+    // `O(N · L²)` basis construction.
+    fn from_dummies(dummies: &'a DummySet, basis: &'a SphericalBasis) -> Self {
+        Self {
+            dummies: Some(dummies),
+            basis,
+        }
+    }
+
+    /// Multipole coefficients for this contribution at a single q.
+    /// Atoms use the calculator-wide form-factor map indexed by
+    /// `atom_ids`; dummy sets carry their own per-atom form factors.
+    fn coefficients(
+        &self,
+        formfactors: &FormFactorMap,
+        atom_ids: &[usize],
+        q: f64,
+        buffers: &mut PerQBuffers,
+    ) -> Result<LowerTriangle<Complex<f64>>> {
+        buffers.form_factors.clear();
+        match self.dummies {
+            None => {
+                let ff = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
+                buffers.form_factors.extend_from_slice(ff.as_slice());
+            }
+            Some(set) => {
+                buffers.form_factors.extend(set.form_factors_at(q)?);
+            }
+        }
+        Ok(multipole_coefficients(
+            self.basis,
+            &buffers.form_factors,
+            q,
+            &mut buffers.bessel,
+        ))
+    }
+}
+
+/// Vacuum Svergun: one scatterer set, single-column [`Intensity`].
+fn vacuum_intensity(
+    sampler: &QSampler,
+    atoms_basis: &SphericalBasis,
+    atom_ids: &[usize],
+    l_max: usize,
+) -> Result<Intensity> {
+    let atoms_contrib = Contribution::atoms(atoms_basis);
+    let total: Vec<f64> = sampler
+        .q_values
+        .par_iter()
+        .map_init(
+            || PerQBuffers::new(l_max),
+            |buffers, &q| {
+                let coeffs =
+                    atoms_contrib.coefficients(&sampler.formfactors, atom_ids, q, buffers)?;
+                Ok(intensity_from_multipoles(&coeffs, l_max))
+            },
+        )
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(Intensity {
+        q: sampler.q_values.clone(),
+        total,
+        contributions: None,
+    })
+}
+
+/// Three-contribution Svergun path: atoms + excluded volume +
+/// hydration shell, combined coherently at the coefficient level.
+fn solvent_intensity(
+    sampler: &QSampler,
+    structure: &Structure,
+    atoms_basis: &SphericalBasis,
+    cfg: &SolventConfig,
+) -> Result<Intensity> {
+    let l_max = atoms_basis.l_max;
+    let excluded_dummies =
+        cfg.excluded
+            .dummies(structure, &sampler.formfactors, cfg.bulk_electron_density)?;
+    let hydration_dummies = cfg.hydration.dummies(structure)?;
+
+    let excluded_basis = SphericalBasis::new(excluded_dummies.positions(), l_max);
+    let hydration_basis = SphericalBasis::new(hydration_dummies.positions(), l_max);
+
+    let atoms_contrib = Contribution::atoms(atoms_basis);
+    let excluded_contrib = Contribution::from_dummies(&excluded_dummies, &excluded_basis);
+    let hydration_contrib = Contribution::from_dummies(&hydration_dummies, &hydration_basis);
+
+    let volume_scale = cfg.excluded.volume_scale();
+    let contrast_density = cfg.hydration.contrast_density();
+
+    let per_q: Vec<(f64, f64, f64, f64)> = sampler
+        .q_values
+        .par_iter()
+        .map_init(
+            || PerQBuffers::new(l_max),
+            |buffers, &q| -> Result<(f64, f64, f64, f64)> {
+                let atoms =
+                    atoms_contrib.coefficients(&sampler.formfactors, &structure.ids, q, buffers)?;
+                let excluded = excluded_contrib.coefficients(
+                    &sampler.formfactors,
+                    &structure.ids,
+                    q,
+                    buffers,
+                )?;
+                let hydration = hydration_contrib.coefficients(
+                    &sampler.formfactors,
+                    &structure.ids,
+                    q,
+                    buffers,
+                )?;
+                let total = combine_contributions(
+                    &atoms,
+                    &excluded,
+                    &hydration,
+                    l_max,
+                    volume_scale,
+                    contrast_density,
+                );
+                Ok((
+                    total,
+                    intensity_from_multipoles(&atoms, l_max),
+                    intensity_from_multipoles(&excluded, l_max),
+                    intensity_from_multipoles(&hydration, l_max),
+                ))
+            },
+        )
+        .collect::<Result<Vec<_>>>()?;
+
+    let (total, atoms, excluded, hydration): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+        per_q.into_iter().multiunzip();
+
+    Ok(Intensity {
+        q: sampler.q_values.clone(),
+        total,
+        contributions: Some(Contributions {
+            atoms,
+            excluded,
+            hydration,
+        }),
+    })
+}
+
+/// Build the Svergun multipole coefficients for one scatterer set.
+/// The complex triangle is what lets the three contributions
+/// recombine coherently later; if each set returned a squared
+/// intensity the cross terms would already be lost.
+// PepsiSAXS `cSAS.cpp::addAtom` accumulates the same `A_l^m`, `C_l^m`,
+// or `B_l^m` triangle depending on which scatterer set it's called with.
+fn multipole_coefficients(
+    basis: &SphericalBasis,
+    form_factors_at_q: &[f64],
+    q: f64,
+    j_l_scratch: &mut [f64],
+) -> LowerTriangle<Complex<f64>> {
+    let l_max = basis.l_max;
+    let mut coeffs = LowerTriangle::<Complex<f64>>::zeros(l_max);
+
+    debug_assert!(j_l_scratch.len() > l_max);
+    let j_l = &mut j_l_scratch[..=l_max];
+
+    for ((s, y_conj), f) in basis
+        .spherical
+        .iter()
+        .zip(&basis.angular)
+        .zip(form_factors_at_q.iter().copied())
+    {
+        spherical_bessel(q * s.r, j_l);
+        for l in 0..=l_max {
+            let il_jl = I_POW[l % 4] * j_l[l];
+            for m in 0..=l {
+                coeffs[(l, m)] += il_jl * y_conj[(l, m)] * f;
+            }
+        }
+    }
+    coeffs
+}
+
+/// Orientation-averaged intensity from one multipole triangle.
+//
+// Σ_l [ |c(l, 0)|² + 2 Σ_{m>0} |c(l, m)|² ], times 4π.
+// The factor of 2 on m > 0 accounts for the negative-m half via the
+// symmetry `Y_l^{-m} = (-1)^m · conj(Y_l^m)`: storing only m ≥ 0
+// doubles each m > 0 entry's contribution.
+fn intensity_from_multipoles(coeffs: &LowerTriangle<Complex<f64>>, l_max: usize) -> f64 {
+    let sum: f64 = (0..=l_max)
+        .map(|l| {
+            let m_zero = coeffs[(l, 0)].norm_sqr();
+            let m_positive: f64 = (1..=l).map(|m| 2.0 * coeffs[(l, m)].norm_sqr()).sum();
+            m_zero + m_positive
+        })
+        .sum();
+    4.0 * std::f64::consts::PI * sum
+}
+
+/// Orientation-averaged intensity of the solvent-corrected scatterer:
+/// the protein contribution minus the scaled excluded-volume
+/// contribution plus the scaled hydration contribution, combined
+/// coherently at the coefficient level and then squared and summed.
+// PepsiSAXS `cSAS.cpp::computeIntensity` uses the same shape,
+// `|A - C + dp·B|²`, for its final intensity.
+fn combine_contributions(
+    atoms: &LowerTriangle<Complex<f64>>,
+    excluded: &LowerTriangle<Complex<f64>>,
+    hydration: &LowerTriangle<Complex<f64>>,
+    l_max: usize,
+    volume_scale: f64,
+    contrast_density: f64,
+) -> f64 {
+    let sum: f64 = (0..=l_max)
+        .map(|l| {
+            let combined = |m: usize| -> Complex<f64> {
+                atoms[(l, m)] - volume_scale * excluded[(l, m)]
+                    + contrast_density * hydration[(l, m)]
+            };
+            let m_zero = combined(0).norm_sqr();
+            let m_positive: f64 = (1..=l).map(|m| 2.0 * combined(m).norm_sqr()).sum();
+            m_zero + m_positive
+        })
+        .sum();
+    4.0 * std::f64::consts::PI * sum
+}
+
+/// Single-q vacuum intensity: the pre-refactor entry point, kept for
+/// the `multipole_refactor_is_no_op` test which asserts that the
+/// split kernel matches the original's output bit-for-bit.
+#[cfg(test)]
 fn svergun_at_q(
     basis: &SphericalBasis,
     formfactors: &FormFactorMap,
     atom_ids: &[usize],
     q: f64,
 ) -> Result<f64> {
-    let l_max = basis.l_max;
     let ff = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
-    let mut alm = LowerTriangle::<Complex<f64>>::zeros(l_max);
-
-    // Per-q scratch for the radial Bessel factors, reused across all
-    // atoms so the hot loop doesn't allocate per atom.
-    let mut j_l = vec![0.0_f64; l_max + 1];
-
-    // Accumulate A_l^m += f · i^l · Y*_l^m · j_l(q·r) over atoms.
-    for ((s, y_conj), f) in basis
-        .spherical
-        .iter()
-        .zip(&basis.angular)
-        .zip(ff.iter().copied())
-    {
-        spherical_bessel(q * s.r, &mut j_l);
-        for l in 0..=l_max {
-            let il_jl = I_POW[l % 4] * j_l[l];
-            for m in 0..=l {
-                alm[(l, m)] += il_jl * y_conj[(l, m)] * f;
-            }
-        }
-    }
-
-    // I(q) = 4π · Σ_l [ |A_l^0|² + 2 · Σ_{m>0} |A_l^m|² ]
-    //
-    // The factor of 2 on m > 0 accounts for the negative-m half of
-    // the sum: storing only m ≥ 0 and using the relation
-    // Y_l^{-m} = (-1)^m · conj(Y_l^m) doubles the contribution of
-    // each m > 0 entry to |A_l^m|² + |A_l^{-m}|² = 2 |A_l^m|².
-    let sum: f64 = (0..=l_max)
-        .map(|l| {
-            let m0 = alm[(l, 0)].norm_sqr();
-            let mpos: f64 = (1..=l).map(|m| 2.0 * alm[(l, m)].norm_sqr()).sum();
-            m0 + mpos
-        })
-        .sum();
-
-    Ok(4.0 * std::f64::consts::PI * sum)
+    let mut j_l = vec![0.0; basis.l_max + 1];
+    Ok(intensity_from_multipoles(
+        &multipole_coefficients(basis, ff.as_slice(), q, &mut j_l),
+        basis.l_max,
+    ))
 }
 
 #[cfg(test)]
@@ -230,10 +484,10 @@ mod tests {
         // One atom at origin, f(q) = c. Only Y_0^0 contributes;
         // I(q) = 4π · |A_00|² · c² = c² (after normalization).
         let c = 3.0;
-        let calc = SvergunIntensity::new(constant_ff(c), (0.1, 0.5), 10, None).unwrap();
+        let calc = SvergunIntensity::new(constant_ff(c), (0.1, 0.5), 10, None, None).unwrap();
         let structure = structure_with_ids(vec![(0.0, 0.0, 0.0)]);
         let out = calc.calc_intensities(&structure).unwrap();
-        for i in &out.i {
+        for i in &out.total {
             assert!((i - c * c).abs() < 1e-10, "expected {}, got {i}", c * c);
         }
     }
@@ -250,13 +504,13 @@ mod tests {
         ]);
         let n = structure.pos.len() as f64;
 
-        let svergun = SvergunIntensity::new(constant_ff(c), (0.0, 0.1), 5, None).unwrap();
+        let svergun = SvergunIntensity::new(constant_ff(c), (0.0, 0.1), 5, None, None).unwrap();
         let s_out = svergun.calc_intensities(&structure).unwrap();
-        let s0 = s_out.i[0];
+        let s0 = s_out.total[0];
 
         let debye = DebyeIntensity::new(constant_ff(c), (0.0, 0.1), 5).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
-        let d0 = d_out.i[0];
+        let d0 = d_out.total[0];
 
         let expected = (n * c) * (n * c);
         assert!(
@@ -283,14 +537,15 @@ mod tests {
         let qmax = 0.5;
         let nq = 20;
 
-        let svergun = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None).unwrap();
+        let svergun =
+            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let debye = DebyeIntensity::new(constant_ff(1.0), (qmin, qmax), nq).unwrap();
 
         let s_out = svergun.calc_intensities(&structure).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
 
         assert_eq!(s_out.q, d_out.q);
-        for ((q, &is), &id) in s_out.q.iter().zip(&s_out.i).zip(&d_out.i) {
+        for ((q, &is), &id) in s_out.q.iter().zip(&s_out.total).zip(&d_out.total) {
             let rel = (is - id).abs() / id.max(1e-10);
             assert!(
                 rel < 1e-4,
@@ -317,13 +572,14 @@ mod tests {
         let qmax = 0.5;
         let nq = 20;
 
-        let svergun = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None).unwrap();
+        let svergun =
+            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let debye = DebyeIntensity::new(constant_ff(1.0), (qmin, qmax), nq).unwrap();
 
         let s_out = svergun.calc_intensities(&structure).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
 
-        for ((q, &is), &id) in s_out.q.iter().zip(&s_out.i).zip(&d_out.i) {
+        for ((q, &is), &id) in s_out.q.iter().zip(&s_out.total).zip(&d_out.total) {
             let rel = (is - id).abs() / id.max(1e-10);
             assert!(
                 rel < 0.01,
@@ -336,7 +592,7 @@ mod tests {
     fn auto_l_max_respects_structure_extent() {
         // q_max · r_max = 1.0 · 50.0 = 50, so auto l_max = 52 (+2 margin).
         let structure = structure_with_ids(vec![(50.0, 0.0, 0.0)]);
-        let calc = SvergunIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, None).unwrap();
+        let calc = SvergunIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, None, None).unwrap();
         let l = calc.effective_l_max(&structure);
         assert_eq!(l, 52);
     }
@@ -345,7 +601,88 @@ mod tests {
     fn explicit_l_max_overrides_auto() {
         // Would auto-select >> 5, but user forced 5.
         let structure = structure_with_ids(vec![(50.0, 0.0, 0.0)]);
-        let calc = SvergunIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, Some(5)).unwrap();
+        let calc = SvergunIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, Some(5), None).unwrap();
         assert_eq!(calc.effective_l_max(&structure), 5);
+    }
+
+    #[test]
+    fn solvent_none_matches_vacuum() {
+        // Empty/inert solvent config must produce numerically the
+        // same `total` as `solvent: None`. Proves the empty-dummy
+        // three-contribution path doesn't perturb vacuum answers.
+        let structure = structure_with_ids(vec![
+            (0.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (0.0, 3.0, 0.0),
+            (0.0, 0.0, 1.5),
+        ]);
+        let qmin = 0.01;
+        let qmax = 0.4;
+        let nq = 10;
+
+        let vacuum = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
+        let solvent_cfg = SolventConfig {
+            excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let solvent_calc =
+            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, Some(solvent_cfg))
+                .unwrap();
+
+        let v_out = vacuum.calc_intensities(&structure).unwrap();
+        let s_out = solvent_calc.calc_intensities(&structure).unwrap();
+
+        assert_eq!(v_out.total, s_out.total);
+        let contributions = s_out
+            .contributions
+            .as_ref()
+            .expect("active solvent populates contributions");
+        assert_eq!(s_out.total, contributions.atoms);
+    }
+
+    #[test]
+    fn active_solvent_populates_columns() {
+        let structure = structure_with_ids(vec![(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)]);
+        let nq = 5;
+        let solvent_cfg = SolventConfig {
+            excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: crate::Hydration::Sasa {
+                probe: 1.4,
+                thickness: 3.0,
+                contrast_density: 0.03,
+            },
+            ..Default::default()
+        };
+        let calc = SvergunIntensity::new(constant_ff(1.0), (0.0, 0.3), nq, None, Some(solvent_cfg))
+            .unwrap();
+        let out = calc.calc_intensities(&structure).unwrap();
+
+        assert_eq!(out.total.len(), nq);
+        let contributions = out.contributions.expect("contributions populated");
+        assert_eq!(contributions.atoms.len(), nq);
+        assert_eq!(contributions.excluded.len(), nq);
+        assert_eq!(contributions.hydration.len(), nq);
+        // Phase 1 stubs yield empty dummy sets, so both non-atoms
+        // contributions are identically zero.
+        assert!(contributions.excluded.iter().all(|&v| v == 0.0));
+        assert!(contributions.hydration.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn multipole_refactor_is_no_op() {
+        let structure =
+            structure_with_ids(vec![(1.0, 2.0, 0.5), (-1.5, 0.0, 1.0), (0.0, -2.0, 0.75)]);
+        let ffs = constant_ff(1.0);
+        let l_max = 6;
+        let basis = SphericalBasis::new(&structure.pos, l_max);
+        let mut j_l = vec![0.0; l_max + 1];
+
+        for q in [0.05, 0.1, 0.25, 0.4] {
+            let via_helper = svergun_at_q(&basis, &ffs, &structure.ids, q).unwrap();
+            let ff = formfactor::formfactor_by_index(&ffs, q, &structure.ids).unwrap();
+            let coeffs = multipole_coefficients(&basis, ff.as_slice(), q, &mut j_l);
+            let via_split = intensity_from_multipoles(&coeffs, l_max);
+            assert_eq!(via_helper, via_split);
+        }
     }
 }

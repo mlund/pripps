@@ -123,6 +123,7 @@ pub fn do_main() -> Result<()> {
         args.xtcfile.as_deref(),
         args.weights.as_deref(),
         box_override,
+        None,
     )?;
     write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
 
@@ -164,7 +165,7 @@ fn write_table(path: &std::path::Path, curve: &Intensity, header: Option<&str>) 
         writeln!(file, "{header}")?;
     }
 
-    for (q, i) in curve.q.iter().zip(&curve.i) {
+    for (q, i) in curve.q.iter().zip(&curve.total) {
         writeln!(file, "{q:.6} {i:.6}")?;
     }
     Ok(())

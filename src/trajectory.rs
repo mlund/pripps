@@ -156,10 +156,10 @@ pub fn trajectory_average(
 
         if mean.q.is_empty() {
             mean.q = curve.q.clone();
-            mean.i = vec![0.0; curve.i.len()];
+            mean.total = vec![0.0; curve.total.len()];
         }
 
-        for (acc, v) in zip(&mut mean.i, &curve.i) {
+        for (acc, v) in zip(&mut mean.total, &curve.total) {
             *acc += weight * v / num_frames as f64;
         }
 

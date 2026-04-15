@@ -72,14 +72,15 @@ impl QSampler {
     where
         F: Fn(f64) -> Result<f64> + Sync,
     {
-        let i: Vec<f64> = self
+        let total: Vec<f64> = self
             .q_values
             .par_iter()
             .map(|&q| f(q))
             .collect::<Result<Vec<_>>>()?;
         Ok(Intensity {
             q: self.q_values.clone(),
-            i,
+            total,
+            ..Default::default()
         })
     }
 }
@@ -118,7 +119,7 @@ mod tests {
         let out = s.run_parallel(|q| Ok(q * q + 1.0)).unwrap();
         assert_eq!(out.q, vec![0.3, 0.1, 0.2]);
         assert_eq!(
-            out.i,
+            out.total,
             vec![0.3 * 0.3 + 1.0, 0.1 * 0.1 + 1.0, 0.2 * 0.2 + 1.0]
         );
     }
@@ -154,7 +155,7 @@ mod tests {
         let s = QSampler::new(empty_ffs(), Vec::<f64>::new());
         let out = s.run_parallel(|_q| Ok(1.0)).unwrap();
         assert!(out.q.is_empty());
-        assert!(out.i.is_empty());
+        assert!(out.total.is_empty());
     }
 
     #[test]
@@ -162,7 +163,7 @@ mod tests {
         let s = QSampler::new(empty_ffs(), [0.42]);
         let out = s.run_parallel(|q| Ok(q * 2.0)).unwrap();
         assert_eq!(out.q, vec![0.42]);
-        assert_eq!(out.i, vec![0.84]);
+        assert_eq!(out.total, vec![0.84]);
     }
 
     #[test]

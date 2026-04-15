@@ -13,6 +13,7 @@ mod explicit;
 mod formfactor;
 mod input;
 mod q_sampler;
+mod solvent;
 mod structure;
 mod svergun;
 mod trajectory;
@@ -31,22 +32,37 @@ use trajectory::trajectory_average;
 pub use atomkind::{AtomKind, FindByName};
 pub use error::{Error, Result};
 pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
+pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
 
 /// Crate-internal short alias. Not re-exported; public signatures use
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
 pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 
 /// A scattering intensity curve: parallel q and I(q) vectors with
-/// `q.len() == i.len()` by construction.
+/// `q.len() == total.len()` by construction.
 ///
 /// Two parallel `Vec<f64>` (instead of `Vec<(f64, f64)>`) so the
 /// future `pyo3` / `numpy` bindings can expose each vector as a
 /// zero-copy `ndarray` view. All pripps calculators return this type;
-/// callers typically iterate via `.q.iter().zip(&curve.i)`.
+/// callers typically iterate via `.q.iter().zip(&curve.total)`.
+///
+/// `contributions` is populated when Svergun runs with an active
+/// [`SolventConfig`], carrying the per-contribution diagnostic
+/// columns. It is `None` for vacuum Svergun, Debye, and Direct.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Intensity {
     pub q: Vec<f64>,
-    pub i: Vec<f64>,
+    pub total: Vec<f64>,
+    pub contributions: Option<Contributions>,
+}
+
+/// Per-contribution intensity curves emitted by the three-contribution
+/// Svergun path, each parallel to [`Intensity::q`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Contributions {
+    pub atoms: Vec<f64>,
+    pub excluded: Vec<f64>,
+    pub hydration: Vec<f64>,
 }
 
 /// Computational scheme for scattering intensity calculation, with its
@@ -122,6 +138,7 @@ impl Pripps {
         xtcfile: Option<&path::Path>,
         weights: Option<&path::Path>,
         box_sides: Option<[f64; 3]>,
+        solvent: Option<&SolventConfig>,
     ) -> Result<Intensity> {
         let mut structure = Structure::from_file(xyzfile, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
@@ -131,6 +148,13 @@ impl Pripps {
                 ));
             }
             structure.box_sides = Some(Vector3::from(box_sides));
+        }
+
+        let active_solvent = solvent.filter(|cfg| cfg.is_active());
+        if active_solvent.is_some() && !matches!(scheme, IntensityScheme::Svergun { .. }) {
+            return Err(Error::usage(
+                "solvent correction is only supported by the Svergun scheme",
+            ));
         }
 
         let calc: Box<dyn IntensityCalculator> = match scheme {
@@ -160,6 +184,7 @@ impl Pripps {
                     (qmin, qmax),
                     nq,
                     l_max,
+                    active_solvent.cloned(),
                 )?)
             }
         };
@@ -169,5 +194,47 @@ impl Pripps {
         } else {
             calc.calc_intensities(&structure)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debye_rejects_active_solvent() {
+        let yaml = r"C: { formfactor: !Constant 1.0 }";
+        let path = std::env::temp_dir().join("pripps_debye_reject.yaml");
+        std::fs::write(&path, yaml).unwrap();
+        let pripps = Pripps::from_yaml(&path).unwrap();
+
+        let pdb = std::env::temp_dir().join("pripps_debye_reject.pdb");
+        std::fs::write(
+            &pdb,
+            "HEADER test\n\
+             ATOM      1  C   ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n\
+             END\n",
+        )
+        .unwrap();
+
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let err = pripps
+            .intensity(
+                IntensityScheme::Debye {
+                    qmin: 0.0,
+                    qmax: 0.1,
+                    nq: 3,
+                },
+                &pdb,
+                None,
+                None,
+                None,
+                Some(&solvent),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Usage(_)));
     }
 }

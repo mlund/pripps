@@ -73,8 +73,12 @@ impl IntensityCalculator for DirectTransform {
             .map(|q| intensity(q).map(|i| (q.norm(), i)))
             .collect::<Result<Vec<(f64, f64)>>>()?;
 
-        let (q, i): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
-        Ok(Intensity { q, i })
+        let (q, total): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
+        Ok(Intensity {
+            q,
+            total,
+            ..Default::default()
+        })
     }
 }
 
