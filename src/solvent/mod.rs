@@ -24,10 +24,10 @@
 //! `A - volume_scale·C + contrast_density·B`, summed over all
 //! multipole coefficients.
 //!
-//! This module is the scaffold: the config types are here and the
-//! `dummies` methods on each variant produce an empty set. Real
-//! dummy-atom generators land in sibling files (`fraser.rs`,
-//! `sasa.rs`, `grid.rs`, …) in the follow-up phases.
+//! The config types are here; the real dummy-atom generators live in
+//! sibling files (`fraser.rs`, and the Phase 2b+ `sasa.rs` / `grid.rs`).
+
+mod fraser;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
 use crate::{Result, Structure, Vector3};
@@ -161,28 +161,61 @@ pub(crate) struct DummySet {
 }
 
 impl DummySet {
+    // `Result` instead of `debug_assert`: the positions/form-factors
+    // parity is a data-shape contract every generator must uphold,
+    // and a silent mismatch in release would corrupt the Svergun
+    // per-atom iteration without an explicit panic site.
+    pub(super) fn new(positions: Vec<Vector3>, form_factors: Vec<FormFactor>) -> Result<Self> {
+        if positions.len() != form_factors.len() {
+            return Err(crate::Error::internal(format!(
+                "DummySet: positions ({}) and form_factors ({}) length mismatch",
+                positions.len(),
+                form_factors.len(),
+            )));
+        }
+        Ok(Self {
+            positions,
+            form_factors,
+        })
+    }
+
     pub(crate) fn positions(&self) -> &[Vector3] {
         &self.positions
     }
 
-    /// Evaluate every dummy's form factor at a single q. Errors if
-    /// any dummy rejects the q value.
-    pub(crate) fn form_factors_at(&self, q: f64) -> Result<Vec<f64>> {
-        use itertools::Itertools;
-        self.form_factors.iter().map(|f| f.eval(q)).try_collect()
+    /// Evaluate every dummy's form factor at a single q into
+    /// `out`. `out` is cleared first. Errors (without touching
+    /// `out`) if any dummy rejects the q value.
+    //
+    // Out-parameter rather than returning `Vec<f64>` so the rayon
+    // worker's per-q scratch (`PerQBuffers::form_factors` in
+    // `svergun::mod`) can be reused across every q iteration. A
+    // returned `Vec` would allocate once per q per contribution —
+    // three allocations per inner-loop iteration in the
+    // three-contribution path.
+    pub(crate) fn form_factors_at(&self, q: f64, out: &mut Vec<f64>) -> Result<()> {
+        out.clear();
+        for f in &self.form_factors {
+            out.push(f.eval(q)?);
+        }
+        Ok(())
     }
 }
 
 impl ExcludedVolume {
     pub(crate) fn dummies(
         &self,
-        _structure: &Structure,
-        _atomkinds: &FormFactorMap,
-        _bulk_electron_density: f64,
+        structure: &Structure,
+        formfactors: &FormFactorMap,
+        bulk_electron_density: f64,
     ) -> Result<DummySet> {
         match self {
-            // Phase 2 will fill these in — Fraser first, then Grid.
-            Self::None | Self::Fraser { .. } | Self::Grid { .. } => Ok(DummySet::default()),
+            Self::None => Ok(DummySet::default()),
+            Self::Fraser { volume_scale } => {
+                fraser::fraser_dummies(structure, formfactors, bulk_electron_density, *volume_scale)
+            }
+            // Phase 2c.
+            Self::Grid { .. } => Ok(DummySet::default()),
         }
     }
 }

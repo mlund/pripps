@@ -228,14 +228,17 @@ impl<'a> Contribution<'a> {
         q: f64,
         buffers: &mut PerQBuffers,
     ) -> Result<LowerTriangle<Complex<f64>>> {
-        buffers.form_factors.clear();
         match self.dummies {
             None => {
+                // `formfactor_by_index` still allocates a `DVector`;
+                // copying into the reusable scratch `buffers.form_factors`
+                // keeps the downstream API uniform with the dummy path.
                 let ff = formfactor::formfactor_by_index(formfactors, q, atom_ids)?;
+                buffers.form_factors.clear();
                 buffers.form_factors.extend_from_slice(ff.as_slice());
             }
             Some(set) => {
-                buffers.form_factors.extend(set.form_factors_at(q)?);
+                set.form_factors_at(q, &mut buffers.form_factors)?;
             }
         }
         Ok(multipole_coefficients(
@@ -455,14 +458,20 @@ mod tests {
     use crate::debye::DebyeIntensity;
     use crate::formfactor::FormFactor;
     use crate::{AtomKind, Vector3};
-    use std::collections::BTreeMap;
+    /// Placeholder displaced volume attached to the single kind
+    /// built by [`constant_ff`]. Size is arbitrary; chosen to be
+    /// comparable to a real atomic volume so Fraser-exercising tests
+    /// produce plausible orders of magnitude.
+    const TEST_DISPLACED_VOLUME: f64 = 10.0;
 
     /// Build a single-kind form-factor map: every atom uses
     /// `FormFactor::Constant(value)`, so `f(q) = value` for all q.
+    /// The kind carries a placeholder `displaced_volume` so tests
+    /// enabling `ExcludedVolume::Fraser` pass its per-atom check.
     fn constant_ff(value: f64) -> FormFactorMap {
-        let mut m = BTreeMap::new();
-        m.insert(AtomKind::new("X", 0), FormFactor::Constant(value));
-        m
+        let mut kind = AtomKind::new("X");
+        kind.displaced_volume = Some(TEST_DISPLACED_VOLUME);
+        FormFactorMap::from_entries(vec![(kind, FormFactor::Constant(value))])
     }
 
     /// Build a tiny Structure from raw positions, all assigned to
@@ -606,10 +615,10 @@ mod tests {
     }
 
     #[test]
-    fn solvent_none_matches_vacuum() {
-        // Empty/inert solvent config must produce numerically the
-        // same `total` as `solvent: None`. Proves the empty-dummy
-        // three-contribution path doesn't perturb vacuum answers.
+    fn fraser_zero_scale_matches_vacuum() {
+        // volume_scale = 0 zeros the excluded-volume coefficient
+        // triangle, so the combine reduces to |A|² — bit-identical
+        // to the vacuum path.
         let structure = structure_with_ids(vec![
             (0.0, 0.0, 0.0),
             (2.0, 0.0, 0.0),
@@ -622,7 +631,7 @@ mod tests {
 
         let vacuum = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let solvent_cfg = SolventConfig {
-            excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
+            excluded: crate::ExcludedVolume::Fraser { volume_scale: 0.0 },
             ..Default::default()
         };
         let solvent_calc =
@@ -641,16 +650,11 @@ mod tests {
     }
 
     #[test]
-    fn active_solvent_populates_columns() {
+    fn active_fraser_populates_columns() {
         let structure = structure_with_ids(vec![(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)]);
         let nq = 5;
         let solvent_cfg = SolventConfig {
             excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
-            hydration: crate::Hydration::Sasa {
-                probe: 1.4,
-                thickness: 3.0,
-                contrast_density: 0.03,
-            },
             ..Default::default()
         };
         let calc = SvergunIntensity::new(constant_ff(1.0), (0.0, 0.3), nq, None, Some(solvent_cfg))
@@ -662,10 +666,32 @@ mod tests {
         assert_eq!(contributions.atoms.len(), nq);
         assert_eq!(contributions.excluded.len(), nq);
         assert_eq!(contributions.hydration.len(), nq);
-        // Phase 1 stubs yield empty dummy sets, so both non-atoms
-        // contributions are identically zero.
-        assert!(contributions.excluded.iter().all(|&v| v == 0.0));
+        // Fraser produces real dummies, so excluded must be non-zero.
+        assert!(contributions.excluded.iter().any(|&v| v > 0.0));
+        // Phase 2a has no hydration generator, so that column is zero.
         assert!(contributions.hydration.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn fraser_reduces_total_below_atoms_at_qzero() {
+        // At q=0 with positive form factors and positive displaced
+        // volumes, the protein-minus-excluded sum is smaller than
+        // protein alone, so `total ≤ atoms` and the excluded column
+        // is strictly positive.
+        let structure = structure_with_ids(vec![(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]);
+        let solvent_cfg = SolventConfig {
+            excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let calc = SvergunIntensity::new(constant_ff(6.0), (0.0, 0.05), 2, None, Some(solvent_cfg))
+            .unwrap();
+        let out = calc.calc_intensities(&structure).unwrap();
+        let contributions = out.contributions.expect("contributions populated");
+
+        // The first q is 0 (inclusive qmin).
+        assert_eq!(out.q[0], 0.0);
+        assert!(contributions.excluded[0] > 0.0);
+        assert!(out.total[0] < contributions.atoms[0]);
     }
 
     #[test]

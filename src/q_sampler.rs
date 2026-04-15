@@ -92,7 +92,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn empty_ffs() -> FormFactorMap {
-        FormFactorMap::new()
+        FormFactorMap::default()
     }
 
     #[test]

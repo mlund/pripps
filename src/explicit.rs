@@ -125,7 +125,10 @@ fn convert_formfactors(
     formfactors: &FormFactorMap,
 ) -> Result<impl Iterator<Item = f64>> {
     // F(q) for each atom kind
-    let formfactors: Vec<f64> = formfactors.values().map(|ff| ff.eval(q)).try_collect()?;
+    let formfactors: Vec<f64> = formfactors
+        .form_factors()
+        .map(|ff| ff.eval(q))
+        .try_collect()?;
     // F(q) for each atom in structure
     Ok(atom_ids.iter().map(move |i| formfactors[*i]))
 }

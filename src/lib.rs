@@ -18,10 +18,7 @@ mod structure;
 mod svergun;
 mod trajectory;
 
-use std::{
-    collections::BTreeMap,
-    path::{self, Path},
-};
+use std::path::{self, Path};
 
 use debye::DebyeIntensity;
 use explicit::DirectTransform;
@@ -98,7 +95,7 @@ pub(crate) trait IntensityCalculator: Sync {
 
 /// High-level interface to the Pripps library
 pub struct Pripps {
-    formfactors: BTreeMap<AtomKind, FormFactor>,
+    formfactors: FormFactorMap,
 }
 
 impl Pripps {
@@ -118,7 +115,7 @@ impl Pripps {
     }
 
     fn atomkinds(&self) -> Vec<AtomKind> {
-        self.formfactors.keys().cloned().collect()
+        self.formfactors.kinds().cloned().collect()
     }
 
     /// Compute I(q) for a structure under the given [`IntensityScheme`].

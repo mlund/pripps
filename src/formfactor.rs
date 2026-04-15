@@ -20,8 +20,49 @@ use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::BTreeMap, fs::File, ops::Add, path::Path};
 
-/// Map of form factors for each atomkind
-pub type FormFactorMap = BTreeMap<AtomKind, FormFactor>;
+/// A flat table pairing each [`AtomKind`] with its runtime [`FormFactor`],
+/// stored in atom-kind id order. Lookups by id are `O(1)` vector indexes.
+//
+// Vec rather than `BTreeMap<AtomKind, FormFactor>`: every consumer
+// iterates or indexes by id, and id *is* the entry's position, so a
+// map adds lookup ceremony for no benefit. Keeping the type a
+// newtype (rather than a bare `Vec`) lets Phase 2b+ add invariants
+// without churning call sites.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FormFactorMap {
+    entries: Vec<(AtomKind, FormFactor)>,
+}
+
+impl FormFactorMap {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(AtomKind, FormFactor)> {
+        self.entries.iter()
+    }
+
+    /// Atom kind at id `id`. Panics on out-of-range id.
+    pub(crate) fn kind(&self, id: usize) -> &AtomKind {
+        &self.entries[id].0
+    }
+
+    pub(crate) fn kinds(&self) -> impl Iterator<Item = &AtomKind> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
+    pub(crate) fn form_factors(&self) -> impl Iterator<Item = &FormFactor> {
+        self.entries.iter().map(|(_, f)| f)
+    }
+
+    pub(crate) fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
+        Self { entries }
+    }
+}
 
 /// Runtime form factor model, 𝐹(𝑞).
 ///
@@ -46,6 +87,21 @@ pub enum FormFactor {
 }
 
 impl FormFactor {
+    /// Single-Gaussian form factor `a · exp(−b · q²)`, valid over
+    /// all positive q. Convenience constructor for dummy atoms (see
+    /// [`crate::ExcludedVolume::Fraser`]).
+    //
+    // Fixed `qrange = (0, ∞)` and `c = 0` because Fraser dummies are
+    // analytically defined for any non-negative q and have no
+    // constant term — the multi-exponential YAML shape is overkill.
+    pub fn single_gaussian(a: f64, b: f64) -> Self {
+        Self::Gaussian {
+            qrange: (0.0, f64::INFINITY),
+            ab: vec![(a, b)],
+            c: 0.0,
+        }
+    }
+
     pub fn qrange(&self) -> (f64, f64) {
         use FormFactor::*;
         match self {
@@ -191,24 +247,23 @@ impl TryFrom<FormFactorSpec> for FormFactor {
 /// Atom specification as read from YAML.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 struct AtomSpec {
-    /// Radius of the atom in Å
+    /// Radius of the atom in Å.
     radius: Option<f64>,
-    /// Solvent radius in Å. TODO: better name
-    dsv: Option<f64>,
-    /// Form factor for the atom
+    /// Displaced solvent volume in Å³.
+    displaced_volume: Option<f64>,
+    /// Form factor for the atom.
     #[serde(alias = "ff")]
     formfactor: FormFactorSpec,
 }
 
 impl AtomSpec {
-    /// Build a runtime [`AtomKind`] from the declared name, id, and the
-    /// optional `radius` / `dsv` fields. Infallible.
-    fn to_atomkind(&self, name: &str, id: usize) -> AtomKind {
+    /// Build a runtime [`AtomKind`] from the declared name and the
+    /// optional `radius` / `displaced_volume` fields. Infallible.
+    fn to_atomkind(&self, name: &str) -> AtomKind {
         AtomKind {
-            id,
             name: name.to_string(),
             sigma: self.radius.map(|r| 2.0 * r),
-            dsv: self.dsv,
+            displaced_volume: self.displaced_volume,
         }
     }
 }
@@ -267,17 +322,16 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     // Spec → runtime: the three resolvers above guarantee every remaining
     // variant is one of the four concrete ones, so `try_from` only errors if
     // a resolver pass has a bug.
-    let formfactor: FormFactorMap = specs
+    let entries: Vec<(AtomKind, FormFactor)> = specs
         .into_iter()
-        .enumerate()
-        .map(|(id, (name, spec))| {
-            let kind = spec.to_atomkind(&name, id);
+        .map(|(name, spec)| {
+            let kind = spec.to_atomkind(&name);
             let ff = FormFactor::try_from(spec.formfactor)?;
             Ok((kind, ff))
         })
         .collect::<Result<_>>()?;
 
-    assert!(formfactor.keys().map(|kind| kind.id()).is_sorted());
+    let formfactor = FormFactorMap::from_entries(entries);
     log::info!(
         "Read form-factor definitions from {} for {} species",
         path.display(),
@@ -301,6 +355,38 @@ pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> 
     let mut file = File::create(path).with_path(path)?;
     serde_yaml::to_writer(&mut file, &formfactor)?;
     Ok(())
+}
+
+/// Create N vector of form factors at given q value (N = number of atoms)
+pub fn formfactor_by_index(
+    formfactors: &FormFactorMap,
+    q: f64,
+    atom_ids: &[usize],
+) -> Result<DVector<f64>> {
+    // Evaluate each atom kind's form factor once, then broadcast to atoms.
+    let f: Vec<_> = formfactors
+        .form_factors()
+        .map(|ff| ff.eval(q))
+        .try_collect()?;
+
+    Ok(DVector::from_iterator(
+        atom_ids.len(),
+        atom_ids.iter().map(|id| f[*id]),
+    ))
+}
+
+/// Create an S x S matrix of form factor products at a given q value
+/// (S = number of atom kinds). Library-facing helper; not called from
+/// the CLI path but exercised by a unit test.
+#[allow(dead_code)]
+pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
+    let f = DVector::from_vec(
+        formfactors
+            .form_factors()
+            .map(|ff| ff.eval(q))
+            .try_collect()?,
+    );
+    Ok(&f * f.transpose())
 }
 
 fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
@@ -422,30 +508,6 @@ fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
     Ok(())
 }
 
-/// Create N vector of form factors at given q value (N = number of atoms)
-pub fn formfactor_by_index(
-    formfactors: &FormFactorMap,
-    q: f64,
-    atom_ids: &[usize],
-) -> Result<DVector<f64>> {
-    // form factors for each atom kind
-    let f: Vec<_> = formfactors.values().map(|f| f.eval(q)).try_collect()?;
-
-    Ok(DVector::from_iterator(
-        atom_ids.len(),
-        atom_ids.iter().map(|id| f[*id]),
-    ))
-}
-
-/// Create an S x S matrix of form factor products at a given q value
-/// (S = number of atom kinds). Library-facing helper; not called from
-/// the CLI path but exercised by a unit test.
-#[allow(dead_code)]
-pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<DMatrix<f64>> {
-    let f = DVector::from_vec(formfactors.values().map(|f| f.eval(q)).try_collect()?);
-    Ok(&f * f.transpose())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,12 +552,10 @@ mod tests {
 
     #[test]
     fn test_formfactor_product_at_q() {
-        let formfactors = vec![
-            (AtomKind::new("A", 0), FormFactor::Constant(1.0)),
-            (AtomKind::new("B", 1), FormFactor::Constant(2.0)),
-        ]
-        .into_iter()
-        .collect();
+        let formfactors = FormFactorMap::from_entries(vec![
+            (AtomKind::new("A"), FormFactor::Constant(1.0)),
+            (AtomKind::new("B"), FormFactor::Constant(2.0)),
+        ]);
         let matrix = formfactor_product_by_id(&formfactors, 1.0).unwrap();
         assert_relative_eq!(matrix[(0, 0)], 1.0);
         assert_relative_eq!(matrix[(0, 1)], 2.0);
@@ -511,7 +571,7 @@ mod tests {
         let path = Path::new("assets/single_bead.yaml");
         let ff = read_formfactors(path).expect("parse single_bead.yaml");
         assert!(!ff.is_empty(), "expected at least one species");
-        for (kind, f) in &ff {
+        for (kind, f) in ff.iter() {
             let v = f.eval(0.1).unwrap_or_else(|e| {
                 panic!("eval failed for {} at q=0.1: {e}", kind.name());
             });

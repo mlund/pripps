@@ -31,8 +31,9 @@ pub(crate) struct Structure {
 }
 
 impl Structure {
-    /// Construct a structure from a PDB or XYZ file, looking each atom name up
-    /// in the provided [`AtomKind`] list for its id. Unknown atom names error.
+    /// Construct a structure from a PDB or XYZ file. Each atom name is
+    /// looked up in the provided [`AtomKind`] slice; the slice index
+    /// is the kind's id inside the structure. Unknown atom names error.
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
         let atoms = read_structure(path)?;
 
@@ -40,7 +41,7 @@ impl Structure {
         let mut ids = Vec::with_capacity(atoms.len());
 
         for atom in atoms {
-            let kind = atomkinds
+            let id = atomkinds
                 .find_name(&atom.name)
                 .ok_or_else(|| Error::UnknownAtom(atom.name.clone()))?;
             pos.push(Vector3::new(
@@ -48,7 +49,7 @@ impl Structure {
                 atom.position[1],
                 atom.position[2],
             ));
-            ids.push(kind.id());
+            ids.push(id);
         }
 
         Ok(Self {

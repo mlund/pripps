@@ -15,13 +15,15 @@
 //! Definition of command line interfaces (CLI)
 
 use crate::error::IoResultExt;
-use crate::{Intensity, IntensityScheme, Pripps, Result, cli};
-use clap::{Parser, Subcommand, builder::styling::AnsiColor};
+use crate::{
+    ExcludedVolume, Hydration, Intensity, IntensityScheme, Pripps, Result, SolventConfig, cli,
+};
+use clap::{Parser, Subcommand, ValueEnum, builder::styling::AnsiColor};
 
 use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
 use std::env::set_var;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 /// Commands
 #[derive(Debug, Subcommand)]
@@ -65,7 +67,27 @@ pub enum Commands {
         /// auto-computed from the structure's extent and qmax.
         #[clap(long)]
         lmax: Option<usize>,
+        /// Excluded-volume model. `none` (default) skips the
+        /// excluded-volume correction; `fraser` enables
+        /// Fraser-MacRae-Suzuki Gaussian dummies.
+        #[clap(long, value_enum, default_value_t = ExcludedKind::None)]
+        excluded: ExcludedKind,
+        /// Global scale on the excluded-volume displaced volumes.
+        /// PepsiSAXS calls this `r0`; typical range is 0.95–1.05.
+        #[clap(long, default_value = "1.0")]
+        volume_scale: f64,
+        /// Bulk solvent electron density in e/Å³. Pure water is 0.334.
+        #[clap(long, default_value = "0.334")]
+        bulk_electron_density: f64,
     },
+}
+
+/// Which excluded-volume generator to use. Mirrors
+/// [`ExcludedVolume`] minus the `Grid` variant (Phase 2c).
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum ExcludedKind {
+    None,
+    Fraser,
 }
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
@@ -86,8 +108,8 @@ pub struct Args {
     #[clap(short = 'i', long)]
     input: PathBuf,
 
-    /// Output file with I(q)
-    #[clap(short = 'o', long, default_value = "intensity.dat")]
+    /// Output CSV file with the I(q) curve.
+    #[clap(short = 'o', long, default_value = "intensity.csv")]
     output: PathBuf,
 
     /// Optional .xtc trajectory file with structures to average over
@@ -115,7 +137,7 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
-    let (scheme, box_override) = command_to_scheme(args.command);
+    let (scheme, box_override, solvent) = command_to_scheme(args.command);
 
     let intensity = pripps.intensity(
         scheme,
@@ -123,50 +145,97 @@ pub fn do_main() -> Result<()> {
         args.xtcfile.as_deref(),
         args.weights.as_deref(),
         box_override,
-        None,
+        solvent.as_ref(),
     )?;
-    write_table(&args.output, &intensity, Some("# q/Å I(q)"))?;
+    write_csv(&args.output, &intensity)?;
 
     Ok(())
 }
 
-/// Translate parsed CLI arguments into an [`IntensityScheme`] plus an
-/// optional explicit box override (used by the `Direct` subcommand).
-fn command_to_scheme(command: Commands) -> (IntensityScheme, Option<[f64; 3]>) {
+/// Translate parsed CLI arguments into an [`IntensityScheme`], an
+/// optional explicit box override (used by `Direct`), and an optional
+/// [`SolventConfig`] (only produced by `Svergun` when an excluded or
+/// hydration model is selected).
+fn command_to_scheme(
+    command: Commands,
+) -> (IntensityScheme, Option<[f64; 3]>, Option<SolventConfig>) {
     match command {
-        Commands::Debye { qmin, qmax, nq } => (IntensityScheme::Debye { qmin, qmax, nq }, None),
-        Commands::Direct { pmax, side_length } => {
-            (IntensityScheme::Direct { pmax }, Some([side_length; 3]))
+        Commands::Debye { qmin, qmax, nq } => {
+            (IntensityScheme::Debye { qmin, qmax, nq }, None, None)
         }
+        Commands::Direct { pmax, side_length } => (
+            IntensityScheme::Direct { pmax },
+            Some([side_length; 3]),
+            None,
+        ),
         Commands::Svergun {
             qmin,
             qmax,
             nq,
             lmax,
-        } => (
-            IntensityScheme::Svergun {
-                qmin,
-                qmax,
-                nq,
-                l_max: lmax,
-            },
-            None,
-        ),
+            excluded,
+            volume_scale,
+            bulk_electron_density,
+        } => {
+            let solvent = match excluded {
+                ExcludedKind::None => None,
+                ExcludedKind::Fraser => Some(SolventConfig {
+                    excluded: ExcludedVolume::Fraser { volume_scale },
+                    hydration: Hydration::None,
+                    bulk_electron_density,
+                }),
+            };
+            (
+                IntensityScheme::Svergun {
+                    qmin,
+                    qmax,
+                    nq,
+                    l_max: lmax,
+                },
+                None,
+                solvent,
+            )
+        }
     }
 }
 
-/// Write a `(q, I(q))` curve to a file as two-column text.
-fn write_table(path: &std::path::Path, curve: &Intensity, header: Option<&str>) -> Result<()> {
-    let mut file = std::fs::File::create(path).with_path(path)?;
-
+/// Write the intensity curve as CSV: two columns for the vacuum path,
+/// five when the three-contribution Svergun path populated
+/// `contributions`. The first row is a literal header; subsequent
+/// rows are comma-separated `f64` values — safe raw-format CSV
+/// because numeric fields never contain commas or quotes.
+// `File` writes are unbuffered — each `writeln!` would be one
+// `write(2)` without the `BufWriter` wrapper. For a trajectory
+// averaging over thousands of frames × ~100 q points, that's
+// hundreds of thousands of syscalls otherwise.
+fn write_csv(path: &Path, curve: &Intensity) -> Result<()> {
+    let file = std::fs::File::create(path).with_path(path)?;
+    let mut out = BufWriter::new(file);
     log::info!("Writing {}", path.display());
 
-    if let Some(header) = header {
-        writeln!(file, "{header}")?;
-    }
-
-    for (q, i) in curve.q.iter().zip(&curve.total) {
-        writeln!(file, "{q:.6} {i:.6}")?;
+    match &curve.contributions {
+        None => {
+            writeln!(out, "q,total")?;
+            for (q, total) in curve.q.iter().zip(&curve.total) {
+                writeln!(out, "{q:.6},{total:.6}")?;
+            }
+        }
+        Some(c) => {
+            writeln!(out, "q,total,atoms,excluded,hydration")?;
+            for ((((q, total), atoms), excluded), hydration) in curve
+                .q
+                .iter()
+                .zip(&curve.total)
+                .zip(&c.atoms)
+                .zip(&c.excluded)
+                .zip(&c.hydration)
+            {
+                writeln!(
+                    out,
+                    "{q:.6},{total:.6},{atoms:.6},{excluded:.6},{hydration:.6}"
+                )?;
+            }
+        }
     }
     Ok(())
 }

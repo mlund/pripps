@@ -6,86 +6,69 @@
 //! Local atom-kind type and name-lookup trait.
 //!
 //! Replaces the (much heavier) `faunus::topology::{AtomKind, AtomKindBuilder,
-//! FindByName, Value}` set. `sigma` and `dsv` are parsed from the YAML
-//! atom-file and preserved here for the planned SASA re-introduction via
-//! `voronota-ltr`.
-
-use std::cmp::Ordering;
-use std::hash::{Hash, Hasher};
+//! FindByName, Value}` set. `sigma` and `displaced_volume` are parsed from
+//! the YAML atom-file and consumed by the solvent-correction path
+//! (`ExcludedVolume::Fraser` and the planned SASA path).
 
 /// A named species in the scattering calculation.
 ///
-/// Identity is `id` alone: [`Eq`], [`Ord`], and [`Hash`] ignore the data
-/// fields. This matches the `BTreeMap<AtomKind, _>` iteration-order-equals-id
-/// invariant that `formfactor::read_formfactors` asserts and
-/// `formfactor::formfactor_by_index` relies on.
-#[derive(Debug, Clone)]
+/// `AtomKind` values live inside a [`crate::FormFactorMap`] and are
+/// addressed positionally: the map's index is the kind's numeric id,
+/// so the struct itself doesn't need to carry one.
+//
+// The id field was removed to eliminate redundant state — storing
+// the position inside the struct that already lives at that
+// position meant the `from_entries` constructor needed a
+// debug-only invariant check every time, and Fraser kind lookups
+// went through an `id()` getter that was itself just a Vec index.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AtomKind {
-    /// Stable numeric id used for indexing into form-factor vectors.
-    pub id: usize,
     /// Human-readable name (e.g. "C", "ALA", "H2O").
     pub name: String,
-    /// 2 × radius (Å), parsed from the YAML `radius` field. Consumed by the
-    /// planned voronota-ltr SASA path.
+    /// 2 × radius (Å), parsed from the YAML `radius` field. Consumed
+    /// by the planned voronota-ltr SASA path.
     pub sigma: Option<f64>,
-    /// Solvent-excluded radius (Å), parsed from the YAML `dsv` field.
-    /// Consumed by the planned voronota-ltr SASA path.
-    pub dsv: Option<f64>,
+    /// Displaced solvent volume in Å³, parsed from the YAML
+    /// `displaced_volume` field. `None` is legal for coarse-grained
+    /// kinds that a given structure never references;
+    /// [`crate::ExcludedVolume::Fraser`] errors if it sees `None` for
+    /// a kind that is referenced.
+    pub displaced_volume: Option<f64>,
 }
 
 impl AtomKind {
-    pub fn new(name: impl Into<String>, id: usize) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
-            id,
             name: name.into(),
             sigma: None,
-            dsv: None,
+            displaced_volume: None,
         }
     }
 
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn id(&self) -> usize {
-        self.id
-    }
     pub fn sigma(&self) -> Option<f64> {
         self.sigma
     }
-    pub fn dsv(&self) -> Option<f64> {
-        self.dsv
+    pub fn displaced_volume(&self) -> Option<f64> {
+        self.displaced_volume
     }
 }
 
-impl PartialEq for AtomKind {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-impl Eq for AtomKind {}
-impl Hash for AtomKind {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-impl PartialOrd for AtomKind {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for AtomKind {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.id.cmp(&other.id)
-    }
-}
-
-/// Look up an [`AtomKind`] by name in a slice.
+/// Look up an [`AtomKind`] by name in an ordered slice and return
+/// its positional index.
+//
+// Returns the index rather than a `&AtomKind` because the only
+// caller (`Structure::from_file`) immediately stores that index as
+// the per-atom id in the structure — skipping the borrow step
+// keeps the one useful bit of information and drops the rest.
 pub trait FindByName {
-    fn find_name(&self, name: &str) -> Option<&AtomKind>;
+    fn find_name(&self, name: &str) -> Option<usize>;
 }
 
 impl FindByName for [AtomKind] {
-    fn find_name(&self, name: &str) -> Option<&AtomKind> {
-        self.iter().find(|k| k.name == name)
+    fn find_name(&self, name: &str) -> Option<usize> {
+        self.iter().position(|k| k.name == name)
     }
 }
