@@ -40,7 +40,7 @@ fn fraser_form_factor(volume: f64, bulk_electron_density: f64) -> FormFactor {
 /// One Gaussian dummy per protein atom, per Fraser-MacRae-Suzuki.
 /// Errors if any atom kind referenced by the structure is missing
 /// `displaced_volume`.
-pub(super) fn fraser_dummies(
+pub(super) fn dummies(
     structure: &Structure,
     formfactors: &FormFactorMap,
     bulk_electron_density: f64,
@@ -66,7 +66,7 @@ pub(super) fn fraser_dummies(
         form_factors.push(fraser_form_factor(volume, bulk_electron_density));
     }
 
-    DummySet::new(positions, form_factors)
+    DummySet::per_dummy(positions, form_factors)
 }
 
 #[cfg(test)]
@@ -103,7 +103,7 @@ mod tests {
     fn generates_one_dummy_per_atom() {
         let ff = one_kind_map(Some(16.43));
         let s = three_atom_structure();
-        let dummies = fraser_dummies(&s, &ff, 0.334, 1.0).unwrap();
+        let dummies = dummies(&s, &ff, 0.334, 1.0).unwrap();
         assert_eq!(dummies.positions().len(), 3);
         assert_eq!(eval_all(&dummies, 0.0).len(), 3);
         assert_eq!(dummies.positions()[1], Vector3::new(1.0, 0.0, 0.0));
@@ -115,7 +115,7 @@ mod tests {
         let v = 16.43;
         let ff = one_kind_map(Some(v));
         let s = three_atom_structure();
-        let dummies = fraser_dummies(&s, &ff, rho, 1.0).unwrap();
+        let dummies = dummies(&s, &ff, rho, 1.0).unwrap();
         for f in eval_all(&dummies, 0.0) {
             assert_eq!(f, rho * v);
         }
@@ -127,8 +127,8 @@ mod tests {
         let v = 16.43;
         let ff = one_kind_map(Some(v));
         let s = three_atom_structure();
-        let d1 = fraser_dummies(&s, &ff, rho, 1.0).unwrap();
-        let d2 = fraser_dummies(&s, &ff, rho, 2.0).unwrap();
+        let d1 = dummies(&s, &ff, rho, 1.0).unwrap();
+        let d2 = dummies(&s, &ff, rho, 2.0).unwrap();
         assert_eq!(eval_all(&d2, 0.0)[0], 2.0 * eval_all(&d1, 0.0)[0]);
     }
 
@@ -136,7 +136,7 @@ mod tests {
     fn missing_displaced_volume_errors_with_kind_name() {
         let ff = one_kind_map(None);
         let s = three_atom_structure();
-        let err = fraser_dummies(&s, &ff, 0.334, 1.0).unwrap_err();
+        let err = dummies(&s, &ff, 0.334, 1.0).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("atom kind C"), "expected kind name in: {msg}");
     }

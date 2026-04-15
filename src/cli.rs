@@ -79,6 +79,21 @@ pub enum Commands {
         /// Bulk solvent electron density in e/Å³. Pure water is 0.334.
         #[clap(long, default_value = "0.334")]
         bulk_electron_density: f64,
+        /// Hydration-shell model. `none` (default) skips it;
+        /// `sasa` places one water dummy per protein atom,
+        /// weighted by solvent-accessible surface area
+        /// (voronota-ltr tessellation).
+        #[clap(long, value_enum, default_value_t = HydrationKind::None)]
+        hydration: HydrationKind,
+        /// Water probe radius (Å) used for the SASA tessellation.
+        /// FoXS default is 1.8.
+        #[clap(long, default_value = "1.8")]
+        probe: f64,
+        /// Dimensionless scale on the hydration-shell contribution.
+        /// FoXS calls this `c₂`; 0.03 is a typical excess-water
+        /// density baseline.
+        #[clap(long, default_value = "0.03")]
+        contrast_density: f64,
     },
 }
 
@@ -88,6 +103,15 @@ pub enum Commands {
 pub enum ExcludedKind {
     None,
     Fraser,
+}
+
+/// Which hydration-shell generator to use. Mirrors the active
+/// [`Hydration`] variants (Phase 2b ships `Sasa` only; `Grid` and
+/// `Voronoi` land in later phases).
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum HydrationKind {
+    None,
+    Sasa,
 }
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
@@ -176,15 +200,28 @@ fn command_to_scheme(
             excluded,
             volume_scale,
             bulk_electron_density,
+            hydration,
+            probe,
+            contrast_density,
         } => {
-            let solvent = match excluded {
-                ExcludedKind::None => None,
-                ExcludedKind::Fraser => Some(SolventConfig {
-                    excluded: ExcludedVolume::Fraser { volume_scale },
-                    hydration: Hydration::None,
-                    bulk_electron_density,
-                }),
+            let solvent = SolventConfig {
+                excluded: match excluded {
+                    ExcludedKind::None => ExcludedVolume::None,
+                    ExcludedKind::Fraser => ExcludedVolume::Fraser { volume_scale },
+                },
+                hydration: match hydration {
+                    HydrationKind::None => Hydration::None,
+                    HydrationKind::Sasa => Hydration::Sasa {
+                        probe,
+                        contrast_density,
+                    },
+                },
+                bulk_electron_density,
             };
+            // Drop the config if neither contribution is active, so
+            // the vacuum fast path and its bit-identity stay intact
+            // when no solvent flag was passed.
+            let solvent = solvent.is_active().then_some(solvent);
             (
                 IntensityScheme::Svergun {
                     qmin,

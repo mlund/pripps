@@ -290,7 +290,7 @@ fn solvent_intensity(
     let excluded_dummies =
         cfg.excluded
             .dummies(structure, &sampler.formfactors, cfg.bulk_electron_density)?;
-    let hydration_dummies = cfg.hydration.dummies(structure)?;
+    let hydration_dummies = cfg.hydration.dummies(structure, &sampler.formfactors)?;
 
     let excluded_basis = SphericalBasis::new(excluded_dummies.positions(), l_max);
     let hydration_basis = SphericalBasis::new(hydration_dummies.positions(), l_max);
@@ -464,14 +464,29 @@ mod tests {
     /// produce plausible orders of magnitude.
     const TEST_DISPLACED_VOLUME: f64 = 10.0;
 
+    /// Placeholder water form-factor amplitude attached to the
+    /// `H2O` kind in [`constant_ff`] so SASA-exercising tests have
+    /// a shared water form factor to look up by name.
+    const TEST_WATER_FF: f64 = 10.0;
+
     /// Build a single-kind form-factor map: every atom uses
     /// `FormFactor::Constant(value)`, so `f(q) = value` for all q.
-    /// The kind carries a placeholder `displaced_volume` so tests
-    /// enabling `ExcludedVolume::Fraser` pass its per-atom check.
+    /// The kind carries placeholder `sigma` and `displaced_volume`
+    /// so tests enabling `ExcludedVolume::Fraser` or
+    /// `Hydration::Sasa` pass their per-atom checks. The map also
+    /// includes an `H2O` kind with [`TEST_WATER_FF`] so SASA
+    /// hydration tests find a water form factor by name.
     fn constant_ff(value: f64) -> FormFactorMap {
         let mut kind = AtomKind::new("X");
         kind.displaced_volume = Some(TEST_DISPLACED_VOLUME);
-        FormFactorMap::from_entries(vec![(kind, FormFactor::Constant(value))])
+        kind.sigma = Some(2.0 * 1.7);
+        let mut water = AtomKind::new("H2O");
+        water.displaced_volume = Some(30.0);
+        water.sigma = Some(2.0 * 1.4);
+        FormFactorMap::from_entries(vec![
+            (kind, FormFactor::Constant(value)),
+            (water, FormFactor::Constant(TEST_WATER_FF)),
+        ])
     }
 
     /// Build a tiny Structure from raw positions, all assigned to
@@ -692,6 +707,68 @@ mod tests {
         assert_eq!(out.q[0], 0.0);
         assert!(contributions.excluded[0] > 0.0);
         assert!(out.total[0] < contributions.atoms[0]);
+    }
+
+    #[test]
+    fn sasa_zero_contrast_matches_vacuum() {
+        // contrast_density = 0 zeros the hydration term in
+        // `combine_contributions`, so total must match the vacuum
+        // path even though the SASA generator runs and populates
+        // the `hydration` column.
+        let structure = structure_with_ids(vec![(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 3.0, 0.0)]);
+        let qmin = 0.01;
+        let qmax = 0.4;
+        let nq = 8;
+
+        let vacuum = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
+        let solvent_cfg = SolventConfig {
+            hydration: crate::Hydration::Sasa {
+                probe: 1.4,
+                contrast_density: 0.0,
+            },
+            ..Default::default()
+        };
+        let sasa_calc =
+            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, Some(solvent_cfg))
+                .unwrap();
+
+        let v_out = vacuum.calc_intensities(&structure).unwrap();
+        let s_out = sasa_calc.calc_intensities(&structure).unwrap();
+
+        assert_eq!(v_out.total, s_out.total);
+        let contributions = s_out.contributions.expect("contributions populated");
+        // Hydration column was still computed — non-zero even at
+        // zero contrast because the SASA dummies exist and the
+        // per-dummy `|B_lm|²` diagnostic is reported.
+        assert!(contributions.hydration.iter().any(|&v| v > 0.0));
+    }
+
+    #[test]
+    fn fraser_plus_sasa_populates_all_three_columns() {
+        // Both excluded and hydration active — every diagnostic
+        // column should carry a non-zero contribution and the
+        // total differs from any single one.
+        let structure = structure_with_ids(vec![(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.5, 0.0)]);
+        let solvent_cfg = SolventConfig {
+            excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: crate::Hydration::Sasa {
+                probe: 1.4,
+                contrast_density: 0.03,
+            },
+            ..Default::default()
+        };
+        let calc = SvergunIntensity::new(constant_ff(6.0), (0.0, 0.2), 5, None, Some(solvent_cfg))
+            .unwrap();
+        let out = calc.calc_intensities(&structure).unwrap();
+        let c = out.contributions.expect("contributions populated");
+
+        assert!(c.atoms.iter().any(|&v| v > 0.0));
+        assert!(c.excluded.iter().any(|&v| v > 0.0));
+        assert!(c.hydration.iter().any(|&v| v > 0.0));
+        // Total is the coherent combine, not any single column.
+        assert!(out.total[0] != c.atoms[0]);
+        assert!(out.total[0] != c.excluded[0]);
+        assert!(out.total[0] != c.hydration[0]);
     }
 
     #[test]

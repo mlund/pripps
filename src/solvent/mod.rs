@@ -25,9 +25,12 @@
 //! multipole coefficients.
 //!
 //! The config types are here; the real dummy-atom generators live in
-//! sibling files (`fraser.rs`, and the Phase 2b+ `sasa.rs` / `grid.rs`).
+//! sibling files (`fraser.rs` for excluded volume, `sasa.rs` for
+//! SASA-weighted hydration, and the Phase 2c `grid.rs` / Phase 2d
+//! Voronoi variants).
 
 mod fraser;
+mod sasa;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
 use crate::{Result, Structure, Vector3};
@@ -79,7 +82,12 @@ impl Hydration {
     /// The contrast electron density (e/Å³) of the hydration layer
     /// over bulk solvent. Returns `0.0` for `None`, which zeros the
     /// hydration term in `combine_contributions` without a branch.
-    // PepsiSAXS fit parameter `dp` (δρ) in cSAS.cpp.
+    //
+    // For SASA-weighted hydration this knob is dimensionally a
+    // dimensionless scale of the water form factor (matches FoXS
+    // `c₂`) rather than literally an electron density. Phase 2c
+    // grid-based variants will use it closer to the literal
+    // density interpretation.
     pub(crate) fn contrast_density(&self) -> f64 {
         match self {
             Self::None => 0.0,
@@ -135,11 +143,10 @@ pub enum Hydration {
         thickness: f64,
         contrast_density: f64,
     },
-    /// One dummy per atom, weighted by solvent-accessible surface
-    /// area (voronota-ltr tessellation).
+    /// FoXS-style SASA-weighted hydration shell — see
+    /// [`crate::solvent::sasa`] for the physics writeup.
     Sasa {
         probe: f64,
-        thickness: f64,
         contrast_density: f64,
     },
     /// One dummy per surface atom, weighted by Voronoi cell contact
@@ -151,13 +158,42 @@ pub enum Hydration {
 }
 
 /// A set of dummy scatterers that feed into the Svergun multipole
-/// kernel. Each dummy carries its own form factor (Fraser Gaussians,
-/// water shell, etc.); the kernel doesn't care which contribution it
-/// came from.
+/// kernel. Positions are per-dummy; form factors come in two
+/// flavours via [`DummyFormFactors`] — per-dummy (Fraser) or one
+/// shared factor with per-dummy scalar weights (SASA).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DummySet {
     positions: Vec<Vector3>,
-    form_factors: Vec<FormFactor>,
+    form_factors: DummyFormFactors,
+}
+
+/// How the form factors of a [`DummySet`] are stored.
+//
+// Two variants because Fraser needs one Gaussian per atom (each
+// sized by the atom's `displaced_volume`) while SASA hydration has
+// one shared water form factor that every atom scatters through,
+// weighted by its accessibility fraction. Forcing SASA into a
+// per-dummy `Vec<FormFactor>` would clone the water Table N times
+// and call `eval(q)` N times per q — both avoidable by factoring
+// the shared form factor out.
+#[derive(Debug, Clone)]
+enum DummyFormFactors {
+    PerDummy(Vec<FormFactor>),
+    Weighted {
+        form_factor: FormFactor,
+        weights: Vec<f64>,
+    },
+}
+
+impl Default for DummyFormFactors {
+    // `PerDummy(vec![])` over `Weighted { ... }` because the empty
+    // default has zero dummies and therefore no shared form factor
+    // to choose — `PerDummy` is the variant that degenerates to
+    // "nothing to evaluate" without requiring a placeholder
+    // `FormFactor`.
+    fn default() -> Self {
+        Self::PerDummy(Vec::new())
+    }
 }
 
 impl DummySet {
@@ -165,7 +201,10 @@ impl DummySet {
     // parity is a data-shape contract every generator must uphold,
     // and a silent mismatch in release would corrupt the Svergun
     // per-atom iteration without an explicit panic site.
-    pub(super) fn new(positions: Vec<Vector3>, form_factors: Vec<FormFactor>) -> Result<Self> {
+    pub(super) fn per_dummy(
+        positions: Vec<Vector3>,
+        form_factors: Vec<FormFactor>,
+    ) -> Result<Self> {
         if positions.len() != form_factors.len() {
             return Err(crate::Error::internal(format!(
                 "DummySet: positions ({}) and form_factors ({}) length mismatch",
@@ -175,7 +214,28 @@ impl DummySet {
         }
         Ok(Self {
             positions,
-            form_factors,
+            form_factors: DummyFormFactors::PerDummy(form_factors),
+        })
+    }
+
+    pub(super) fn weighted(
+        positions: Vec<Vector3>,
+        form_factor: FormFactor,
+        weights: Vec<f64>,
+    ) -> Result<Self> {
+        if positions.len() != weights.len() {
+            return Err(crate::Error::internal(format!(
+                "DummySet: positions ({}) and weights ({}) length mismatch",
+                positions.len(),
+                weights.len(),
+            )));
+        }
+        Ok(Self {
+            positions,
+            form_factors: DummyFormFactors::Weighted {
+                form_factor,
+                weights,
+            },
         })
     }
 
@@ -195,8 +255,19 @@ impl DummySet {
     // three-contribution path.
     pub(crate) fn form_factors_at(&self, q: f64, out: &mut Vec<f64>) -> Result<()> {
         out.clear();
-        for f in &self.form_factors {
-            out.push(f.eval(q)?);
+        match &self.form_factors {
+            DummyFormFactors::PerDummy(ffs) => {
+                for f in ffs {
+                    out.push(f.eval(q)?);
+                }
+            }
+            DummyFormFactors::Weighted {
+                form_factor,
+                weights,
+            } => {
+                let shared = form_factor.eval(q)?;
+                out.extend(weights.iter().map(|&w| w * shared));
+            }
         }
         Ok(())
     }
@@ -212,7 +283,7 @@ impl ExcludedVolume {
         match self {
             Self::None => Ok(DummySet::default()),
             Self::Fraser { volume_scale } => {
-                fraser::fraser_dummies(structure, formfactors, bulk_electron_density, *volume_scale)
+                fraser::dummies(structure, formfactors, bulk_electron_density, *volume_scale)
             }
             // Phase 2c.
             Self::Grid { .. } => Ok(DummySet::default()),
@@ -221,13 +292,16 @@ impl ExcludedVolume {
 }
 
 impl Hydration {
-    pub(crate) fn dummies(&self, _structure: &Structure) -> Result<DummySet> {
+    pub(crate) fn dummies(
+        &self,
+        structure: &Structure,
+        formfactors: &FormFactorMap,
+    ) -> Result<DummySet> {
         match self {
-            // Phase 2 will fill these in — Sasa first, then Grid and
-            // Voronoi.
-            Self::None | Self::Grid { .. } | Self::Sasa { .. } | Self::Voronoi { .. } => {
-                Ok(DummySet::default())
-            }
+            Self::None => Ok(DummySet::default()),
+            Self::Sasa { probe, .. } => sasa::dummies(structure, formfactors, *probe),
+            // Phase 2c / 2d.
+            Self::Grid { .. } | Self::Voronoi { .. } => Ok(DummySet::default()),
         }
     }
 }

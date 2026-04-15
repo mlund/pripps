@@ -59,6 +59,17 @@ impl FormFactorMap {
         self.entries.iter().map(|(_, f)| f)
     }
 
+    /// Linear-search the table for the kind named `name` and return
+    /// a borrow of its form factor. Used by the solvent generators
+    /// (SASA, Phase 2c/2d) to look up role-specific kinds like
+    /// `H2O` without exposing the underlying storage.
+    pub(crate) fn form_factor_by_name(&self, name: &str) -> Option<&FormFactor> {
+        self.entries
+            .iter()
+            .find(|(k, _)| k.name() == name)
+            .map(|(_, f)| f)
+    }
+
     pub(crate) fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
         Self { entries }
     }
