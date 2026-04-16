@@ -152,7 +152,11 @@ pub struct Args {
 // Wrapper for main function to handle errors
 pub fn do_main() -> Result<()> {
     let args = cli::Args::parse();
-    // Configure logging
+    // SAFETY: `set_var` is unsafe because it is not thread-safe.
+    // This runs in `main` before rayon's global thread pool or any
+    // other threads are spawned, so the single-threaded precondition
+    // holds. `pretty_env_logger::init()` reads the variable
+    // immediately after.
     if args.verbose {
         unsafe { set_var(DEFAULT_FILTER_ENV, "Debug") };
     } else if std::env::var(DEFAULT_FILTER_ENV).is_err() {

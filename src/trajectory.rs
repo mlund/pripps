@@ -80,7 +80,14 @@ impl Iterator for XtcIterator {
         self.reader
             .read_frame(&mut frame)
             .map(|_| {
-                let weight = self.weights.as_ref().map(|w| w[self.cnt]).unwrap_or(1.0);
+                // When no explicit weights file was given, each frame
+                // gets a uniform 1/N weight so the accumulation loop
+                // can always do `Σ wᵢ·vᵢ` without a separate `/N`.
+                let weight = self
+                    .weights
+                    .as_ref()
+                    .map(|w| w[self.cnt])
+                    .unwrap_or(1.0 / self.num_frames as f64);
                 self.cnt += 1;
                 (frame, weight)
             })
@@ -160,7 +167,7 @@ pub fn trajectory_average(
         }
 
         for (acc, v) in zip(&mut mean.total, &curve.total) {
-            *acc += weight * v / num_frames as f64;
+            *acc += weight * v;
         }
 
         #[cfg(feature = "cli")]

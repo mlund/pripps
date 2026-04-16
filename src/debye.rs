@@ -63,6 +63,9 @@ fn intensity_at_q(
 
     // Compute I(q) = Σ_i f_i² + 2 Σ_{i<j} f_i * f_j * sinc(q * r_ij)
     let diagonal: f64 = ff.iter().map(|f| f * f).sum();
+    if n < 2 {
+        return Ok(diagonal);
+    }
 
     let mut off_diagonal = 0.0;
     for i in 0..n - 1 {
