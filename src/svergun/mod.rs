@@ -198,7 +198,7 @@ struct Contribution<'a> {
 }
 
 impl<'a> Contribution<'a> {
-    fn atoms(basis: &'a SphericalBasis) -> Self {
+    const fn atoms(basis: &'a SphericalBasis) -> Self {
         Self {
             dummies: None,
             basis,
@@ -210,7 +210,7 @@ impl<'a> Contribution<'a> {
     // contribution up front and share it across all rayon workers;
     // building inside would force each worker to re-run the
     // `O(N · L²)` basis construction.
-    fn from_dummies(dummies: &'a DummySet, basis: &'a SphericalBasis) -> Self {
+    const fn from_dummies(dummies: &'a DummySet, basis: &'a SphericalBasis) -> Self {
         Self {
             dummies: Some(dummies),
             basis,
@@ -655,7 +655,11 @@ mod tests {
         let positions: Vec<(f64, f64, f64)> = (0..10)
             .map(|i| {
                 let f = i as f64;
-                (1.5 + f * 1.1, 2.0 + (f * 0.7) % 5.0, 0.5 + (f * 1.3) % 6.0)
+                (
+                    f.mul_add(1.1, 1.5),
+                    2.0 + (f * 0.7) % 5.0,
+                    0.5 + (f * 1.3) % 6.0,
+                )
             })
             .collect();
         let structure = structure_with_ids(positions);

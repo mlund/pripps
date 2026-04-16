@@ -116,11 +116,15 @@ mod tests {
     #[test]
     fn run_parallel_preserves_input_order() {
         let s = QSampler::new(empty_ffs(), [0.3, 0.1, 0.2]);
-        let out = s.run_parallel(|q| Ok(q * q + 1.0)).unwrap();
+        let out = s.run_parallel(|q| Ok(q.mul_add(q, 1.0))).unwrap();
         assert_eq!(out.q, vec![0.3, 0.1, 0.2]);
         assert_eq!(
             out.total,
-            vec![0.3 * 0.3 + 1.0, 0.1 * 0.1 + 1.0, 0.2 * 0.2 + 1.0]
+            vec![
+                0.3f64.mul_add(0.3, 1.0),
+                0.1f64.mul_add(0.1, 1.0),
+                0.2f64.mul_add(0.2, 1.0)
+            ]
         );
     }
 

@@ -100,7 +100,7 @@ pub struct Pripps {
 }
 
 impl Pripps {
-    pub fn formfactors(&self) -> &FormFactorMap {
+    pub const fn formfactors(&self) -> &FormFactorMap {
         &self.formfactors
     }
 

@@ -34,11 +34,11 @@ pub struct FormFactorMap {
 }
 
 impl FormFactorMap {
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -70,7 +70,7 @@ impl FormFactorMap {
             .map(|(_, f)| f)
     }
 
-    pub(crate) fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
+    pub(crate) const fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
         Self { entries }
     }
 }

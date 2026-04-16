@@ -146,9 +146,11 @@ pub(crate) fn legendre_normalized(cos_theta: f64, l_max: usize) -> LowerTriangle
         let lf = l as f64;
         // Coefficients for the three-term recurrence on normalized P:
         //   P̄_l^0 = a · z · P̄_{l-1}^0 - b · P̄_{l-2}^0
-        let a = ((2.0 * lf - 1.0) * (2.0 * lf + 1.0) / (lf * lf)).sqrt();
-        let b = ((2.0 * lf + 1.0) * (lf - 1.0) * (lf - 1.0) / ((2.0 * lf - 3.0) * lf * lf)).sqrt();
-        let plm = a * z * pm1 - b * pm2;
+        let a = (2.0f64.mul_add(lf, -1.0) * 2.0f64.mul_add(lf, 1.0) / (lf * lf)).sqrt();
+        let b = (2.0f64.mul_add(lf, 1.0) * (lf - 1.0) * (lf - 1.0)
+            / (2.0f64.mul_add(lf, -3.0) * lf * lf))
+            .sqrt();
+        let plm = (a * z).mul_add(pm1, -(b * pm2));
         p[(l, 0)] = plm;
         pm2 = pm1;
         pm1 = plm;
@@ -168,12 +170,12 @@ pub(crate) fn legendre_normalized(cos_theta: f64, l_max: usize) -> LowerTriangle
         // P̄_m^m = -√((2m+1)/(2m)) · sin θ · P̄_{m-1}^{m-1}
         // (sin θ is absorbed in `rescale`; the negative sign is the
         // (-1)^m phase, applied once per m).
-        pmm = -pmm * ((2.0 * mf + 1.0).sqrt() / (2.0 * mf).sqrt());
+        pmm = -pmm * (2.0f64.mul_add(mf, 1.0).sqrt() / (2.0 * mf).sqrt());
         p[(m, m)] = pmm * rescale;
 
         // P̄_{m+1}^m = √(2m+3) · z · P̄_m^m
         let mut pm2m = pmm;
-        let mut pm1m = z * (2.0 * mf + 3.0).sqrt() * pmm;
+        let mut pm1m = z * 2.0f64.mul_add(mf, 3.0).sqrt() * pmm;
         if m < l_max {
             p[(m + 1, m)] = pm1m * rescale;
         }
@@ -181,11 +183,13 @@ pub(crate) fn legendre_normalized(cos_theta: f64, l_max: usize) -> LowerTriangle
         // P̄_l^m for l > m+1 via three-term recurrence.
         for l in (m + 2)..=l_max {
             let lf = l as f64;
-            let a = ((2.0 * lf - 1.0) * (2.0 * lf + 1.0) / ((lf - mf) * (lf + mf))).sqrt();
-            let b = ((2.0 * lf + 1.0) * (lf - mf - 1.0) * (lf + mf - 1.0)
-                / ((2.0 * lf - 3.0) * (lf - mf) * (lf + mf)))
+            #[allow(clippy::suspicious_operation_groupings)]
+            let a = (2.0f64.mul_add(lf, -1.0) * 2.0f64.mul_add(lf, 1.0) / ((lf - mf) * (lf + mf)))
                 .sqrt();
-            let plm = a * z * pm1m - b * pm2m;
+            let b = (2.0f64.mul_add(lf, 1.0) * (lf - mf - 1.0) * (lf + mf - 1.0)
+                / (2.0f64.mul_add(lf, -3.0) * (lf - mf) * (lf + mf)))
+                .sqrt();
+            let plm = (a * z).mul_add(pm1m, -(b * pm2m));
             p[(l, m)] = plm * rescale;
             pm2m = pm1m;
             pm1m = plm;
@@ -196,7 +200,7 @@ pub(crate) fn legendre_normalized(cos_theta: f64, l_max: usize) -> LowerTriangle
     if l_max >= 1 {
         rescale *= u;
         let mf = l_max as f64;
-        pmm = -pmm * ((2.0 * mf + 1.0).sqrt() / (2.0 * mf).sqrt());
+        pmm = -pmm * (2.0f64.mul_add(mf, 1.0).sqrt() / (2.0 * mf).sqrt());
         p[(l_max, l_max)] = pmm * rescale;
     }
 
@@ -254,7 +258,7 @@ pub(crate) fn spherical_bessel(x: f64, out: &mut [f64]) {
 
     for l in (0..=l_start).rev() {
         let lf = l as f64;
-        let j_prev = (2.0 * lf + 1.0) / x * j_curr - j_next;
+        let j_prev = (2.0f64.mul_add(lf, 1.0) / x).mul_add(j_curr, -j_next);
         if l <= l_max {
             out[l] = j_curr;
         }
@@ -542,7 +546,7 @@ mod tests {
             (0.0, 0.0),
             (PI / 3.0, 0.7),
             (PI / 2.0, PI),
-            (PI, 2.0 * PI - 0.1),
+            (PI, 2.0f64.mul_add(PI, -0.1)),
         ] {
             let y = spherical_harmonics(theta, phi, 3);
             assert_relative_eq!(y[(0, 0)].re, expected, epsilon = 1e-14);

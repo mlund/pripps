@@ -60,7 +60,7 @@ impl SolventConfig {
     /// `true` when at least one contribution is active. Svergun's
     /// three-contribution path is skipped entirely for the all-`None`
     /// config so vacuum callers pay nothing.
-    pub(crate) fn is_active(&self) -> bool {
+    pub(crate) const fn is_active(&self) -> bool {
         !matches!(self.excluded, ExcludedVolume::None) || !matches!(self.hydration, Hydration::None)
     }
 }
@@ -70,7 +70,7 @@ impl ExcludedVolume {
     /// `None`, which lets `combine_contributions` treat the excluded
     /// term as absent without a separate branch.
     // PepsiSAXS fit parameter `r0` in cSAS.cpp.
-    pub(crate) fn volume_scale(&self) -> f64 {
+    pub(crate) const fn volume_scale(&self) -> f64 {
         match self {
             Self::None => 0.0,
             Self::Fraser { volume_scale } | Self::Grid { volume_scale, .. } => *volume_scale,
@@ -88,7 +88,7 @@ impl Hydration {
     // `c₂`) rather than literally an electron density. Phase 2c
     // grid-based variants will use it closer to the literal
     // density interpretation.
-    pub(crate) fn contrast_density(&self) -> f64 {
+    pub(crate) const fn contrast_density(&self) -> f64 {
         match self {
             Self::None => 0.0,
             Self::Grid {

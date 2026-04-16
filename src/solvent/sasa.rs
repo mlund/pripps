@@ -76,10 +76,8 @@ pub(super) fn dummies(
             // sphere area because cell boundaries track tangent
             // planes, not curved surfaces. Keeps the weight
             // meaningful.
-            match area {
-                None => 1.0,
-                Some(a) => (a / full_sphere).clamp(0.0, 1.0),
-            }
+            area.as_ref()
+                .map_or(1.0, |a| (a / full_sphere).clamp(0.0, 1.0))
         })
         .collect();
 

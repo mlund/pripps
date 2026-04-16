@@ -48,10 +48,10 @@ impl AtomKind {
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn sigma(&self) -> Option<f64> {
+    pub const fn sigma(&self) -> Option<f64> {
         self.sigma
     }
-    pub fn displaced_volume(&self) -> Option<f64> {
+    pub const fn displaced_volume(&self) -> Option<f64> {
         self.displaced_volume
     }
 }

@@ -74,5 +74,5 @@ fn intensity_at_q(
         }
     }
 
-    Ok(2.0 * off_diagonal + diagonal)
+    Ok(2.0f64.mul_add(off_diagonal, diagonal))
 }
