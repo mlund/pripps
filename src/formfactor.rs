@@ -95,28 +95,24 @@ pub enum FormFactor {
         ab: Vec<(f64, f64)>,
         c: f64,
     },
+    /// 𝐹(𝑞) = 𝑎 · exp(−𝑏𝑞²). Const-constructible, no heap
+    /// allocation. Used by the Fraser excluded-volume dummies where
+    /// each atom gets its own single-term Gaussian sized by its
+    /// displaced volume.
+    SingleGaussian { a: f64, b: f64 },
 }
 
 impl FormFactor {
-    /// Single-Gaussian form factor `a · exp(−b · q²)`, valid over
-    /// all positive q. Convenience constructor for dummy atoms (see
-    /// [`crate::ExcludedVolume::Fraser`]).
-    //
-    // Fixed `qrange = (0, ∞)` and `c = 0` because Fraser dummies are
-    // analytically defined for any non-negative q and have no
-    // constant term — the multi-exponential YAML shape is overkill.
-    pub fn single_gaussian(a: f64, b: f64) -> Self {
-        Self::Gaussian {
-            qrange: (0.0, f64::INFINITY),
-            ab: vec![(a, b)],
-            c: 0.0,
-        }
+    /// Build a single-Gaussian form factor. Convenience constructor
+    /// for dummy atoms (see [`crate::ExcludedVolume::Fraser`]).
+    pub const fn single_gaussian(a: f64, b: f64) -> Self {
+        Self::SingleGaussian { a, b }
     }
 
     pub fn qrange(&self) -> (f64, f64) {
         use FormFactor::*;
         match self {
-            Constant(_) => (0.0, f64::INFINITY),
+            Constant(_) | SingleGaussian { .. } => (0.0, f64::INFINITY),
             Gaussian { qrange, .. } => *qrange,
             Polynomial { qrange, .. } => *qrange,
             Table(table) => (table[0].0, table[table.len() - 1].0),
@@ -144,6 +140,7 @@ impl FormFactor {
         }
         Ok(match self {
             Constant(c) => *c,
+            SingleGaussian { a, b } => a * (-b * q * q).exp(),
             Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
             Polynomial { coeff, .. } => eval_polynomium(coeff, q),
             Table(table) => interpolate(table, q),
@@ -267,14 +264,21 @@ struct AtomSpec {
     formfactor: FormFactorSpec,
 }
 
-impl AtomSpec {
-    /// Build a runtime [`AtomKind`] from the declared name and the
-    /// optional `radius` / `displaced_volume` fields. Infallible.
-    fn to_atomkind(&self, name: &str) -> AtomKind {
-        AtomKind {
+// If `displaced_volume` is absent but `radius` is present,
+// derive V = (4/3)πr³. Explicit `displaced_volume` in the YAML
+// takes precedence — needed for united-atom groups (NH, SH)
+// where the displaced volume includes implicit hydrogens that
+// the effective radius doesn't account for.
+impl From<(&str, &AtomSpec)> for AtomKind {
+    fn from((name, spec): (&str, &AtomSpec)) -> Self {
+        let displaced_volume = spec.displaced_volume.or_else(|| {
+            spec.radius
+                .map(|r| (4.0 / 3.0) * std::f64::consts::PI * r.powi(3))
+        });
+        Self {
             name: name.to_string(),
-            sigma: self.radius.map(|r| 2.0 * r),
-            displaced_volume: self.displaced_volume,
+            sigma: spec.radius.map(|r| 2.0 * r),
+            displaced_volume,
         }
     }
 }
@@ -336,7 +340,7 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     let entries: Vec<(AtomKind, FormFactor)> = specs
         .into_iter()
         .map(|(name, spec)| {
-            let kind = spec.to_atomkind(&name);
+            let kind = AtomKind::from((&*name, &spec));
             let ff = FormFactor::try_from(spec.formfactor)?;
             Ok((kind, ff))
         })
@@ -559,6 +563,25 @@ mod tests {
         assert_relative_eq!(ff.eval(0.75).unwrap(), 2.5); // between second and third
         assert!(ff.eval(-0.1).is_err()); // out of q range
         assert!(ff.eval(2.1).is_err()); // out of q range
+    }
+
+    #[test]
+    fn single_gaussian_is_const_and_matches_full_gaussian() {
+        let a = 5.486;
+        let b = 0.42;
+        let single = FormFactor::single_gaussian(a, b);
+        let full = FormFactor::Gaussian {
+            qrange: (0.0, f64::INFINITY),
+            ab: vec![(a, b)],
+            c: 0.0,
+        };
+        for q in [0.0, 0.1, 0.25, 0.5, 1.0] {
+            assert_relative_eq!(single.eval(q).unwrap(), full.eval(q).unwrap());
+        }
+        // At q=0 the exponential is 1, so F(0) = a.
+        assert_relative_eq!(single.eval(0.0).unwrap(), a);
+        // Const-constructible: this compiles at const position.
+        const _: FormFactor = FormFactor::single_gaussian(1.0, 2.0);
     }
 
     #[test]

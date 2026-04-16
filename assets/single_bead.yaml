@@ -11,7 +11,6 @@
 N:
   {
     radius: 0.84,
-    displaced_volume: 2.49,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -30,7 +29,6 @@ N:
 C:
   {
     radius: 1.577,
-    displaced_volume: 16.43,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -49,7 +47,6 @@ C:
 O:
   {
     radius: 1.3,
-    displaced_volume: 9.203,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -68,7 +65,6 @@ O:
 S:
   {
     radius: 1.68,
-    displaced_volume: 19.86,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -84,13 +80,12 @@ S:
       },
   }
 # Sulphur alias
-SE: { radius: 1.68, displaced_volume: 19.86, ff: !Alias S }
+SE: { radius: 1.68, ff: !Alias S }
 
 # Hydrogen
 H:
   {
     radius: 1.06893,
-    displaced_volume: 5.116,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -108,41 +103,35 @@ H:
 CH:
   {
     radius: 1.73,
-    displaced_volume: 21.69,
     ff: !United { center: C, orbit: [[H, 1.099, 1]] },
   }
 CH2:
   {
     radius: 1.85,
-    displaced_volume: 26.52,
     ff: !United { center: C, orbit: [[H, 1.092, 2]] },
   }
 CH3:
   {
     radius: 1.97,
-    displaced_volume: 32.03,
     ff: !United { center: C, orbit: [[H, 1.059, 3]] },
   }
 Csp2H:
   {
     radius: 1.73,
-    displaced_volume: 21.69,
     ff: !United { center: C, orbit: [[H, 1.077, 1]] },
   }
 CaromH:
   {
     radius: 1.73,
-    displaced_volume: 21.69,
     ff: !United { center: C, orbit: [[H, 1.083, 1]] },
   }
 OalcH:
-  { radius: 1.5, displaced_volume: 14.14, ff: !United { center: O, orbit: [[H, 0.967, 1]] } }
+  { radius: 1.5, ff: !United { center: O, orbit: [[H, 0.967, 1]] } }
 OacidH:
-  { radius: 1.5, displaced_volume: 14.14, ff: !United { center: O, orbit: [[H, 1.015, 1]] } }
+  { radius: 1.5, ff: !United { center: O, orbit: [[H, 1.015, 1]] } }
 O_:
   {
     radius: 1.3,
-    displaced_volume: 9.203,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -160,7 +149,6 @@ O_:
 Ocarbox:
   {
     radius: 1.3,
-    displaced_volume: 9.203,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -184,7 +172,6 @@ NH:
 NH2:
   {
     radius: 1.45,
-    displaced_volume: 12.77,
     ff: !United { center: N, orbit: [[H, 1.009, 2]] },
   }
 NIV:
@@ -208,25 +195,21 @@ NIV:
 NHIV:
   {
     radius: 1.22,
-    displaced_volume: 7.606,
     ff: !United { center: N, orbit: [[H, 0.78508, 1]] },
   }
 NH2IV:
   {
     radius: 1.45,
-    displaced_volume: 12.77,
     ff: !United { center: N, orbit: [[H, 0.78508, 2]] },
   }
 NH3IV:
   {
     radius: 1.62,
-    displaced_volume: 17.81,
     ff: !United { center: N, orbit: [[H, 0.78508, 3]] },
   }
 N_guan:
   {
     radius: 1.54,
-    displaced_volume: 15.29,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -244,7 +227,6 @@ N_guan:
 N_guan_1:
   {
     radius: 1.45,
-    displaced_volume: 12.77,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -264,13 +246,11 @@ SH:
 H2O:
   {
     radius: 1.92757,
-    displaced_volume: 30.0,
     ff: !United { center: O, orbit: [[H, 0.9584, 2]] },
   }
 UNK:
   {
     radius: 1.577,
-    displaced_volume: 16.43,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -288,14 +268,12 @@ UNK:
 NH3:
   {
     radius: 1.62,
-    displaced_volume: 17.81,
     ff: !United { center: N, orbit: [[H, 0.78508, 3]] },
   }
 # Magnesium
 MG:
   {
     radius: 1.6,
-    displaced_volume: 17.1573,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -314,7 +292,6 @@ MG:
 CU:
   {
     radius: 1.28,
-    displaced_volume: 8.78453,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -333,7 +310,6 @@ CU:
 FE:
   {
     radius: 1.24,
-    displaced_volume: 7.98645,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -352,7 +328,6 @@ FE:
 CL:
   {
     radius: 1.75,
-    displaced_volume: 22.4493,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -371,7 +346,6 @@ CL:
 ZN:
   {
     radius: 1.33,
-    displaced_volume: 9.8547,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -389,7 +363,6 @@ ZN:
 IR:
   {
     radius: 1.58,
-    displaced_volume: 16.5219,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -407,7 +380,6 @@ IR:
 Cr:
   {
     radius: 1.85,
-    displaced_volume: 26.5218,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -425,7 +397,6 @@ Cr:
 P:
   {
     radius: 1.11,
-    displaced_volume: 5.72872,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -443,7 +414,6 @@ P:
 CA:
   {
     radius: 1.97,
-    displaced_volume: 32.0249,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -461,7 +431,6 @@ CA:
 I:
   {
     radius: 1.98,
-    displaced_volume: 32.515,
     ff:
       !Gaussian {
         qrange: [0.0, 1.0],
@@ -484,7 +453,6 @@ I:
 ALA:
   {
     radius: 3.1,
-    displaced_volume: 124.7882,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -503,7 +471,6 @@ ALA:
 ARG:
   {
     radius: 4.0,
-    displaced_volume: 268.0826,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -522,7 +489,6 @@ ARG:
 ASN:
   {
     radius: 3.6,
-    displaced_volume: 195.4322,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -541,7 +507,6 @@ ASN:
 ASP:
   {
     radius: 3.6,
-    displaced_volume: 195.4322,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -560,7 +525,6 @@ ASP:
 CYS:
   {
     radius: 3.6,
-    displaced_volume: 195.4322,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -579,7 +543,6 @@ CYS:
 GLN:
   {
     radius: 3.8,
-    displaced_volume: 229.8473,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -598,7 +561,6 @@ GLN:
 GLU:
   {
     radius: 3.8,
-    displaced_volume: 229.8473,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -617,7 +579,6 @@ GLU:
 GLY:
   {
     radius: 2.9,
-    displaced_volume: 102.1604,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -636,7 +597,6 @@ GLY:
 HIS:
   {
     radius: 3.9,
-    displaced_volume: 248.4748,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -655,7 +615,6 @@ HIS:
 ILE:
   {
     radius: 3.6,
-    displaced_volume: 195.4322,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -674,7 +633,6 @@ ILE:
 LEU:
   {
     radius: 3.6,
-    displaced_volume: 195.4322,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -693,7 +651,6 @@ LEU:
 LYS:
   {
     radius: 3.7,
-    displaced_volume: 212.1748,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -712,7 +669,6 @@ LYS:
 MET:
   {
     radius: 3.8,
-    displaced_volume: 229.8473,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -731,7 +687,6 @@ MET:
 PHE:
   {
     radius: 3.9,
-    displaced_volume: 248.4748,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -750,7 +705,6 @@ PHE:
 PRO:
   {
     radius: 3.4,
-    displaced_volume: 164.6362,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -769,7 +723,6 @@ PRO:
 SER:
   {
     radius: 3.3,
-    displaced_volume: 150.5326,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -788,7 +741,6 @@ SER:
 THR:
   {
     radius: 3.5,
-    displaced_volume: 179.5944,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -807,7 +759,6 @@ THR:
 TRP:
   {
     radius: 4.3,
-    displaced_volume: 333.0381,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -826,7 +777,6 @@ TRP:
 TYR:
   {
     radius: 4.1,
-    displaced_volume: 288.6956,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],
@@ -845,7 +795,6 @@ TYR:
 VAL:
   {
     radius: 3.4,
-    displaced_volume: 164.6362,
     formfactor:
       !Polynomial {
         qrange: [0.0, 0.75],

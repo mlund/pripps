@@ -103,8 +103,10 @@ optional physical properties:
 H: { formfactor: !Constant 1.0, radius: 1.0 }
 N: { ff: !Table [ [0.0, 8.9], [0.1, 7.8], ...] }
 C: { ff: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0]], c: 0.4 },
-     radius: 1.577, displaced_volume: 16.43 }
-CH: { ff: !United { center: C, orbit: [[H, 1.5, 1.0]] } }
+     radius: 1.577 }
+# United atom with explicit displaced_volume (includes implicit H):
+NH: { radius: 1.009, displaced_volume: 7.606,
+      ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
 CA: { ff: !Alias C }
 ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0, 5.8, ...]} }
 ```
@@ -121,10 +123,16 @@ Supported form factor models:
 | Tabulated | `!Table` | Array of [q, F] pairs |
 | Alias | `!Alias` | Reference to another entry |
 
-The `radius` field (Å) is used by the SASA hydration model;
-`displaced_volume` (Å³) is used by the Fraser excluded-volume model.
-Both are optional and only required when the corresponding solvent
-model is active.
+| Property | Unit | Used by | Auto-derived? |
+|----------|------|---------|---------------|
+| `radius` | Å | SASA hydration, Fraser excluded volume | No — must be specified |
+| `displaced_volume` | ų | Fraser excluded volume | Yes — defaults to (4/3)πr³ from `radius` if omitted |
+
+When `radius` is present but `displaced_volume` is omitted, the
+displaced volume is automatically derived as the sphere volume
+(4/3)πr³. Specify `displaced_volume` explicitly only for united-atom
+groups (e.g. NH, SH) where the displaced volume includes implicit
+hydrogens that the effective radius does not account for.
 
 ## Command-line interface (Rust)
 
