@@ -54,7 +54,7 @@ use rayon::prelude::*;
 /// across the q loop — the radial part `j_l(q·r)` is the only part of
 /// the multipole kernel that depends on q, so it stays in the per-q
 /// closure while everything angular lives here.
-struct SphericalBasis {
+pub(crate) struct SphericalBasis {
     spherical: Vec<Spherical>,
     /// Per-atom, already-conjugated angular factors `Y_l^m*`.
     angular: Vec<LowerTriangle<Complex<f64>>>,
@@ -62,7 +62,7 @@ struct SphericalBasis {
 }
 
 impl SphericalBasis {
-    fn new(positions: &[Vector3], l_max: usize) -> Self {
+    pub(crate) fn new(positions: &[Vector3], l_max: usize) -> Self {
         let spherical: Vec<Spherical> = positions.iter().copied().map(Spherical::from).collect();
 
         let angular: Vec<LowerTriangle<Complex<f64>>> = spherical
@@ -108,33 +108,32 @@ impl SvergunIntensity {
         })
     }
 
-    /// Resolve the effective expansion order: user override if given,
-    /// else the Svergun criterion `⌈q_max · r_max⌉ + 2`.
-    ///
-    /// Uses `r_max` (farthest atom from origin) rather than `R_g`
-    /// (radius of gyration) as a safe upper bound: `R_g` can
-    /// under-estimate the criterion for asymmetric structures, and
-    /// asking for too few multipoles silently gives a wrong answer.
-    /// The `+2` absorbs the usual "rule of thumb" margin — tests
-    /// confirm it's enough for agreement with Debye to 1% on small
-    /// clusters.
     fn effective_l_max(&self, structure: &Structure) -> usize {
-        if let Some(l) = self.l_max_override {
-            return l;
-        }
-        let r_max: f64 = structure
-            .pos
-            .iter()
-            .map(|p| p.norm())
-            .fold(0.0_f64, f64::max);
-        let q_max = self
-            .sampler
-            .q_values
-            .iter()
-            .copied()
-            .fold(0.0_f64, f64::max);
-        ((q_max * r_max).ceil() as usize) + 2
+        resolve_l_max(self.l_max_override, &structure.pos, &self.sampler.q_values)
     }
+}
+
+/// Resolve the effective expansion order: user override if given,
+/// else the Svergun criterion `⌈q_max · r_max⌉ + 2`.
+///
+/// Uses `r_max` (farthest atom from origin) rather than `R_g`
+/// (radius of gyration) as a safe upper bound: `R_g` can
+/// under-estimate the criterion for asymmetric structures, and
+/// asking for too few multipoles silently gives a wrong answer.
+/// The `+2` absorbs the usual "rule of thumb" margin — tests
+/// confirm it's enough for agreement with Debye to 1% on small
+/// clusters.
+pub(crate) fn resolve_l_max(
+    override_val: Option<usize>,
+    positions: &[Vector3],
+    q_values: &[f64],
+) -> usize {
+    if let Some(l) = override_val {
+        return l;
+    }
+    let r_max: f64 = positions.iter().map(|p| p.norm()).fold(0.0_f64, f64::max);
+    let q_max = q_values.iter().copied().fold(0.0_f64, f64::max);
+    ((q_max * r_max).ceil() as usize) + 2
 }
 
 impl IntensityCalculator for SvergunIntensity {
@@ -286,6 +285,22 @@ fn solvent_intensity(
     atoms_basis: &SphericalBasis,
     cfg: &SolventConfig,
 ) -> Result<Intensity> {
+    let fit = build_model(sampler, structure, atoms_basis, cfg)?;
+    Ok(fit.intensity(
+        cfg.excluded.volume_scale(),
+        cfg.hydration.contrast_density(),
+    ))
+}
+
+/// Precompute the three per-q coefficient triangles for a structure.
+/// All the expensive, fit-invariant work lives here; the returned
+/// [`SvergunModel`] is cheap to re-query with different fit knobs.
+pub(crate) fn build_model(
+    sampler: &QSampler,
+    structure: &Structure,
+    atoms_basis: &SphericalBasis,
+    cfg: &SolventConfig,
+) -> Result<SvergunModel> {
     let l_max = atoms_basis.l_max;
     let excluded_dummies =
         cfg.excluded
@@ -299,15 +314,14 @@ fn solvent_intensity(
     let excluded_contrib = Contribution::from_dummies(&excluded_dummies, &excluded_basis);
     let hydration_contrib = Contribution::from_dummies(&hydration_dummies, &hydration_basis);
 
-    let volume_scale = cfg.excluded.volume_scale();
-    let contrast_density = cfg.hydration.contrast_density();
-
-    let per_q: Vec<(f64, f64, f64, f64)> = sampler
+    // Per-q: compute the three coefficient triangles. This is the
+    // O(N · Q · L²) work we want to do exactly once per structure.
+    let per_q: Vec<_> = sampler
         .q_values
         .par_iter()
         .map_init(
             || PerQBuffers::new(l_max),
-            |buffers, &q| -> Result<(f64, f64, f64, f64)> {
+            |buffers, &q| -> Result<_> {
                 let atoms =
                     atoms_contrib.coefficients(&sampler.formfactors, &structure.ids, q, buffers)?;
                 let excluded = excluded_contrib.coefficients(
@@ -322,36 +336,90 @@ fn solvent_intensity(
                     q,
                     buffers,
                 )?;
-                let total = combine_contributions(
-                    &atoms,
-                    &excluded,
-                    &hydration,
-                    l_max,
-                    volume_scale,
-                    contrast_density,
-                );
-                Ok((
-                    total,
-                    intensity_from_multipoles(&atoms, l_max),
-                    intensity_from_multipoles(&excluded, l_max),
-                    intensity_from_multipoles(&hydration, l_max),
-                ))
+                Ok((atoms, excluded, hydration))
             },
         )
         .collect::<Result<Vec<_>>>()?;
 
-    let (total, atoms, excluded, hydration): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+    let (atoms_coeffs, excluded_coeffs, hydration_coeffs): (Vec<_>, Vec<_>, Vec<_>) =
         per_q.into_iter().multiunzip();
 
-    Ok(Intensity {
-        q: sampler.q_values.clone(),
-        total,
-        contributions: Some(Contributions {
-            atoms,
-            excluded,
-            hydration,
-        }),
+    debug_assert_eq!(atoms_coeffs.len(), sampler.q_values.len());
+    debug_assert_eq!(excluded_coeffs.len(), sampler.q_values.len());
+    debug_assert_eq!(hydration_coeffs.len(), sampler.q_values.len());
+
+    Ok(SvergunModel {
+        q_values: sampler.q_values.clone(),
+        l_max,
+        atoms_coeffs,
+        excluded_coeffs,
+        hydration_coeffs,
     })
+}
+
+/// Cached three-contribution Svergun state for a single structure.
+///
+/// Holds the per-q multipole coefficient triangles for atoms,
+/// excluded volume, and hydration shell. The expensive O(N·Q·L²)
+/// work runs once at construction (via
+/// [`Pripps::svergun_model`]); the cheap O(Q·L²) combine
+/// runs per [`intensity`](SvergunModel::intensity) call with
+/// different fit knobs `(volume_scale, contrast_density)`.
+pub struct SvergunModel {
+    q_values: Vec<f64>,
+    l_max: usize,
+    atoms_coeffs: Vec<LowerTriangle<Complex<f64>>>,
+    excluded_coeffs: Vec<LowerTriangle<Complex<f64>>>,
+    hydration_coeffs: Vec<LowerTriangle<Complex<f64>>>,
+}
+
+impl SvergunModel {
+    /// Compute `I(q)` for the given fit parameters. Infallible —
+    /// the inner loop is pure complex arithmetic over the cached
+    /// coefficient triangles, no form-factor evaluation, no basis
+    /// construction, no SASA tessellation.
+    //
+    // Sequential (not `par_iter`): the per-q combine is ~L² complex
+    // multiply-adds (≈600 for L=34). At Q=100 that's ~60 K flops —
+    // microseconds of work — and rayon's per-task scheduling
+    // overhead would dominate. The expensive O(N·Q·L²) coefficient
+    // build in `build_model` correctly uses `par_iter`.
+    pub fn intensity(&self, volume_scale: f64, contrast_density: f64) -> Intensity {
+        let per_q: Vec<(f64, f64, f64, f64)> = self
+            .atoms_coeffs
+            .iter()
+            .zip(&self.excluded_coeffs)
+            .zip(&self.hydration_coeffs)
+            .map(|((a, e), h)| {
+                let total =
+                    combine_contributions(a, e, h, self.l_max, volume_scale, contrast_density);
+                (
+                    total,
+                    intensity_from_multipoles(a, self.l_max),
+                    intensity_from_multipoles(e, self.l_max),
+                    intensity_from_multipoles(h, self.l_max),
+                )
+            })
+            .collect();
+
+        let (total, atoms, excluded, hydration): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+            per_q.into_iter().multiunzip();
+
+        Intensity {
+            q: self.q_values.clone(),
+            total,
+            contributions: Some(Contributions {
+                atoms,
+                excluded,
+                hydration,
+            }),
+        }
+    }
+
+    /// The q grid the fit was prepared over.
+    pub fn q_values(&self) -> &[f64] {
+        &self.q_values
+    }
 }
 
 /// Build the Svergun multipole coefficients for one scatterer set.

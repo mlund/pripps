@@ -30,6 +30,7 @@ pub use atomkind::{AtomKind, FindByName};
 pub use error::{Error, Result};
 pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
+pub use svergun::SvergunModel;
 
 /// Crate-internal short alias. Not re-exported; public signatures use
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
@@ -118,6 +119,34 @@ impl Pripps {
         self.formfactors.kinds().cloned().collect()
     }
 
+    /// Prepare a stateful Svergun fit. Caches the per-q multipole
+    /// coefficient triangles (atoms, excluded volume, hydration) so
+    /// repeated calls to [`SvergunModel::intensity`] with different
+    /// `(volume_scale, contrast_density)` only pay the cheap
+    /// O(Q·L²) combine, not the full O(N·Q·L²) basis + coefficient
+    /// construction.
+    pub fn svergun_model(
+        &self,
+        structure_file: &path::Path,
+        qmin: f64,
+        qmax: f64,
+        nq: usize,
+        l_max: Option<usize>,
+        solvent: &SolventConfig,
+    ) -> Result<SvergunModel> {
+        let structure = Structure::from_file(structure_file, &self.atomkinds())?;
+        let sampler = q_sampler::QSampler::linear(self.formfactors.clone(), qmin, qmax, nq);
+        let l_max = svergun::resolve_l_max(l_max, &structure.pos, &sampler.q_values);
+        log::info!(
+            "Svergun fit preparation: l_max = {} over {} atoms, {} q-points",
+            l_max,
+            structure.pos.len(),
+            sampler.q_values.len(),
+        );
+        let atoms_basis = svergun::SphericalBasis::new(&structure.pos, l_max);
+        svergun::build_model(&sampler, &structure, &atoms_basis, solvent)
+    }
+
     /// Compute I(q) for a structure under the given [`IntensityScheme`].
     ///
     /// When `xtcfile` is `Some`, the structure is used as a template (for
@@ -131,13 +160,13 @@ impl Pripps {
     pub fn intensity(
         &self,
         scheme: IntensityScheme,
-        xyzfile: &path::Path,
+        structure_file: &path::Path,
         xtcfile: Option<&path::Path>,
         weights: Option<&path::Path>,
         box_sides: Option<[f64; 3]>,
         solvent: Option<&SolventConfig>,
     ) -> Result<Intensity> {
-        let mut structure = Structure::from_file(xyzfile, &self.atomkinds())?;
+        let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
             if xtcfile.is_some() {
                 return Err(Error::usage(
@@ -233,5 +262,100 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::Usage(_)));
+    }
+
+    fn yaml_and_xyz() -> (Pripps, std::path::PathBuf) {
+        let yaml = std::path::Path::new("assets/single_bead.yaml");
+        let xyz = std::path::PathBuf::from("tests/4lzt/4lzt.xyz");
+        (Pripps::from_yaml(yaml).unwrap(), xyz)
+    }
+
+    #[test]
+    fn fit_matches_one_shot_for_matching_knobs() {
+        let (pripps, xyz) = yaml_and_xyz();
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: Hydration::Sasa {
+                probe: 1.8,
+                contrast_density: 0.03,
+            },
+            ..Default::default()
+        };
+        let one_shot = pripps
+            .intensity(
+                IntensityScheme::Svergun {
+                    qmin: 0.0,
+                    qmax: 0.3,
+                    nq: 20,
+                    l_max: None,
+                },
+                &xyz,
+                None,
+                None,
+                None,
+                Some(&solvent),
+            )
+            .unwrap();
+
+        let fit = pripps
+            .svergun_model(&xyz, 0.0, 0.3, 20, None, &solvent)
+            .unwrap();
+        let from_fit = fit.intensity(1.0, 0.03);
+
+        assert_eq!(one_shot.total, from_fit.total);
+        assert_eq!(one_shot.contributions, from_fit.contributions);
+    }
+
+    #[test]
+    fn fit_zero_knobs_matches_vacuum() {
+        let (pripps, xyz) = yaml_and_xyz();
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: Hydration::Sasa {
+                probe: 1.8,
+                contrast_density: 0.03,
+            },
+            ..Default::default()
+        };
+        let fit = pripps
+            .svergun_model(&xyz, 0.0, 0.3, 20, None, &solvent)
+            .unwrap();
+        let zero = fit.intensity(0.0, 0.0);
+        let contributions = zero.contributions.as_ref().unwrap();
+        assert_eq!(zero.total, contributions.atoms);
+    }
+
+    #[test]
+    fn fit_intensity_is_pure() {
+        let (pripps, xyz) = yaml_and_xyz();
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let fit = pripps
+            .svergun_model(&xyz, 0.0, 0.3, 10, None, &solvent)
+            .unwrap();
+        let a = fit.intensity(1.0, 0.0);
+        let b = fit.intensity(1.0, 0.0);
+        assert_eq!(a.total, b.total);
+    }
+
+    #[test]
+    fn fit_intensity_varies_with_knobs() {
+        let (pripps, xyz) = yaml_and_xyz();
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: Hydration::Sasa {
+                probe: 1.8,
+                contrast_density: 0.0,
+            },
+            ..Default::default()
+        };
+        let fit = pripps
+            .svergun_model(&xyz, 0.0, 0.3, 10, None, &solvent)
+            .unwrap();
+        let a = fit.intensity(1.0, 0.0);
+        let b = fit.intensity(1.0, 0.1);
+        assert_ne!(a.total, b.total);
     }
 }

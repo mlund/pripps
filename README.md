@@ -62,6 +62,55 @@ CA: { ff: !Alias C }
 ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0 ,5.8, ...]} }
 ```
 
+## Python bindings
+
+The `pripps-py/` subcrate provides Python bindings via [pyo3](https://pyo3.rs) +
+[maturin](https://maturin.rs). Install into your Python environment with
+[uv](https://docs.astral.sh/uv/):
+
+```sh
+cd pripps-py
+uv pip install -e .
+```
+
+Or without uv:
+
+```sh
+cd pripps-py
+pip install maturin
+maturin develop
+```
+
+Minimal example — compute a solvent-corrected SAXS profile:
+
+```python
+import pripps
+
+pr = pripps.Pripps(atomfile="assets/single_bead.yaml")
+fit = pr.svergun_model(
+    structure_file="tests/4lzt/4lzt.xyz",
+    qmin=0.0,
+    qmax=0.5,
+    nq=100,
+    excluded="fraser",
+    volume_scale=1.0,
+    hydration="sasa",
+    probe=1.8,
+    contrast_density=0.03,
+    bulk_electron_density=0.334,
+)
+
+# Returns a dict of numpy arrays: q, total, atoms, excluded, hydration
+out = fit.intensity(volume_scale=1.0, contrast_density=0.03)
+print(out["q"][:3], out["total"][:3])
+```
+
+The expensive per-structure work (basis construction, coefficient
+triangles, SASA tessellation) runs once inside `svergun_model`.
+Each `fit.intensity(volume_scale, contrast_density)` call re-runs only
+the cheap coefficient-level combine — fast enough for
+`scipy.optimize.minimize` or a grid search over the two fit knobs.
+
 ### Environmental variables
 
 The following environmental variables can be used for additional configuration:

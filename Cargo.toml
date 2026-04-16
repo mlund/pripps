@@ -44,6 +44,9 @@ required-features = ["cli"]
 name = "intensity"
 harness = false
 
+[workspace]
+members = ["pripps-py"]
+
 [profile.release]
 strip = true # Automatically strip symbols from the binary.
 #lto = true   # Link-time optimization

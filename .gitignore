@@ -10,3 +10,12 @@ Cargo.lock
 \#*
 .DS_Store
 CLAUDE.md
+
+# Python / maturin
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+*.so
+*.pyd
