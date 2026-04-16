@@ -60,18 +60,28 @@ tessellation, per-q coefficient triangles) runs once in
 contrast_density)` call re-runs only the cheap coefficient-level
 combine — fast enough for scipy or a grid search.
 
+A full working example is in `pripps-py/examples/fit_lysozyme.py`,
+which fits the shipped `tests/4lzt/SASDMF2.dat` dataset:
+
+```sh
+python pripps-py/examples/fit_lysozyme.py
+```
+
+The core pattern:
+
 ```python
 import numpy as np
 from scipy.optimize import minimize
 
-q_exp, i_exp, sigma = np.loadtxt("experimental.dat", unpack=True)
+data = np.loadtxt("experimental.dat", comments="#")
+q_exp, i_exp, sigma = data[:, 0], data[:, 1], data[:, 2]
 
 def chi2(params):
     c1, c2 = params
     out = model.intensity(volume_scale=c1, contrast_density=c2)
     theory = np.interp(q_exp, out["q"], out["total"])
     scale = np.sum(theory * i_exp / sigma**2) / np.sum((theory / sigma) ** 2)
-    return np.sum(((scale * theory - i_exp) / sigma) ** 2)
+    return np.sum(((scale * theory - i_exp) / sigma) ** 2) / len(q_exp)
 
 result = minimize(
     chi2,
@@ -79,7 +89,7 @@ result = minimize(
     bounds=[(0.95, 1.05), (-0.05, 0.1)],
     method="L-BFGS-B",
 )
-print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²={result.fun:.2f}")
+print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.2f}")
 ```
 
 ### Solvent models

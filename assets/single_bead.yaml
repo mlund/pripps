@@ -824,3 +824,48 @@ HLYS: { ff: !Alias LYS }
 HTYR: { ff: !Alias TYR }
 HCYS: { ff: !Alias CYS }
 CYX: { ff: !Alias CYS }
+
+# PDB atom name aliases — map multi-character PDB names to their
+# element form factors so atomic-resolution structures work with
+# this YAML without a separate atom-name mapping file.
+
+# Carbon atoms
+CA: { radius: 1.577, ff: !Alias C }
+CB: { radius: 1.577, ff: !Alias C }
+CG: { radius: 1.577, ff: !Alias C }
+CG1: { radius: 1.577, ff: !Alias C }
+CG2: { radius: 1.577, ff: !Alias C }
+CD: { radius: 1.577, ff: !Alias C }
+CD1: { radius: 1.577, ff: !Alias C }
+CD2: { radius: 1.577, ff: !Alias C }
+CE: { radius: 1.577, ff: !Alias C }
+CE1: { radius: 1.577, ff: !Alias C }
+CE2: { radius: 1.577, ff: !Alias C }
+CE3: { radius: 1.577, ff: !Alias C }
+CZ: { radius: 1.577, ff: !Alias C }
+CZ2: { radius: 1.577, ff: !Alias C }
+CZ3: { radius: 1.577, ff: !Alias C }
+
+# Nitrogen atoms
+ND1: { radius: 0.84, ff: !Alias N }
+ND2: { radius: 0.84, ff: !Alias N }
+NE: { radius: 0.84, ff: !Alias N }
+NE1: { radius: 0.84, ff: !Alias N }
+NE2: { radius: 0.84, ff: !Alias N }
+NH1: { radius: 0.84, ff: !Alias N }
+NH2: { radius: 0.84, ff: !Alias N }
+NZ: { radius: 0.84, ff: !Alias N }
+
+# Oxygen atoms
+OD1: { radius: 1.3, ff: !Alias O }
+OD2: { radius: 1.3, ff: !Alias O }
+OE1: { radius: 1.3, ff: !Alias O }
+OE2: { radius: 1.3, ff: !Alias O }
+OG: { radius: 1.3, ff: !Alias O }
+OG1: { radius: 1.3, ff: !Alias O }
+OH: { radius: 1.3, ff: !Alias O }
+OXT: { radius: 1.3, ff: !Alias O }
+
+# Sulfur atoms
+SD: { radius: 1.68, ff: !Alias S }
+SG: { radius: 1.68, ff: !Alias S }
