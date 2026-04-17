@@ -1,0 +1,75 @@
+#
+# FoXS-compatible form factors (Cromer-Mann, International Tables Vol. C)
+#
+# b values converted from the s² = (q/4π)² convention used by
+# International Tables to the q² convention used by pripps:
+# b_new = b_IT / (4π)².
+#
+# These decay much more slowly than the PepsiSAXS-derived values in
+# single_bead.yaml — which is correct: at SAXS angles (q < 1 Å⁻¹)
+# atomic form factors barely change from their q=0 (electron count)
+# values.
+#
+# Excluded volumes match FoXS (FormFactorTable.cpp / IMP-SAXS).
+# Use with `--excluded foxs` for the FoXS-compatible pipeline.
+#
+# Units: length (Å), volume (ų), wave vector q (Å⁻¹)
+#
+
+# --- Elements ---
+
+H:
+  {
+    radius: 1.07,
+    displaced_volume: 5.15,
+    ff: !Gaussian { qrange: [0.0, 2.0], ab: [[0.493002, 0.06656105], [0.322912, 0.16544293], [0.140191, 0.01989923], [0.040810, 0.36602088]], c: 0.003038 },
+  }
+C:
+  {
+    radius: 1.58,
+    displaced_volume: 16.44,
+    ff: !Gaussian { qrange: [0.0, 2.0], ab: [[2.31000, 0.13199554], [1.02000, 0.06463975], [1.58860, 0.00360133], [0.86500, 0.32708505]], c: 0.215600 },
+  }
+N:
+  {
+    radius: 0.84,
+    displaced_volume: 2.49,
+    ff: !Gaussian { qrange: [0.0, 2.0], ab: [[12.2126, 0.00003610], [3.13220, 0.06265005], [2.01250, 0.18362881], [1.16630, 0.00368936]], c: -11.529 },
+  }
+O:
+  {
+    radius: 1.30,
+    displaced_volume: 9.13,
+    ff: !Gaussian { qrange: [0.0, 2.0], ab: [[3.04850, 0.08407822], [2.28680, 0.03610264], [1.54630, 0.00205112], [0.86700, 0.20839804]], c: 0.250800 },
+  }
+S:
+  {
+    radius: 1.68,
+    ff: !Gaussian { qrange: [0.0, 2.0], ab: [[6.90530, 0.00929559], [5.20340, 0.14067876], [1.43790, 0.00160594], [1.58630, 0.35571335]], c: 0.866900 },
+  }
+P:
+  {
+    radius: 1.11,
+    ff: !Gaussian { qrange: [0.0, 2.0], ab: [[6.43450, 0.01207432], [4.17910, 0.17197371], [1.78000, 0.00333093], [1.49080, 0.43165674]], c: 1.114900 },
+  }
+
+# --- United atoms (formed by adding H contributions to heavy atoms) ---
+
+CH:  { radius: 1.73, ff: !United { center: C, orbit: [[H, 1.099, 1]] } }
+CH2: { radius: 1.85, ff: !United { center: C, orbit: [[H, 1.092, 2]] } }
+CH3: { radius: 1.97, ff: !United { center: C, orbit: [[H, 1.059, 3]] } }
+CaromH: { radius: 1.73, ff: !United { center: C, orbit: [[H, 1.083, 1]] } }
+Csp2H:  { radius: 1.73, ff: !United { center: C, orbit: [[H, 1.077, 1]] } }
+
+NH:  { radius: 1.009, displaced_volume: 7.64, ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
+NH2: { radius: 1.45, ff: !United { center: N, orbit: [[H, 1.009, 2]] } }
+NH3: { radius: 1.62, ff: !United { center: N, orbit: [[H, 0.78508, 3]] } }
+
+SH:  { radius: 1.43, displaced_volume: 25.01, ff: !United { center: S, orbit: [[H, 1.43, 1]] } }
+OH:  { radius: 1.50, ff: !United { center: O, orbit: [[H, 0.967, 1]] } }
+
+H2O: { radius: 1.93, ff: !United { center: O, orbit: [[H, 0.9584, 2]] } }
+
+# --- Aliases for backward compatibility ---
+
+SE: { radius: 1.68, ff: !Alias S }

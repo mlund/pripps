@@ -417,9 +417,11 @@ mod tests {
     #[test]
     fn foxs_chi2_against_experiment() {
         // FoXS gets χ²/N ≈ 0.29 on 6lyz.pdb vs lyzexp.dat with
-        // excluded volume only (no hydration, c₁=1). We should be
-        // in the same ballpark with the FoXS-style Fraser formula.
-        let (pripps, _) = yaml_and_xyz();
+        // excluded volume only (no hydration, c₁=1). With the
+        // FoXS-compatible Cromer-Mann form factors and the 16π
+        // Fraser formula, pripps should match.
+        let pripps =
+            Pripps::from_yaml(std::path::Path::new("assets/foxs_formfactors.yaml")).unwrap();
         let pdb = std::path::PathBuf::from("tests/4lzt/6lyz.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
@@ -443,16 +445,11 @@ mod tests {
 
         let exp = load_lyzexp();
         let chi2 = chi2_per_point(&intensity, &exp);
-        // FoXS gets 0.29 with its own Cromer-Mann tables and Debye
-        // pair-sum. pripps uses PepsiSAXS-derived 5-Gaussian form
-        // factors and the Svergun multipole expansion. The remaining
-        // gap is from different form-factor parameterisations at
-        // intermediate q, not from a formula bug. We accept < 50 as
-        // a sanity check that the pipeline runs and the 16π formula
-        // produces a physically reasonable profile.
+        // FoXS target: 0.29. With Cromer-Mann form factors and
+        // the FoXS Fraser formula we should be within 0.5.
         assert!(
-            chi2 < 50.0,
-            "χ²/N = {chi2:.2} is too high (sanity threshold: 50)"
+            chi2 < 0.5,
+            "χ²/N = {chi2:.4} is too high (FoXS target: 0.29)"
         );
     }
 

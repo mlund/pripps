@@ -95,6 +95,13 @@ fn parse_pdb<R: BufRead>(reader: R) -> Vec<AtomRecord> {
                 if !alt_loc.is_empty() && alt_loc != "A" && alt_loc != "1" && alt_loc != "." {
                     continue;
                 }
+                // Skip crystal waters — they are explicit solvent,
+                // not part of the protein model. FoXS and CRYSOL
+                // exclude them by default.
+                let residue_name = extract_column(&line, 18, 20);
+                if matches!(residue_name, "HOH" | "WAT" | "DOD" | "SOL" | "TIP") {
+                    continue;
+                }
                 let Some(x) = parse_column_f64(&line, 31, 38) else {
                     continue;
                 };

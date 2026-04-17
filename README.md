@@ -96,7 +96,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.2f}")
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `excluded` | `"none"`, `"fraser"` | Excluded-volume model |
+| `excluded` | `"none"`, `"fraser"`, `"foxs"` | Excluded-volume model |
 | `hydration` | `"none"`, `"sasa"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `contrast_density` | float (default 0.03) | Scales hydration shell (FoXS `c₂`) |
@@ -144,13 +144,26 @@ displaced volume is automatically derived as the sphere volume
 groups (e.g. NH, SH) where the displaced volume includes implicit
 hydrogens that the effective radius does not account for.
 
-**Note on PDB atom mapping:** pripps maps PDB atom names to form
-factors by name alone (e.g. `CB → CH2`). Tools like FoXS use
-residue context to choose the right united-atom group (e.g. ALA:CB →
-CH₃ vs ILE:CB → CH). This means pripps's atom-name-only aliases are
-approximate for atomic-resolution structures. For best results with
-PDB files, consider providing a YAML with residue-specific entries
-or using a coarse-grained (Cα) representation.
+### Shipped form-factor files
+
+| File | Description | Best for |
+|------|-------------|----------|
+| `assets/single_bead.yaml` | PepsiSAXS-derived Gaussians + coarse-grained residues | Cα / single-bead models |
+| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C) with FoXS-compatible volumes | Atomic PDB files |
+
+**Important:** the two files use different Gaussian parameterisations.
+`single_bead.yaml` has b values in the q² convention (fast decay);
+`foxs_formfactors.yaml` has b values converted from the standard
+s² = (q/4π)² convention (slow decay, correct for SAXS angles).
+For atomic-resolution PDB files, always use `foxs_formfactors.yaml`
+with `--excluded foxs` — this reproduces FoXS's χ² ≈ 0.29 on
+lysozyme.
+
+**PDB atom mapping:** for PDB files, pripps uses residue context
+to map each heavy atom to its united-atom form-factor type (e.g.
+ALA:CB → CH₃, LYS:NZ → NH₃), folding in implicit hydrogen
+scattering. This matching the approach used by FoXS
+(`FormFactorTable.cpp:679-715`).
 
 ## Command-line interface (Rust)
 
