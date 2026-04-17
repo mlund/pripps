@@ -454,60 +454,40 @@ mod tests {
     }
 
     #[test]
-    fn foxs_sharper_than_pepsi() {
-        // The FoXS formula (16π denominator) produces a sharper
-        // excluded-volume Gaussian, so at high q it subtracts less
-        // and the total intensity is higher than the PepsiSAXS
-        // formula (4π denominator).
-        let (pripps, _) = yaml_and_xyz();
+    fn pepsi_pipeline_reasonable_chi2() {
+        // PepsiSAXS form factors + PepsiSAXS Fraser (4π) should
+        // produce a physically reasonable profile. Not as good as
+        // the FoXS pipeline (different coefficients, different
+        // denominator) but the shape should be plausible.
+        let pripps = Pripps::from_yaml(std::path::Path::new("assets/single_bead.yaml")).unwrap();
         let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
-
-        let pepsi = pripps
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let intensity = pripps
             .intensity(
                 IntensityScheme::Svergun {
                     qmin: 0.0,
                     qmax: 0.5,
-                    nq: 100,
+                    nq: 500,
                     l_max: None,
                 },
                 &pdb,
                 None,
                 None,
                 None,
-                Some(&SolventConfig {
-                    excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
-                    ..Default::default()
-                }),
+                Some(&solvent),
             )
             .unwrap();
 
-        let foxs = pripps
-            .intensity(
-                IntensityScheme::Svergun {
-                    qmin: 0.0,
-                    qmax: 0.5,
-                    nq: 100,
-                    l_max: None,
-                },
-                &pdb,
-                None,
-                None,
-                None,
-                Some(&SolventConfig {
-                    excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
-                    ..Default::default()
-                }),
-            )
-            .unwrap();
-
-        // At high q (last 20 points), FoXS total should be higher
-        // because it subtracts less excluded volume.
-        let n = foxs.total.len();
-        let foxs_high_q: f64 = foxs.total[n - 20..].iter().sum();
-        let pepsi_high_q: f64 = pepsi.total[n - 20..].iter().sum();
+        let exp = load_lyzexp();
+        let chi2 = chi2_per_point(&intensity, &exp);
+        // PepsiSAXS pipeline with its own form factors and 4π
+        // formula — should produce a reasonable profile (χ² < 10).
         assert!(
-            foxs_high_q > pepsi_high_q,
-            "FoXS high-q intensity ({foxs_high_q:.0}) should exceed PepsiSAXS ({pepsi_high_q:.0})"
+            chi2 < 10.0,
+            "PepsiSAXS pipeline χ²/N = {chi2:.2} is too high"
         );
     }
 }

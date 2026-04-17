@@ -129,7 +129,7 @@ Supported form factor models:
 |-------|---------|---------|
 | Constant | `!Constant` | F(q) = c |
 | Polynomial | `!Polynomial` | F(q) = a + bq + cq² + … |
-| Gaussian | `!Gaussian` | F(q) = c + Σ aᵢ exp(−bᵢq²) |
+| Gaussian | `!Gaussian` | F(q) = c + Σ aᵢ exp(−bᵢs²), s = q/(4π) |
 | United atom | `!United` | F(q) = Fc(q) + Σ wᵢ Fᵢ(q) sinc(q rᵢ) |
 | Linear combination | `!Linear` | F(q) = Σ wᵢ Fᵢ(q) |
 | Tabulated | `!Table` | Array of [q, F] pairs |
@@ -150,16 +150,17 @@ hydrogens that the effective radius does not account for.
 
 | File | Description | Best for |
 |------|-------------|----------|
-| `assets/single_bead.yaml` | PepsiSAXS-derived Gaussians + coarse-grained residues | Cα / single-bead models |
-| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C) with FoXS-compatible volumes | Atomic PDB files |
+| `assets/single_bead.yaml` | PepsiSAXS coefficients + coarse-grained residues | Cα / single-bead models, `--excluded fraser` |
+| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files, `--excluded foxs` |
 
-**Important:** the two files use different Gaussian parameterisations.
-`single_bead.yaml` has b values in the q² convention (fast decay);
-`foxs_formfactors.yaml` has b values converted from the standard
-s² = (q/4π)² convention (slow decay, correct for SAXS angles).
-For atomic-resolution PDB files, always use `foxs_formfactors.yaml`
-with `--excluded foxs` — this reproduces FoXS's χ² ≈ 0.29 on
-lysozyme.
+Both files use Gaussian b values in the standard s² = (q/4π)²
+convention (International Tables / Cromer-Mann). The coefficients
+differ slightly (different parameterisations of the same physics)
+and the volume/radius tables match their respective tools.
+
+For atomic-resolution PDB files, use `foxs_formfactors.yaml` with
+`--excluded foxs` — this reproduces FoXS's χ²/N ≈ 0.29 on
+lysozyme (unfitted) and ≈ 0.20 (fitted with hydration).
 
 **PDB atom mapping:** for PDB files, pripps uses residue context
 to map each heavy atom to its united-atom form-factor type (e.g.

@@ -283,11 +283,15 @@ impl From<(&str, &AtomSpec)> for AtomKind {
     }
 }
 
-/// Evaluate Gaussian form factor, 𝐹(𝑞) = 𝑐 + ∑ 𝑎ᵢ exp(−𝑏ᵢ𝑞²)
+/// Evaluate Gaussian form factor, 𝐹(𝑞) = 𝑐 + ∑ 𝑎ᵢ exp(−𝑏ᵢ𝑠²)
+/// where 𝑠 = 𝑞/(4π) (the International Tables / Cromer-Mann
+/// convention). Both PepsiSAXS and FoXS use this convention;
+/// published 𝑏 values are always in 𝑠² units.
 #[inline]
 fn eval_gaussian(q: f64, ab: &[(f64, f64)], c: f64) -> f64 {
+    let s2 = q * q / (16.0 * std::f64::consts::PI * std::f64::consts::PI);
     ab.iter()
-        .map(|(a, b)| a * f64::exp(-b * q * q))
+        .map(|(a, b)| a * f64::exp(-b * s2))
         .sum::<f64>()
         .add(c)
 }
@@ -566,22 +570,37 @@ mod tests {
     }
 
     #[test]
-    fn single_gaussian_is_const_and_matches_full_gaussian() {
+    fn single_gaussian_evaluates_in_q2_convention() {
+        // SingleGaussian is for Fraser dummies — uses bare q²
+        // convention (NOT the Cromer-Mann s² convention that
+        // Gaussian uses). At q=0 both give F=a; at q>0 they
+        // differ because SingleGaussian decays faster.
         let a = 5.486;
         let b = 0.42;
         let single = FormFactor::single_gaussian(a, b);
-        let full = FormFactor::Gaussian {
-            qrange: (0.0, f64::INFINITY),
-            ab: vec![(a, b)],
-            c: 0.0,
-        };
-        for q in [0.0, 0.1, 0.25, 0.5, 1.0] {
-            assert_relative_eq!(single.eval(q).unwrap(), full.eval(q).unwrap());
-        }
-        // At q=0 the exponential is 1, so F(0) = a.
         assert_relative_eq!(single.eval(0.0).unwrap(), a);
+        // At q=0.5: a * exp(-b * 0.25) = 5.486 * exp(-0.105) = 4.939
+        let expected = a * (-b * 0.25_f64).exp();
+        assert_relative_eq!(single.eval(0.5).unwrap(), expected);
         // Const-constructible: this compiles at const position.
         const _: FormFactor = FormFactor::single_gaussian(1.0, 2.0);
+    }
+
+    #[test]
+    fn gaussian_evaluates_in_s2_convention() {
+        // Gaussian uses the International Tables s² = (q/(4π))²
+        // convention. At SAXS angles the form factor barely decays.
+        let ff = FormFactor::Gaussian {
+            qrange: (0.0, f64::INFINITY),
+            ab: vec![(6.0, 20.0)],
+            c: 0.0,
+        };
+        assert_relative_eq!(ff.eval(0.0).unwrap(), 6.0);
+        // At q=0.5: s² = 0.25/(16π²) ≈ 0.001583
+        // F = 6 * exp(-20 * 0.001583) = 6 * exp(-0.0317) ≈ 5.813
+        let s2 = 0.25 / (16.0 * std::f64::consts::PI * std::f64::consts::PI);
+        let expected = 6.0 * (-20.0 * s2).exp();
+        assert_relative_eq!(ff.eval(0.5).unwrap(), expected, epsilon = 1e-10);
     }
 
     #[test]
