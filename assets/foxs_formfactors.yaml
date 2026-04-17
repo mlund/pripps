@@ -61,11 +61,14 @@ CH3: { radius: 1.97, ff: !United { center: C, orbit: [[H, 1.059, 3]] } }
 CaromH: { radius: 1.73, ff: !United { center: C, orbit: [[H, 1.083, 1]] } }
 Csp2H:  { radius: 1.73, ff: !United { center: C, orbit: [[H, 1.077, 1]] } }
 
-NH:  { radius: 1.009, displaced_volume: 7.64, ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
-NH2: { radius: 1.45, ff: !United { center: N, orbit: [[H, 1.009, 2]] } }
-NH3: { radius: 1.62, ff: !United { center: N, orbit: [[H, 0.78508, 3]] } }
+# NH/SH radii derived from displaced volume: r = (3V/(4π))^(1/3),
+# matching FoXS's `get_radius` which computes the SASA sphere
+# radius from the excluded volume, not from the bond length.
+NH:  { radius: 1.222, displaced_volume: 7.64, ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
+NH2: { radius: 1.451, displaced_volume: 12.79, ff: !United { center: N, orbit: [[H, 1.009, 2]] } }
+NH3: { radius: 1.624, displaced_volume: 17.94, ff: !United { center: N, orbit: [[H, 0.78508, 3]] } }
 
-SH:  { radius: 1.43, displaced_volume: 25.01, ff: !United { center: S, orbit: [[H, 1.43, 1]] } }
+SH:  { radius: 1.814, displaced_volume: 25.01, ff: !United { center: S, orbit: [[H, 1.43, 1]] } }
 OH:  { radius: 1.50, ff: !United { center: O, orbit: [[H, 0.967, 1]] } }
 
 H2O: { radius: 1.93, ff: !United { center: O, orbit: [[H, 0.9584, 2]] } }
