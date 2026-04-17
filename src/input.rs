@@ -16,10 +16,12 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// A single atom extracted from an input file: species name plus Cartesian
-/// position (Å).
+/// position (Å). For PDB files `residue` carries the three-letter residue
+/// name (e.g. "ALA", "LYS"); for XYZ files it is `None`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AtomRecord {
     pub name: String,
+    pub residue: Option<String>,
     pub position: [f64; 3],
 }
 
@@ -106,8 +108,17 @@ fn parse_pdb<R: BufRead>(reader: R) -> Vec<AtomRecord> {
                 if raw_name.is_empty() {
                     continue;
                 }
+                let residue = {
+                    let r = extract_column(&line, 18, 20);
+                    if r.is_empty() {
+                        None
+                    } else {
+                        Some(r.to_string())
+                    }
+                };
                 atoms.push(AtomRecord {
                     name: normalize_atom_name(raw_name),
+                    residue,
                     position: [x, y, z],
                 });
             }
@@ -142,6 +153,7 @@ fn parse_xyz<R: BufRead>(reader: R) -> Vec<AtomRecord> {
         };
         atoms.push(AtomRecord {
             name: name.to_string(),
+            residue: None,
             position: [x, y, z],
         });
     }

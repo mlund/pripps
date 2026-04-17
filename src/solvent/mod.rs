@@ -73,7 +73,9 @@ impl ExcludedVolume {
     pub(crate) const fn volume_scale(&self) -> f64 {
         match self {
             Self::None => 0.0,
-            Self::Fraser { volume_scale } | Self::Grid { volume_scale, .. } => *volume_scale,
+            Self::Fraser { volume_scale }
+            | Self::FraserFoxs { volume_scale }
+            | Self::Grid { volume_scale, .. } => *volume_scale,
         }
     }
 }
@@ -120,6 +122,14 @@ pub enum ExcludedVolume {
     /// Gaussian-dummy excluded-volume model that CRYSOL and PepsiSAXS
     /// both build on.
     Fraser {
+        volume_scale: f64,
+    },
+    /// FoXS-style Fraser dummies: same per-atom Gaussians as
+    /// [`Fraser`] but with a 4× sharper exponential
+    /// (`V^(2/3)/(16π)` instead of `V^(2/3)/(4π)`). Subtracts less
+    /// excluded volume at high q, matching the FoXS/IMP-SAXS
+    /// convention (`FormFactorTable.cpp:285`).
+    FraserFoxs {
         volume_scale: f64,
     },
     /// Cartesian grid inside the molecular envelope. Alternative to
@@ -282,9 +292,20 @@ impl ExcludedVolume {
     ) -> Result<DummySet> {
         match self {
             Self::None => Ok(DummySet::default()),
-            Self::Fraser { volume_scale } => {
-                fraser::dummies(structure, formfactors, bulk_electron_density, *volume_scale)
-            }
+            Self::Fraser { volume_scale } => fraser::dummies(
+                structure,
+                formfactors,
+                bulk_electron_density,
+                *volume_scale,
+                fraser::PEPSI_DENOMINATOR,
+            ),
+            Self::FraserFoxs { volume_scale } => fraser::dummies(
+                structure,
+                formfactors,
+                bulk_electron_density,
+                *volume_scale,
+                fraser::FOXS_DENOMINATOR,
+            ),
             // Phase 2c.
             Self::Grid { .. } => Ok(DummySet::default()),
         }

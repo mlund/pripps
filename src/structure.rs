@@ -30,10 +30,120 @@ pub(crate) struct Structure {
     pub(crate) box_sides: Option<Vector3>,
 }
 
+/// Resolve a PDB atom to its united-atom form-factor name using
+/// residue context. Returns `None` if the (residue, atom) pair
+/// has no mapping — the caller falls back to atom-name-only lookup.
+//
+// The mapping is fixed biochemistry (standard amino acids), not
+// user-configurable, so it's a const lookup table rather than a
+// file. FoXS hardcodes the same table in
+// `FormFactorTable.cpp:679-715`.
+pub(crate) fn resolve_united_atom(residue: &str, atom: &str) -> Option<&'static str> {
+    // Per-residue sidechain overrides checked first. When a residue
+    // overrides a backbone atom (e.g. GLY:CA → CH2, PRO:N → N),
+    // the match returns before the backbone fallback.
+    let sidechain = match (residue, atom) {
+        // Glycine — CA has two H
+        ("GLY", "CA") => Some("CH2"),
+        // Proline — backbone N has no H
+        ("PRO", "N") => Some("N"),
+        // Alanine
+        ("ALA", "CB") => Some("CH3"),
+        // Arginine
+        ("ARG", "CB" | "CG" | "CD") => Some("CH2"),
+        ("ARG", "NE") => Some("NH"),
+        ("ARG", "CZ") => Some("C"),
+        ("ARG", "NH1" | "NH2") => Some("NH2"),
+        // Asparagine
+        ("ASN", "CB") => Some("CH2"),
+        ("ASN", "CG") => Some("C"),
+        ("ASN", "OD1") => Some("O"),
+        ("ASN", "ND2") => Some("NH2"),
+        // Aspartate
+        ("ASP", "CB") => Some("CH2"),
+        ("ASP", "CG") => Some("C"),
+        ("ASP", "OD1" | "OD2") => Some("O"),
+        // Cysteine
+        ("CYS", "CB") => Some("CH2"),
+        ("CYS", "SG") => Some("SH"),
+        // Glutamine
+        ("GLN", "CB" | "CG") => Some("CH2"),
+        ("GLN", "CD") => Some("C"),
+        ("GLN", "OE1") => Some("O"),
+        ("GLN", "NE2") => Some("NH2"),
+        // Glutamate
+        ("GLU", "CB" | "CG") => Some("CH2"),
+        ("GLU", "CD") => Some("C"),
+        ("GLU", "OE1" | "OE2") => Some("O"),
+        // Histidine
+        ("HIS", "CB") => Some("CH2"),
+        ("HIS", "CG") => Some("C"),
+        ("HIS", "ND1") => Some("N"),
+        ("HIS", "CD2" | "CE1") => Some("CaromH"),
+        ("HIS", "NE2") => Some("NH"),
+        // Isoleucine
+        ("ILE", "CB") => Some("CH"),
+        ("ILE", "CG1") => Some("CH2"),
+        ("ILE", "CG2" | "CD1") => Some("CH3"),
+        // Leucine
+        ("LEU", "CB") => Some("CH2"),
+        ("LEU", "CG") => Some("CH"),
+        ("LEU", "CD1" | "CD2") => Some("CH3"),
+        // Lysine
+        ("LYS", "CB" | "CG" | "CD" | "CE") => Some("CH2"),
+        ("LYS", "NZ") => Some("NH3"),
+        // Methionine
+        ("MET", "CB" | "CG") => Some("CH2"),
+        ("MET", "SD") => Some("S"),
+        ("MET", "CE") => Some("CH3"),
+        // Phenylalanine
+        ("PHE", "CB") => Some("CH2"),
+        ("PHE", "CG") => Some("C"),
+        ("PHE", "CD1" | "CD2" | "CE1" | "CE2" | "CZ") => Some("CaromH"),
+        // Proline sidechain
+        ("PRO", "CB" | "CG" | "CD") => Some("CH2"),
+        // Serine
+        ("SER", "CB") => Some("CH2"),
+        ("SER", "OG") => Some("O"),
+        // Threonine
+        ("THR", "CB") => Some("CH"),
+        ("THR", "OG1") => Some("O"),
+        ("THR", "CG2") => Some("CH3"),
+        // Tryptophan
+        ("TRP", "CB") => Some("CH2"),
+        ("TRP", "CG" | "CD2" | "CE2") => Some("C"),
+        ("TRP", "CD1" | "CE3" | "CZ2" | "CZ3" | "CH2") => Some("CaromH"),
+        ("TRP", "NE1") => Some("NH"),
+        // Tyrosine
+        ("TYR", "CB") => Some("CH2"),
+        ("TYR", "CG" | "CZ") => Some("C"),
+        ("TYR", "CD1" | "CD2" | "CE1" | "CE2") => Some("CaromH"),
+        ("TYR", "OH") => Some("O"),
+        // Valine
+        ("VAL", "CB") => Some("CH"),
+        ("VAL", "CG1" | "CG2") => Some("CH3"),
+        _ => None,
+    };
+
+    // Backbone atoms shared by all standard residues (except where
+    // overridden above: GLY:CA, PRO:N).
+    sidechain.or(match atom {
+        "N" => Some("NH"),
+        "CA" => Some("CH"),
+        "C" => Some("C"),
+        "O" | "OXT" => Some("O"),
+        _ => None,
+    })
+}
+
 impl Structure {
-    /// Construct a structure from a PDB or XYZ file. Each atom name is
-    /// looked up in the provided [`AtomKind`] slice; the slice index
-    /// is the kind's id inside the structure. Unknown atom names error.
+    /// Construct a structure from a PDB or XYZ file. Each atom is
+    /// looked up by name in `atomkinds`. For PDB files, the lookup
+    /// first tries [`resolve_united_atom`] with residue context to
+    /// map heavy atoms to their united-atom form-factor type (e.g.
+    /// LYS:CB → CH₂), falling back to atom-name-only lookup for
+    /// atoms not in the table or for XYZ files (which have no
+    /// residue context).
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
         let atoms = read_structure(path)?;
 
@@ -41,8 +151,14 @@ impl Structure {
         let mut ids = Vec::with_capacity(atoms.len());
 
         for atom in atoms {
+            let resolved_name = atom
+                .residue
+                .as_deref()
+                .and_then(|res| resolve_united_atom(res, &atom.name))
+                .unwrap_or(&atom.name);
+
             let id = atomkinds
-                .find_name(&atom.name)
+                .find_name(resolved_name)
                 .ok_or_else(|| Error::UnknownAtom(atom.name.clone()))?;
             pos.push(Vector3::new(
                 atom.position[0],

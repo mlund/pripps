@@ -144,6 +144,14 @@ displaced volume is automatically derived as the sphere volume
 groups (e.g. NH, SH) where the displaced volume includes implicit
 hydrogens that the effective radius does not account for.
 
+**Note on PDB atom mapping:** pripps maps PDB atom names to form
+factors by name alone (e.g. `CB → CH2`). Tools like FoXS use
+residue context to choose the right united-atom group (e.g. ALA:CB →
+CH₃ vs ILE:CB → CH). This means pripps's atom-name-only aliases are
+approximate for atomic-resolution structures. For best results with
+PDB files, consider providing a YAML with residue-specific entries
+or using a coarse-grained (Cα) representation.
+
 ## Command-line interface (Rust)
 
 ### Installing

@@ -23,28 +23,39 @@ use crate::solvent::DummySet;
 use crate::{Error, Result, Structure};
 use std::f64::consts::PI;
 
-/// Build the Fraser-MacRae-Suzuki Gaussian dummy form factor for a
-/// dummy of displaced volume `volume` in a solvent of electron
-/// density `bulk_electron_density`:
+/// PepsiSAXS Fraser denominator: 4π.
+pub(super) const PEPSI_DENOMINATOR: f64 = 4.0 * PI;
+
+/// FoXS Fraser denominator: 16π. Produces a 4× sharper Gaussian
+/// that subtracts less excluded volume at high q.
+// FoXS `FormFactorTable.cpp:285`: `volr_coeff = -pow(V, 2/3) / (16*PI)`
+pub(super) const FOXS_DENOMINATOR: f64 = 16.0 * PI;
+
+/// Build the Fraser-MacRae-Suzuki Gaussian dummy form factor.
+/// `denominator` controls the Gaussian width: 4π for PepsiSAXS,
+/// 16π for FoXS.
 ///
 /// ```text
-/// F(q) = ρ_s · V · exp(−V^(2/3) · q² / (4π))
+/// F(q) = ρ_s · V · exp(−V^(2/3) · q² / denominator)
 /// ```
-fn fraser_form_factor(volume: f64, bulk_electron_density: f64) -> FormFactor {
+fn fraser_form_factor(volume: f64, bulk_electron_density: f64, denominator: f64) -> FormFactor {
     FormFactor::single_gaussian(
         bulk_electron_density * volume,
-        volume.powf(2.0 / 3.0) / (4.0 * PI),
+        volume.powf(2.0 / 3.0) / denominator,
     )
 }
 
 /// One Gaussian dummy per protein atom, per Fraser-MacRae-Suzuki.
-/// Errors if any atom kind referenced by the structure is missing
+/// `denominator` selects the formula variant (see
+/// [`PEPSI_DENOMINATOR`] / [`FOXS_DENOMINATOR`]). Errors if any
+/// atom kind referenced by the structure is missing
 /// `displaced_volume`.
 pub(super) fn dummies(
     structure: &Structure,
     formfactors: &FormFactorMap,
     bulk_electron_density: f64,
     volume_scale: f64,
+    denominator: f64,
 ) -> Result<DummySet> {
     let mut positions = Vec::with_capacity(structure.pos.len());
     let mut form_factors = Vec::with_capacity(structure.pos.len());
@@ -63,7 +74,11 @@ pub(super) fn dummies(
         })?;
         let volume = volume_scale * base_volume;
         positions.push(pos);
-        form_factors.push(fraser_form_factor(volume, bulk_electron_density));
+        form_factors.push(fraser_form_factor(
+            volume,
+            bulk_electron_density,
+            denominator,
+        ));
     }
 
     DummySet::per_dummy(positions, form_factors)
@@ -103,7 +118,7 @@ mod tests {
     fn generates_one_dummy_per_atom() {
         let ff = one_kind_map(Some(16.43));
         let s = three_atom_structure();
-        let dummies = dummies(&s, &ff, 0.334, 1.0).unwrap();
+        let dummies = dummies(&s, &ff, 0.334, 1.0, PEPSI_DENOMINATOR).unwrap();
         assert_eq!(dummies.positions().len(), 3);
         assert_eq!(eval_all(&dummies, 0.0).len(), 3);
         assert_eq!(dummies.positions()[1], Vector3::new(1.0, 0.0, 0.0));
@@ -115,7 +130,7 @@ mod tests {
         let v = 16.43;
         let ff = one_kind_map(Some(v));
         let s = three_atom_structure();
-        let dummies = dummies(&s, &ff, rho, 1.0).unwrap();
+        let dummies = dummies(&s, &ff, rho, 1.0, PEPSI_DENOMINATOR).unwrap();
         for f in eval_all(&dummies, 0.0) {
             assert_eq!(f, rho * v);
         }
@@ -127,8 +142,8 @@ mod tests {
         let v = 16.43;
         let ff = one_kind_map(Some(v));
         let s = three_atom_structure();
-        let d1 = dummies(&s, &ff, rho, 1.0).unwrap();
-        let d2 = dummies(&s, &ff, rho, 2.0).unwrap();
+        let d1 = dummies(&s, &ff, rho, 1.0, PEPSI_DENOMINATOR).unwrap();
+        let d2 = dummies(&s, &ff, rho, 2.0, PEPSI_DENOMINATOR).unwrap();
         assert_eq!(eval_all(&d2, 0.0)[0], 2.0 * eval_all(&d1, 0.0)[0]);
     }
 
@@ -136,7 +151,7 @@ mod tests {
     fn missing_displaced_volume_errors_with_kind_name() {
         let ff = one_kind_map(None);
         let s = three_atom_structure();
-        let err = dummies(&s, &ff, 0.334, 1.0).unwrap_err();
+        let err = dummies(&s, &ff, 0.334, 1.0, PEPSI_DENOMINATOR).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("atom kind C"), "expected kind name in: {msg}");
     }

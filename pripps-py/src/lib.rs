@@ -100,9 +100,10 @@ fn solvent_from_kwargs(
     let excluded = match excluded {
         "none" => ExcludedVolume::None,
         "fraser" => ExcludedVolume::Fraser { volume_scale },
+        "foxs" => ExcludedVolume::FraserFoxs { volume_scale },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown excluded-volume model: {other} (expected `none` or `fraser`)"
+                "unknown excluded-volume model: {other} (expected `none`, `fraser`, or `foxs`)"
             )));
         }
     };

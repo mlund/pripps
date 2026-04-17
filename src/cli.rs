@@ -103,6 +103,7 @@ pub enum Commands {
 pub enum ExcludedKind {
     None,
     Fraser,
+    Foxs,
 }
 
 /// Which hydration-shell generator to use. Mirrors the active
@@ -212,6 +213,7 @@ fn command_to_scheme(
                 excluded: match excluded {
                     ExcludedKind::None => ExcludedVolume::None,
                     ExcludedKind::Fraser => ExcludedVolume::Fraser { volume_scale },
+                    ExcludedKind::Foxs => ExcludedVolume::FraserFoxs { volume_scale },
                 },
                 hydration: match hydration {
                     HydrationKind::None => Hydration::None,
