@@ -67,36 +67,29 @@ pub enum Commands {
         /// auto-computed from the structure's extent and qmax.
         #[clap(long)]
         lmax: Option<usize>,
-        /// Excluded-volume model. `none` (default) skips the
-        /// excluded-volume correction; `fraser` enables
-        /// Fraser-MacRae-Suzuki Gaussian dummies.
+        /// Excluded-volume model
         #[clap(long, value_enum, default_value_t = ExcludedKind::Disabled)]
         excluded: ExcludedKind,
-        /// Global scale on the excluded-volume displaced volumes.
-        /// PepsiSAXS calls this `r0`; typical range is 0.95–1.05.
+        /// Scale on excluded-volume displaced volumes (PepsiSAXS `r0`)
         #[clap(long, default_value = "1.0")]
         volume_scale: f64,
-        /// Bulk solvent electron density in e/Å³. Pure water is 0.334.
+        /// Bulk solvent electron density (e/Å³)
         #[clap(long, default_value = "0.334")]
         bulk_electron_density: f64,
-        /// Hydration-shell model. `none` (default) skips it;
-        /// `sasa` places per-atom water dummies weighted by SASA;
-        /// `grid` places water on a Cartesian grid in a shell
-        /// around the molecular envelope (PepsiSAXS-style).
+        /// Hydration-shell model
         #[clap(long, value_enum, default_value_t = HydrationKind::Disabled)]
         hydration: HydrationKind,
-        /// Water probe radius (Å) used for SASA/grid shell.
+        /// Water probe radius (Å) for SASA/grid shell
         #[clap(long, default_value = "1.8")]
         probe: f64,
-        /// Grid spacing (Å) for `--hydration grid`.
+        /// Grid spacing (Å) for `--hydration grid`
         #[clap(long, default_value = "1.5")]
         spacing: f64,
-        /// Shell thickness (Å) for `--hydration grid`.
+        /// Shell thickness (Å) for `--hydration grid`
         #[clap(long, default_value = "3.0")]
         thickness: f64,
-        /// Excess electron density of the hydration shell over bulk
-        /// solvent (e/Å³). Typical values: ~0.03 for SASA (FoXS `c₂`),
-        /// ~0.017 for grid (PepsiSAXS default: 5% of bulk density).
+        /// Hydration shell excess electron density (e/Å³).
+        /// ~0.03 for SASA, ~0.017 for grid
         #[clap(long, default_value = "0.03")]
         contrast_density: f64,
     },
