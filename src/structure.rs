@@ -175,6 +175,17 @@ impl Structure {
         })
     }
 
+    /// Axis-aligned bounding box of all atom positions.
+    pub(crate) fn bounding_box(&self) -> (Vector3, Vector3) {
+        let mut lo = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut hi = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for p in &self.pos {
+            lo = lo.inf(p);
+            hi = hi.sup(p);
+        }
+        (lo, hi)
+    }
+
     /// Refresh positions and box sides from a trajectory frame.
     pub fn set_positions(&mut self, frame: &Frame) -> Result<()> {
         if frame.natoms() != self.pos.len() {

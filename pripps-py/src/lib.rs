@@ -98,7 +98,7 @@ fn solvent_from_kwargs(
     bulk_electron_density: f64,
 ) -> PyResult<SolventConfig> {
     let excluded = match excluded {
-        "none" => ExcludedVolume::None,
+        "none" | "disabled" => ExcludedVolume::Disabled,
         "fraser" => ExcludedVolume::Fraser { volume_scale },
         "foxs" => ExcludedVolume::FraserFoxs { volume_scale },
         other => {
@@ -108,14 +108,19 @@ fn solvent_from_kwargs(
         }
     };
     let hydration = match hydration {
-        "none" => Hydration::None,
+        "none" | "disabled" => Hydration::Disabled,
         "sasa" => Hydration::Sasa {
             probe,
             contrast_density,
         },
+        "grid" => Hydration::Grid {
+            spacing: 1.5,
+            thickness: 3.0,
+            contrast_density,
+        },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown hydration model: {other} (expected `none` or `sasa`)"
+                "unknown hydration model: {other} (expected `none`, `sasa`, or `grid`)"
             )));
         }
     };

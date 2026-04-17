@@ -98,8 +98,8 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `excluded` | `"none"`, `"fraser"`, `"foxs"` | Excluded-volume model |
-| `hydration` | `"none"`, `"sasa"` | Hydration-shell model |
+| `excluded` | `"disabled"`, `"fraser"`, `"foxs"` | Excluded-volume model |
+| `hydration` | `"disabled"`, `"sasa"`, `"grid"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `contrast_density` | float (default 0.03) | Scales hydration shell (FoXS `c₂`) |
 | `probe` | float (default 1.8) | SASA probe radius in Å |

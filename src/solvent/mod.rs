@@ -30,6 +30,7 @@
 //! Voronoi variants).
 
 mod fraser;
+mod grid;
 mod sasa;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
@@ -49,8 +50,8 @@ pub struct SolventConfig {
 impl Default for SolventConfig {
     fn default() -> Self {
         Self {
-            excluded: ExcludedVolume::None,
-            hydration: Hydration::None,
+            excluded: ExcludedVolume::Disabled,
+            hydration: Hydration::Disabled,
             bulk_electron_density: 0.334,
         }
     }
@@ -61,7 +62,8 @@ impl SolventConfig {
     /// three-contribution path is skipped entirely for the all-`None`
     /// config so vacuum callers pay nothing.
     pub(crate) const fn is_active(&self) -> bool {
-        !matches!(self.excluded, ExcludedVolume::None) || !matches!(self.hydration, Hydration::None)
+        !matches!(self.excluded, ExcludedVolume::Disabled)
+            || !matches!(self.hydration, Hydration::Disabled)
     }
 }
 
@@ -72,7 +74,7 @@ impl ExcludedVolume {
     // PepsiSAXS fit parameter `r0` in cSAS.cpp.
     pub(crate) const fn volume_scale(&self) -> f64 {
         match self {
-            Self::None => 0.0,
+            Self::Disabled => 0.0,
             Self::Fraser { volume_scale }
             | Self::FraserFoxs { volume_scale }
             | Self::Grid { volume_scale, .. } => *volume_scale,
@@ -92,7 +94,7 @@ impl Hydration {
     // density interpretation.
     pub(crate) const fn contrast_density(&self) -> f64 {
         match self {
-            Self::None => 0.0,
+            Self::Disabled => 0.0,
             Self::Grid {
                 contrast_density, ..
             }
@@ -111,7 +113,7 @@ impl Hydration {
 /// [`ExcludedVolume::dummies`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExcludedVolume {
-    None,
+    Disabled,
     /// One Gaussian dummy atom at each protein atom center, with
     /// displaced volume taken from `AtomKind.dsv`. `volume_scale`
     /// globally scales every dummy's volume and is the primary fit
@@ -144,7 +146,7 @@ pub enum ExcludedVolume {
 /// How the hydration shell is represented.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Hydration {
-    None,
+    Disabled,
     /// Grid points in a shell of `thickness` around the molecular
     /// envelope. `contrast_density` is the excess electron density
     /// of the hydration layer over bulk solvent, in e/Å³.
@@ -291,7 +293,7 @@ impl ExcludedVolume {
         bulk_electron_density: f64,
     ) -> Result<DummySet> {
         match self {
-            Self::None => Ok(DummySet::default()),
+            Self::Disabled => Ok(DummySet::default()),
             Self::Fraser { volume_scale } => fraser::dummies(
                 structure,
                 formfactors,
@@ -319,10 +321,21 @@ impl Hydration {
         formfactors: &FormFactorMap,
     ) -> Result<DummySet> {
         match self {
-            Self::None => Ok(DummySet::default()),
+            Self::Disabled => Ok(DummySet::default()),
             Self::Sasa { probe, .. } => sasa::dummies(structure, formfactors, *probe),
-            // Phase 2c / 2d.
-            Self::Grid { .. } | Self::Voronoi { .. } => Ok(DummySet::default()),
+            Self::Grid {
+                spacing, thickness, ..
+            } => {
+                // Grid shell uses the same probe as SASA. The probe
+                // lives on the CLI --probe flag; for Grid it's passed
+                // through the SolventConfig-level `probe` parameter
+                // which isn't on this variant yet, so we read from
+                // the spacing-adjacent parameters. TODO: add probe
+                // to Grid variant. For now, use Pepsi's default of 3.0.
+                grid::dummies(structure, formfactors, *spacing, *thickness, 3.0)
+            }
+            // Phase 2d.
+            Self::Voronoi { .. } => Ok(DummySet::default()),
         }
     }
 }
@@ -334,8 +347,8 @@ mod tests {
     #[test]
     fn default_is_inert() {
         let cfg = SolventConfig::default();
-        assert!(matches!(cfg.excluded, ExcludedVolume::None));
-        assert!(matches!(cfg.hydration, Hydration::None));
+        assert!(matches!(cfg.excluded, ExcludedVolume::Disabled));
+        assert!(matches!(cfg.hydration, Hydration::Disabled));
         assert!(!cfg.is_active());
     }
 

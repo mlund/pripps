@@ -70,7 +70,7 @@ pub enum Commands {
         /// Excluded-volume model. `none` (default) skips the
         /// excluded-volume correction; `fraser` enables
         /// Fraser-MacRae-Suzuki Gaussian dummies.
-        #[clap(long, value_enum, default_value_t = ExcludedKind::None)]
+        #[clap(long, value_enum, default_value_t = ExcludedKind::Disabled)]
         excluded: ExcludedKind,
         /// Global scale on the excluded-volume displaced volumes.
         /// PepsiSAXS calls this `r0`; typical range is 0.95–1.05.
@@ -80,15 +80,20 @@ pub enum Commands {
         #[clap(long, default_value = "0.334")]
         bulk_electron_density: f64,
         /// Hydration-shell model. `none` (default) skips it;
-        /// `sasa` places one water dummy per protein atom,
-        /// weighted by solvent-accessible surface area
-        /// (voronota-ltr tessellation).
-        #[clap(long, value_enum, default_value_t = HydrationKind::None)]
+        /// `sasa` places per-atom water dummies weighted by SASA;
+        /// `grid` places water on a Cartesian grid in a shell
+        /// around the molecular envelope (PepsiSAXS-style).
+        #[clap(long, value_enum, default_value_t = HydrationKind::Disabled)]
         hydration: HydrationKind,
-        /// Water probe radius (Å) used for the SASA tessellation.
-        /// FoXS default is 1.8.
+        /// Water probe radius (Å) used for SASA/grid shell.
         #[clap(long, default_value = "1.8")]
         probe: f64,
+        /// Grid spacing (Å) for `--hydration grid`.
+        #[clap(long, default_value = "1.5")]
+        spacing: f64,
+        /// Shell thickness (Å) for `--hydration grid`.
+        #[clap(long, default_value = "3.0")]
+        thickness: f64,
         /// Dimensionless scale on the hydration-shell contribution.
         /// FoXS calls this `c₂`; 0.03 is a typical excess-water
         /// density baseline.
@@ -101,7 +106,8 @@ pub enum Commands {
 /// [`ExcludedVolume`] minus the `Grid` variant (Phase 2c).
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum ExcludedKind {
-    None,
+    #[value(alias = "none")]
+    Disabled,
     Fraser,
     Foxs,
 }
@@ -111,8 +117,10 @@ pub enum ExcludedKind {
 /// `Voronoi` land in later phases).
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum HydrationKind {
-    None,
+    #[value(alias = "none")]
+    Disabled,
     Sasa,
+    Grid,
 }
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
@@ -207,18 +215,25 @@ fn command_to_scheme(
             bulk_electron_density,
             hydration,
             probe,
+            spacing,
+            thickness,
             contrast_density,
         } => {
             let solvent = SolventConfig {
                 excluded: match excluded {
-                    ExcludedKind::None => ExcludedVolume::None,
+                    ExcludedKind::Disabled => ExcludedVolume::Disabled,
                     ExcludedKind::Fraser => ExcludedVolume::Fraser { volume_scale },
                     ExcludedKind::Foxs => ExcludedVolume::FraserFoxs { volume_scale },
                 },
                 hydration: match hydration {
-                    HydrationKind::None => Hydration::None,
+                    HydrationKind::Disabled => Hydration::Disabled,
                     HydrationKind::Sasa => Hydration::Sasa {
                         probe,
+                        contrast_density,
+                    },
+                    HydrationKind::Grid => Hydration::Grid {
+                        spacing,
+                        thickness,
                         contrast_density,
                     },
                 },
