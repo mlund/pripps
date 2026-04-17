@@ -23,13 +23,13 @@ uv pip install -e .          # with uv (recommended)
 ```python
 import pripps
 
-pr = pripps.Pripps(atomfile="assets/single_bead.yaml")
+pr = pripps.Pripps(atomfile="assets/foxs_formfactors.yaml")
 model = pr.svergun_model(
-    structure_file="tests/4lzt/4lzt.pdb",
+    structure_file="tests/lysozyme/6lyz.pdb",
     qmin=0.0,
     qmax=0.5,
-    nq=100,
-    excluded="fraser",       # Fraser-MacRae-Suzuki excluded volume
+    nq=500,
+    excluded="foxs",         # FoXS-style excluded volume (16π Fraser)
     volume_scale=1.0,        # fit knob c₁ (scales excluded volume)
     hydration="sasa",        # FoXS-style SASA-weighted hydration shell
     probe=1.8,               # SASA probe radius (Å)
@@ -61,7 +61,8 @@ contrast_density)` call re-runs only the cheap coefficient-level
 combine — fast enough for scipy or a grid search.
 
 A full working example is in `pripps-py/examples/fit_lysozyme.py`,
-which fits the shipped `tests/4lzt/SASDMF2.dat` dataset:
+which fits lysozyme against the shipped `tests/lysozyme/lyzexp.dat`
+experimental dataset and reproduces FoXS's χ²/N ≈ 0.20:
 
 ```sh
 python pripps-py/examples/fit_lysozyme.py
@@ -73,6 +74,7 @@ The core pattern:
 import numpy as np
 from scipy.optimize import minimize
 
+# experimental data: q (Å⁻¹), I(q), σ(q)
 data = np.loadtxt("experimental.dat", comments="#")
 q_exp, i_exp, sigma = data[:, 0], data[:, 1], data[:, 2]
 
@@ -85,11 +87,11 @@ def chi2(params):
 
 result = minimize(
     chi2,
-    x0=[1.0, 0.03],
-    bounds=[(0.95, 1.05), (-0.05, 0.1)],
+    x0=[1.0, 0.2],
+    bounds=[(0.95, 1.12), (-2.0, 4.0)],
     method="L-BFGS-B",
 )
-print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.2f}")
+print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 ```
 
 ### Solvent models

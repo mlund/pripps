@@ -266,7 +266,7 @@ mod tests {
 
     fn yaml_and_xyz() -> (Pripps, std::path::PathBuf) {
         let yaml = std::path::Path::new("assets/single_bead.yaml");
-        let xyz = std::path::PathBuf::from("tests/4lzt/4lzt.xyz");
+        let xyz = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         (Pripps::from_yaml(yaml).unwrap(), xyz)
     }
 
@@ -361,7 +361,7 @@ mod tests {
 
     /// Load the experimental profile `lyzexp.dat` as (q, I, sigma).
     fn load_lyzexp() -> Vec<(f64, f64, f64)> {
-        std::fs::read_to_string("tests/4lzt/lyzexp.dat")
+        std::fs::read_to_string("tests/lysozyme/lyzexp.dat")
             .expect("lyzexp.dat")
             .lines()
             .filter(|l| !l.starts_with(|c: char| c.is_alphabetic()) && !l.is_empty())
@@ -422,7 +422,7 @@ mod tests {
         // Fraser formula, pripps should match.
         let pripps =
             Pripps::from_yaml(std::path::Path::new("assets/foxs_formfactors.yaml")).unwrap();
-        let pdb = std::path::PathBuf::from("tests/4lzt/6lyz.pdb");
+        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
             ..Default::default()
@@ -460,7 +460,7 @@ mod tests {
         // and the total intensity is higher than the PepsiSAXS
         // formula (4π denominator).
         let (pripps, _) = yaml_and_xyz();
-        let pdb = std::path::PathBuf::from("tests/4lzt/6lyz.pdb");
+        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
 
         let pepsi = pripps
             .intensity(

@@ -15,7 +15,7 @@ class TestSvergunModel(unittest.TestCase):
     def test_prepare_and_call(self):
         pr = pripps.Pripps("../assets/single_bead.yaml")
         fit = pr.svergun_model(
-            "../tests/4lzt/4lzt.xyz",
+            "../tests/lysozyme/4lzt.xyz",
             qmin=0.0,
             qmax=0.5,
             nq=50,
@@ -31,7 +31,7 @@ class TestSvergunModel(unittest.TestCase):
     def test_refit_produces_different_curves(self):
         pr = pripps.Pripps("../assets/single_bead.yaml")
         fit = pr.svergun_model(
-            "../tests/4lzt/4lzt.xyz",
+            "../tests/lysozyme/4lzt.xyz",
             qmin=0.0,
             qmax=0.5,
             nq=50,
@@ -46,7 +46,7 @@ class TestSvergunModel(unittest.TestCase):
         pr = pripps.Pripps("../assets/single_bead.yaml")
         with self.assertRaises(ValueError) as ctx:
             pr.svergun_model(
-                "../tests/4lzt/4lzt.xyz",
+                "../tests/lysozyme/4lzt.xyz",
                 qmin=0.0,
                 qmax=0.5,
                 nq=10,
