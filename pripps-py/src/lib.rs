@@ -33,6 +33,8 @@ impl PyPripps {
         volume_scale = 1.0,
         hydration = "none",
         probe = 1.8,
+        spacing = 1.5,
+        thickness = 3.0,
         contrast_density = 0.03,
         bulk_electron_density = 0.334,
     ))]
@@ -47,6 +49,8 @@ impl PyPripps {
         volume_scale: f64,
         hydration: &str,
         probe: f64,
+        spacing: f64,
+        thickness: f64,
         contrast_density: f64,
         bulk_electron_density: f64,
     ) -> PyResult<PySvergunModel> {
@@ -55,6 +59,8 @@ impl PyPripps {
             volume_scale,
             hydration,
             probe,
+            spacing,
+            thickness,
             contrast_density,
             bulk_electron_density,
         )?;
@@ -89,11 +95,14 @@ impl PySvergunModel {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn solvent_from_kwargs(
     excluded: &str,
     volume_scale: f64,
     hydration: &str,
     probe: f64,
+    spacing: f64,
+    thickness: f64,
     contrast_density: f64,
     bulk_electron_density: f64,
 ) -> PyResult<SolventConfig> {
@@ -114,8 +123,9 @@ fn solvent_from_kwargs(
             contrast_density,
         },
         "grid" => Hydration::Grid {
-            spacing: 1.5,
-            thickness: 3.0,
+            spacing,
+            thickness,
+            probe,
             contrast_density,
         },
         other => {

@@ -34,7 +34,46 @@ mod grid;
 mod sasa;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
-use crate::{Result, Structure, Vector3};
+use crate::{Error, Result, Structure, Vector3};
+
+pub(super) const WATER_KIND_NAME: &str = "H2O";
+
+/// Per-atom `(position, radius)` extracted from the structure and
+/// form-factor map. Radius = `sigma / 2` (YAML `radius` is stored
+/// doubled as `sigma` at parse time).
+fn atom_radii(
+    structure: &Structure,
+    formfactors: &FormFactorMap,
+    caller: &str,
+) -> Result<Vec<(Vector3, f64)>> {
+    structure
+        .ids
+        .iter()
+        .zip(&structure.pos)
+        .map(|(&id, &pos)| -> Result<(Vector3, f64)> {
+            let kind = formfactors.kind(id);
+            let sigma = kind.sigma().ok_or_else(|| {
+                Error::validation(format!(
+                    "atom kind {} has no `radius`; required by {caller}",
+                    kind.name()
+                ))
+            })?;
+            Ok((pos, sigma * 0.5))
+        })
+        .collect()
+}
+
+/// Look up the shared water form factor from the form-factor map.
+fn water_form_factor(formfactors: &FormFactorMap, caller: &str) -> Result<FormFactor> {
+    formfactors
+        .form_factor_by_name(WATER_KIND_NAME)
+        .ok_or_else(|| {
+            Error::validation(format!(
+                "{caller} requires an `{WATER_KIND_NAME}` entry in the form-factor YAML"
+            ))
+        })
+        .cloned()
+}
 
 /// Top-level solvent model passed to [`crate::Pripps::intensity`].
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +192,7 @@ pub enum Hydration {
     Grid {
         spacing: f64,
         thickness: f64,
+        probe: f64,
         contrast_density: f64,
     },
     /// FoXS-style SASA-weighted hydration shell — see
@@ -308,7 +348,6 @@ impl ExcludedVolume {
                 *volume_scale,
                 fraser::FOXS_DENOMINATOR,
             ),
-            // Phase 2c.
             Self::Grid { .. } => Ok(DummySet::default()),
         }
     }
@@ -324,17 +363,11 @@ impl Hydration {
             Self::Disabled => Ok(DummySet::default()),
             Self::Sasa { probe, .. } => sasa::dummies(structure, formfactors, *probe),
             Self::Grid {
-                spacing, thickness, ..
-            } => {
-                // Grid shell uses the same probe as SASA. The probe
-                // lives on the CLI --probe flag; for Grid it's passed
-                // through the SolventConfig-level `probe` parameter
-                // which isn't on this variant yet, so we read from
-                // the spacing-adjacent parameters. TODO: add probe
-                // to Grid variant. For now, use Pepsi's default of 3.0.
-                grid::dummies(structure, formfactors, *spacing, *thickness, 3.0)
-            }
-            // Phase 2d.
+                spacing,
+                thickness,
+                probe,
+                ..
+            } => grid::dummies(structure, formfactors, *spacing, *thickness, *probe),
             Self::Voronoi { .. } => Ok(DummySet::default()),
         }
     }

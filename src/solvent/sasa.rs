@@ -25,40 +25,19 @@ use std::f64::consts::PI;
 use voronota_ltr::{Ball, Results, compute_tessellation};
 
 use crate::formfactor::FormFactorMap;
-use crate::solvent::DummySet;
-use crate::{Error, Result, Structure};
+use crate::solvent::{DummySet, atom_radii, water_form_factor};
+use crate::{Result, Structure};
 
-/// Name of the atom kind whose form factor is used as the shared
-/// water `f_water(q)` for every dummy in the hydration shell.
-const WATER_KIND_NAME: &str = "H2O";
-
-/// SASA hydration: one dummy per protein atom at the atom's
-/// position, carrying a per-atom accessibility weight, all sharing
-/// the water form factor from the `H2O` entry of the form-factor
-/// map.
 pub(super) fn dummies(
     structure: &Structure,
     formfactors: &FormFactorMap,
     probe: f64,
 ) -> Result<DummySet> {
-    let balls: Vec<Ball> = structure
-        .ids
+    let atoms = atom_radii(structure, formfactors, "Hydration::Sasa")?;
+    let balls: Vec<Ball> = atoms
         .iter()
-        .zip(&structure.pos)
-        .map(|(&id, pos)| -> Result<Ball> {
-            let kind = formfactors.kind(id);
-            let sigma = kind.sigma().ok_or_else(|| {
-                Error::validation(format!(
-                    "atom kind {} has no `radius`; required by Hydration::Sasa",
-                    kind.name()
-                ))
-            })?;
-            // `AtomKind.sigma` stores 2 × radius (the YAML `radius`
-            // field doubled at parse time), so halve it to get the
-            // voronota ball radius.
-            Ok(Ball::new(pos.x, pos.y, pos.z, sigma * 0.5))
-        })
-        .collect::<Result<_>>()?;
+        .map(|(pos, r)| Ball::new(pos.x, pos.y, pos.z, *r))
+        .collect();
 
     // One tessellation pass gives per-atom accessible surface area.
     // `None` means the atom's Voronoi cell is unbounded — i.e. it
@@ -81,19 +60,7 @@ pub(super) fn dummies(
         })
         .collect();
 
-    // Clone the water form factor into the `DummySet`. Only happens
-    // once per structure (not once per atom) because the `Weighted`
-    // DummySet shape shares one form factor across every dummy —
-    // that's the whole point of the two-variant split in
-    // `DummyFormFactors`.
-    let water = formfactors
-        .form_factor_by_name(WATER_KIND_NAME)
-        .ok_or_else(|| {
-            Error::validation(format!(
-                "Hydration::Sasa requires an `{WATER_KIND_NAME}` entry in the form-factor YAML"
-            ))
-        })?
-        .clone();
+    let water = water_form_factor(formfactors, "Hydration::Sasa")?;
     DummySet::weighted(structure.pos.clone(), water, weights)
 }
 
@@ -111,7 +78,7 @@ mod tests {
 
     fn water_kind() -> (AtomKind, FormFactor) {
         (
-            AtomKind::new(WATER_KIND_NAME),
+            AtomKind::new("H2O"),
             // Trivial water form factor for tests — a constant so
             // `water.eval(q) = 10.0` at every q.
             FormFactor::Constant(10.0),
@@ -192,7 +159,7 @@ mod tests {
         };
         let err = dummies(&structure, &ff, 1.4).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains(WATER_KIND_NAME), "water name missing: {msg}");
+        assert!(msg.contains("H2O"), "water name missing: {msg}");
     }
 
     #[test]

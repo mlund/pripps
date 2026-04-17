@@ -94,9 +94,9 @@ pub enum Commands {
         /// Shell thickness (Å) for `--hydration grid`.
         #[clap(long, default_value = "3.0")]
         thickness: f64,
-        /// Dimensionless scale on the hydration-shell contribution.
-        /// FoXS calls this `c₂`; 0.03 is a typical excess-water
-        /// density baseline.
+        /// Excess electron density of the hydration shell over bulk
+        /// solvent (e/Å³). Typical values: ~0.03 for SASA (FoXS `c₂`),
+        /// ~0.017 for grid (PepsiSAXS default: 5% of bulk density).
         #[clap(long, default_value = "0.03")]
         contrast_density: f64,
     },
@@ -234,6 +234,7 @@ fn command_to_scheme(
                     HydrationKind::Grid => Hydration::Grid {
                         spacing,
                         thickness,
+                        probe,
                         contrast_density,
                     },
                 },

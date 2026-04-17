@@ -19,10 +19,8 @@
 //! are discarded.
 
 use crate::formfactor::FormFactorMap;
-use crate::solvent::DummySet;
-use crate::{Error, Result, Structure, Vector3};
-
-const WATER_KIND_NAME: &str = "H2O";
+use crate::solvent::{DummySet, atom_radii, water_form_factor};
+use crate::{Result, Structure, Vector3};
 
 /// Distance from `point` to the nearest atom surface: the minimum
 /// of `|point − atom_center| − atom_radius` over all atoms.
@@ -33,6 +31,11 @@ fn nearest_surface_distance(point: &Vector3, atoms: &[(Vector3, f64)]) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+/// Number of integer steps to cover `[lo, hi]` at the given spacing.
+fn grid_steps(lo: f64, hi: f64, spacing: f64) -> usize {
+    ((hi - lo) / spacing).ceil() as usize + 1
+}
+
 /// Build a grid-based hydration shell around the structure.
 pub(super) fn dummies(
     structure: &Structure,
@@ -41,22 +44,7 @@ pub(super) fn dummies(
     thickness: f64,
     probe: f64,
 ) -> Result<DummySet> {
-    // Collect (position, radius) per atom. Radius = sigma / 2.
-    let atoms: Vec<(Vector3, f64)> = structure
-        .ids
-        .iter()
-        .zip(&structure.pos)
-        .map(|(&id, &pos)| -> Result<(Vector3, f64)> {
-            let kind = formfactors.kind(id);
-            let sigma = kind.sigma().ok_or_else(|| {
-                Error::validation(format!(
-                    "atom kind {} has no `radius`; required by Hydration::Grid",
-                    kind.name()
-                ))
-            })?;
-            Ok((pos, sigma * 0.5))
-        })
-        .collect::<Result<_>>()?;
+    let atoms = atom_radii(structure, formfactors, "Hydration::Grid")?;
 
     let max_radius = atoms.iter().map(|(_, r)| *r).fold(0.0_f64, f64::max);
     let margin = max_radius + probe + thickness + spacing;
@@ -65,24 +53,25 @@ pub(super) fn dummies(
     let lo = bb_lo - Vector3::new(margin, margin, margin);
     let hi = bb_hi + Vector3::new(margin, margin, margin);
 
-    // Iterate grid points and keep those in the hydration shell.
-    let mut positions = Vec::new();
-    let mut x = lo.x;
-    while x <= hi.x {
-        let mut y = lo.y;
-        while y <= hi.y {
-            let mut z = lo.z;
-            while z <= hi.z {
+    let nx = grid_steps(lo.x, hi.x, spacing);
+    let ny = grid_steps(lo.y, hi.y, spacing);
+    let nz = grid_steps(lo.z, hi.z, spacing);
+
+    let outer = probe + thickness;
+    let mut positions = Vec::with_capacity(nx * ny * nz / 8);
+    for ix in 0..nx {
+        let x = lo.x + ix as f64 * spacing;
+        for iy in 0..ny {
+            let y = lo.y + iy as f64 * spacing;
+            for iz in 0..nz {
+                let z = lo.z + iz as f64 * spacing;
                 let point = Vector3::new(x, y, z);
                 let d = nearest_surface_distance(&point, &atoms);
-                if d > probe && d < probe + thickness {
+                if d > probe && d < outer {
                     positions.push(point);
                 }
-                z += spacing;
             }
-            y += spacing;
         }
-        x += spacing;
     }
 
     log::info!(
@@ -91,24 +80,16 @@ pub(super) fn dummies(
         positions.len()
     );
 
-    let water = formfactors
-        .form_factor_by_name(WATER_KIND_NAME)
-        .ok_or_else(|| {
-            Error::validation(format!(
-                "Hydration::Grid requires an `{WATER_KIND_NAME}` entry in the form-factor YAML"
-            ))
-        })?
-        .clone();
+    let water = water_form_factor(formfactors, "Hydration::Grid")?;
 
     // Each grid cell contains `(spacing / WATER_SPACING)³` water
     // molecules, where WATER_SPACING ≈ 3.105 Å is the cube root
-    // of the volume per water molecule at bulk density (30 ų/molecule).
-    // The water form factor gives scattering PER MOLECULE, so the
+    // of the volume per water molecule at bulk density (30 Å³/molecule).
+    // The water form factor gives scattering per molecule, so the
     // weight is the number of molecules per cell. This matches
     // PepsiSAXS's `ratioLinDistances` convention (cSAS.cpp:3872).
     const WATER_SPACING: f64 = 3.10516;
-    let ratio = spacing / WATER_SPACING;
-    let molecules_per_cell = ratio * ratio * ratio;
+    let molecules_per_cell = (spacing / WATER_SPACING).powi(3);
     let weights = vec![molecules_per_cell; positions.len()];
     DummySet::weighted(positions, water, weights)
 }
@@ -130,7 +111,6 @@ mod tests {
 
     #[test]
     fn single_atom_shell_is_spherical() {
-        // One atom at origin. Shell should form a hollow sphere.
         let structure = Structure {
             pos: vec![Vector3::new(0.0, 0.0, 0.0)],
             ids: vec![0],
@@ -141,10 +121,8 @@ mod tests {
         let n = shell.positions().len();
         assert!(n > 50, "expected many shell points, got {n}");
 
-        // All shell points should be between r_inner and r_outer
-        // from the origin, where:
-        //   r_inner = atom_radius + probe = 1.7 + 1.4 = 3.1
-        //   r_outer = atom_radius + probe + thickness = 1.7 + 1.4 + 3.0 = 6.1
+        // r_inner = atom_radius + probe = 1.7 + 1.4 = 3.1
+        // r_outer = atom_radius + probe + thickness = 1.7 + 1.4 + 3.0 = 6.1
         for p in shell.positions() {
             let r = p.norm();
             assert!(r > 3.0, "point too close: r={r:.2}");
@@ -154,8 +132,6 @@ mod tests {
 
     #[test]
     fn no_shell_points_inside_protein() {
-        // Two overlapping atoms — no grid point should be within
-        // probe distance of any atom surface.
         let structure = Structure {
             pos: vec![Vector3::new(0.0, 0.0, 0.0), Vector3::new(2.0, 0.0, 0.0)],
             ids: vec![0, 0],
