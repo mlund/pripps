@@ -54,11 +54,12 @@ The returned dict contains:
 
 ### Fitting against experimental data
 
-The expensive per-structure work (basis construction, SASA
-tessellation, per-q coefficient triangles) runs once in
-`multipole_model`. Each `model.intensity(volume_scale,
-contrast_density)` call re-runs only the cheap coefficient-level
-combine — fast enough for scipy or a grid search.
+`multipole_model` does the expensive per-structure setup once and
+caches the intermediate scattering amplitudes. Subsequent
+`model.intensity(volume_scale, contrast_density)` calls only apply
+the fit knobs to the cached amplitudes — typically under a
+millisecond each — so wrapping them in `scipy.minimize` or a grid
+search is fluent.
 
 A full working example is in `pripps-py/examples/fit_lysozyme.py`,
 which fits lysozyme against the shipped `tests/lysozyme/lyzexp.dat`
@@ -117,10 +118,10 @@ subtracted from the atomic scattering via
 
 | Model | Description | Requires |
 |-------|-------------|----------|
-| `fraser` | One Gaussian dummy per atom, sized by `displaced_volume` from the YAML file. Uses the PepsiSAXS/CRYSOL 4π denominator. Best for atomic-resolution structures with tabulated volumes. | `displaced_volume` per atom kind |
-| `foxs` | Same as `fraser` but with the FoXS 16π denominator, giving a sharper Gaussian that subtracts less at high q. | `displaced_volume` per atom kind |
-| `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian based on cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
-| `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes from the radical tessellation (probe=0). Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
+| `fraser` | One Gaussian dummy per atom, sized by `displaced_volume` from the YAML. Broader Gaussian, subtracts more at high q — matches PepsiSAXS / CRYSOL. | `displaced_volume` per atom kind |
+| `foxs` | Same as `fraser` but narrower, subtracts less at high q — matches FoXS. | `displaced_volume` per atom kind |
+| `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian sized by cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
+| `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes. Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when
@@ -198,35 +199,42 @@ lysozyme (unfitted) and ≈ 0.20 (fitted with hydration).
 **PDB atom mapping:** for PDB files, pripps uses residue context
 to map each heavy atom to its united-atom form-factor type (e.g.
 ALA:CB → CH₃, LYS:NZ → NH₃), folding in implicit hydrogen
-scattering. This matching the approach used by FoXS
-(`FormFactorTable.cpp:679-715`).
+scattering — same convention as FoXS.
 
 ## Performance
 
-The multipole expansion dominates runtime at scale. Its cost is
-`O(N · Q · L²)` with `N = atoms`, `Q = q-points`, `L = l_max`. The
-kernel runs atoms-outer with a q-tile inner loop so every atom's
-spherical-harmonic triangle is streamed from DRAM once per tile
-and reused across the tile's q-points — the schedule is parallel
-over atoms via rayon, and the inner m-loop autovectorises to NEON
-(`fmla.2d`/`fmls.2d`) on Apple Silicon and AVX2 on x86.
+The multipole expansion is **linear in atom count**, so it beats
+the `O(N²)` Debye schedule above a few hundred atoms and stays
+practical for atomic-resolution PDBs up into the hundreds of
+thousands of atoms.
 
-Expansion order is picked **per q-point** as `⌈q · r_max⌉ + 2`,
-so low q uses only a handful of multipoles while high q keeps the
-conservative `r_max`-based upper bound that guarantees pointwise
-convergence. The `r_max` criterion is load-bearing for
-non-globular structures (stacked rings, elongated complexes,
-multi-domain assemblies) where `R_g`-based heuristics silently
-under-converge at high q.
+- **Auto-selected truncation order per q-point.** Low q uses
+  only a handful of multipoles, high q uses a convergent upper
+  bound. The default is conservative on non-globular shapes
+  (elongated complexes, stacked rings, multi-domain assemblies)
+  where radius-of-gyration-based heuristics in other tools can
+  silently under-converge at high q.
+- **Parallel across CPU cores and SIMD-vectorised.** No tuning
+  needed; the workload scales with hardware.
+- **Cached fit setup.** `multipole_model` amortises the
+  per-structure work so fit loops spend their time in the cheap
+  recombination, not the expensive scattering calculation.
 
-The q-outer schedule (Contribution::coefficients via rayon's per-q
-fan-out) remains the default for small structures; the atoms-outer
-kernel kicks in once `N · Q ≥ 20 000` where the one-time form-factor
-transpose and per-worker accumulator pay for themselves.
+Illustrative wall-clock on a 90 672-atom structure, 100 q-points,
+full atomic-resolution form factors (vacuum):
 
-Override the auto-selected order with `--lmax <N>` (CLI) or
-`l_max=N` (Python) — useful for timing sweeps or reproducing a
-fixed reference.
+| Hardware | wall |
+|---|---:|
+| 10-core Apple Silicon laptop | ~4 s |
+| 64-thread AMD Threadripper (native build) | ~10 s |
+
+### Tuning knob
+
+`--lmax <N>` (CLI) or `l_max=N` (Python) overrides the
+auto-selected truncation order. Useful for reproducing a fixed
+reference, timing sweeps, or trading a little high-q accuracy
+for extra speed on very elongated structures — the default is
+correct but conservative for those.
 
 ## Command-line interface (Rust)
 
@@ -246,9 +254,9 @@ pripps --help
 # Debye formula (exact, O(N²))
 pripps -a atoms.yaml -i structure.pdb debye
 
-# Multipole expansion (fast, O(N·Q·L²), auto-picked per-q L)
+# Multipole expansion (linear in atoms, truncation auto-selected)
 pripps -a atoms.yaml -i structure.pdb multipole
-pripps -a atoms.yaml -i structure.pdb multipole --lmax 68  # fixed L
+pripps -a atoms.yaml -i structure.pdb multipole --lmax 68  # fixed order
 
 # With solvent correction — CSV output with 5 columns
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
