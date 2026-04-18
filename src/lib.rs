@@ -138,15 +138,16 @@ impl Pripps {
         let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
         structure.center();
         let sampler = q_sampler::QSampler::linear(self.formfactors.clone(), qmin, qmax, nq);
-        let l_max = multipole::resolve_l_max(l_max, &structure.pos, &sampler.q_values);
+        let l_max_per_q = multipole::resolve_l_max_per_q(l_max, &structure.pos, &sampler.q_values);
+        let l_max = l_max_per_q.iter().copied().max().unwrap_or(0);
+        let l_min = l_max_per_q.iter().copied().min().unwrap_or(0);
         log::info!(
-            "Multipole fit preparation: l_max = {} over {} atoms, {} q-points",
-            l_max,
+            "Multipole fit preparation: l_max ∈ [{l_min}, {l_max}] over {} atoms, {} q-points",
             structure.pos.len(),
             sampler.q_values.len(),
         );
         let atoms_basis = multipole::SphericalBasis::new(&structure.pos, l_max);
-        multipole::build_model(&sampler, &structure, &atoms_basis, solvent)
+        multipole::build_model(&sampler, &structure, &atoms_basis, solvent, &l_max_per_q)
     }
 
     /// Compute I(q) for a structure under the given [`IntensityScheme`].

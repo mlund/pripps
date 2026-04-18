@@ -201,6 +201,33 @@ ALA:CB → CH₃, LYS:NZ → NH₃), folding in implicit hydrogen
 scattering. This matching the approach used by FoXS
 (`FormFactorTable.cpp:679-715`).
 
+## Performance
+
+The multipole expansion dominates runtime at scale. Its cost is
+`O(N · Q · L²)` with `N = atoms`, `Q = q-points`, `L = l_max`. The
+kernel runs atoms-outer with a q-tile inner loop so every atom's
+spherical-harmonic triangle is streamed from DRAM once per tile
+and reused across the tile's q-points — the schedule is parallel
+over atoms via rayon, and the inner m-loop autovectorises to NEON
+(`fmla.2d`/`fmls.2d`) on Apple Silicon and AVX2 on x86.
+
+Expansion order is picked **per q-point** as `⌈q · r_max⌉ + 2`,
+so low q uses only a handful of multipoles while high q keeps the
+conservative `r_max`-based upper bound that guarantees pointwise
+convergence. The `r_max` criterion is load-bearing for
+non-globular structures (stacked rings, elongated complexes,
+multi-domain assemblies) where `R_g`-based heuristics silently
+under-converge at high q.
+
+The q-outer schedule (Contribution::coefficients via rayon's per-q
+fan-out) remains the default for small structures; the atoms-outer
+kernel kicks in once `N · Q ≥ 20 000` where the one-time form-factor
+transpose and per-worker accumulator pay for themselves.
+
+Override the auto-selected order with `--lmax <N>` (CLI) or
+`l_max=N` (Python) — useful for timing sweeps or reproducing a
+fixed reference.
+
 ## Command-line interface (Rust)
 
 ### Installing
@@ -219,8 +246,9 @@ pripps --help
 # Debye formula (exact, O(N²))
 pripps -a atoms.yaml -i structure.pdb debye
 
-# Multipole expansion (fast, O(N·L²))
+# Multipole expansion (fast, O(N·Q·L²), auto-picked per-q L)
 pripps -a atoms.yaml -i structure.pdb multipole
+pripps -a atoms.yaml -i structure.pdb multipole --lmax 68  # fixed L
 
 # With solvent correction — CSV output with 5 columns
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
