@@ -49,25 +49,36 @@ impl ExpData {
             } else {
                 trimmed.split_whitespace().collect()
             };
-            if parts.len() < 3 {
+            if parts.len() < 2 {
                 continue;
             }
-            if let (Ok(qi), Ok(ii), Ok(si)) = (
-                parts[0].parse::<f64>(),
-                parts[1].parse::<f64>(),
-                parts[2].parse::<f64>(),
-            ) {
-                q.push(qi);
-                intensity.push(ii);
-                sigma.push(si);
-            }
+            let (Ok(qi), Ok(ii)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) else {
+                continue;
+            };
+            let si = parts
+                .get(2)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            q.push(qi);
+            intensity.push(ii);
+            sigma.push(si);
         }
 
         if q.is_empty() {
             return Err(crate::Error::validation(format!(
-                "no data points found in {}",
+                "no data points found in {} (expected 2–3 columns: q, I [, σ]; \
+                 whitespace or comma separated)",
                 path.display()
             )));
+        }
+
+        // σ=1 fallback means unweighted χ² — warn the user since
+        // fit quality metrics won't be comparable to weighted fits.
+        if sigma.iter().all(|&s| s == 1.0) {
+            log::warn!(
+                "No σ column found in {}; using σ=1 (unweighted χ²)",
+                path.display()
+            );
         }
 
         log::info!(

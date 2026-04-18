@@ -157,9 +157,12 @@ impl Structure {
                 .and_then(|res| resolve_united_atom(res, &atom.name))
                 .unwrap_or(&atom.name);
 
-            let id = atomkinds
-                .find_name(resolved_name)
-                .ok_or_else(|| Error::UnknownAtom(atom.name.clone()))?;
+            let id = atomkinds.find_name(resolved_name).ok_or_else(|| {
+                Error::UnknownAtom(format!(
+                    "{}; add an entry for this atom type to the form-factor YAML",
+                    atom.name
+                ))
+            })?;
             pos.push(Vector3::new(
                 atom.position[0],
                 atom.position[1],
