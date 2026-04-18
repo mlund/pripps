@@ -91,6 +91,14 @@ impl<T> LowerTriangle<T> {
     pub fn data_mut(&mut self) -> &mut [T] {
         &mut self.data
     }
+
+    /// Immutable slice view of the packed storage. The hot multipole
+    /// accumulation loop walks a whole `l`-row as a contiguous slice
+    /// so LLVM can autovectorize the complex AXPY; indexing via
+    /// `(l, m)` there would hide the linearity of successive `m`.
+    pub fn data(&self) -> &[T] {
+        &self.data
+    }
 }
 
 impl<T> std::ops::Index<(usize, usize)> for LowerTriangle<T> {

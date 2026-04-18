@@ -50,3 +50,8 @@ members = ["pripps-py"]
 [profile.release]
 strip = true # Automatically strip symbols from the binary.
 #lto = true   # Link-time optimization
+
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = true

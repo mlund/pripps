@@ -446,6 +446,7 @@ fn multipole_coefficients(
 
     debug_assert!(j_l_scratch.len() > l_max);
     let j_l = &mut j_l_scratch[..=l_max];
+    let c_data = coeffs.data_mut();
 
     for ((s, y_conj), f) in basis
         .spherical
@@ -454,11 +455,32 @@ fn multipole_coefficients(
         .zip(form_factors_at_q.iter().copied())
     {
         spherical_bessel(q * s.r, j_l);
+        let y_data = y_conj.data();
+        // Walk the packed triangle one `l`-row at a time. Each row is
+        // contiguous (offsets `l*(l+1)/2 .. l*(l+1)/2 + l + 1`), and
+        // the m-loop reduces to a complex AXPY with a loop-invariant
+        // scalar `a = i^l · j_l(qr) · f`. This shape vectorizes to
+        // NEON `ld2.2d`/`st2.2d` (2 complex per lane pair); indexing
+        // via `(l, m)` in the earlier form hid the linearity of `m`.
+        //
+        // Spelled out as scalar `mul_add` rather than `a * *y`: LLVM
+        // cannot reassociate `re*re - im*im` into an FMA because
+        // `num_complex::Complex`'s `Mul` uses plain `*` and `-`. The
+        // explicit form compiles to `fmla.2d`/`fmls.2d`, replacing
+        // four `fmul.2d` + one `fsub.2d` + three `fadd.2d` per 2-lane
+        // iteration with four fused ops.
+        let mut row_start = 0usize;
         for l in 0..=l_max {
-            let il_jl = I_POW[l % 4] * j_l[l];
-            for m in 0..=l {
-                coeffs[(l, m)] += il_jl * y_conj[(l, m)] * f;
+            let a = I_POW[l % 4] * j_l[l] * f;
+            let (a_re, a_im) = (a.re, a.im);
+            let row_len = l + 1;
+            let cs = &mut c_data[row_start..row_start + row_len];
+            let ys = &y_data[row_start..row_start + row_len];
+            for (c, y) in cs.iter_mut().zip(ys) {
+                c.re = a_re.mul_add(y.re, (-a_im).mul_add(y.im, c.re));
+                c.im = a_re.mul_add(y.im, a_im.mul_add(y.re, c.im));
             }
+            row_start += row_len;
         }
     }
     coeffs
