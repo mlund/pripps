@@ -370,9 +370,10 @@ mod tests {
 
     #[test]
     #[should_panic]
+    #[cfg(debug_assertions)]
     fn lower_triangle_out_of_bounds_m_gt_l_panics() {
         let t = LowerTriangle::<f64>::zeros(5);
-        let _ = t[(0, 1)]; // m > l
+        let _ = t[(0, 1)]; // m > l — caught by debug_assert in offset()
     }
 
     #[test]

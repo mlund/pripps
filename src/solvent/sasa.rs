@@ -22,10 +22,10 @@
 
 use std::f64::consts::PI;
 
-use voronota_ltr::{Ball, Results, compute_tessellation};
+use voronota_ltr::{Results, compute_tessellation};
 
 use crate::formfactor::FormFactorMap;
-use crate::solvent::{DummySet, atom_radii, water_form_factor};
+use crate::solvent::{DummySet, atom_radii, balls_from_radii, water_form_factor};
 use crate::{Result, Structure};
 
 pub(super) fn dummies(
@@ -34,10 +34,7 @@ pub(super) fn dummies(
     probe: f64,
 ) -> Result<DummySet> {
     let atoms = atom_radii(structure, formfactors, "Hydration::Sasa")?;
-    let balls: Vec<Ball> = atoms
-        .iter()
-        .map(|(pos, r)| Ball::new(pos.x, pos.y, pos.z, *r))
-        .collect();
+    let balls = balls_from_radii(&atoms);
 
     // One tessellation pass gives per-atom accessible surface area.
     // `None` means the atom's Voronoi cell is unbounded — i.e. it

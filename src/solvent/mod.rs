@@ -34,11 +34,20 @@ mod grid;
 mod grid_excluded;
 mod sasa;
 mod voronoi_excluded;
+mod voronoi_hydration;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
 use crate::{Error, Result, Structure, Vector3};
 
 pub(super) const WATER_KIND_NAME: &str = "H2O";
+
+/// Convert `(position, radius)` pairs to voronota-ltr `Ball`s.
+fn balls_from_radii(atoms: &[(Vector3, f64)]) -> Vec<voronota_ltr::Ball> {
+    atoms
+        .iter()
+        .map(|(pos, r)| voronota_ltr::Ball::new(pos.x, pos.y, pos.z, *r))
+        .collect()
+}
 
 /// Per-atom `(position, radius)` extracted from the structure and
 /// form-factor map. Radius = `sigma / 2` (YAML `radius` is stored
@@ -211,10 +220,12 @@ pub enum Hydration {
         probe: f64,
         contrast_density: f64,
     },
-    /// One dummy per surface atom, weighted by Voronoi cell contact
-    /// area.
+    /// Explicit solvent spheres on the molecular surface, placed
+    /// and weighted by Voronoi tessellation via voronota-ltr's
+    /// `compute_solvent_spheres`. More physical than SASA: water
+    /// dummies sit at actual surface positions, not at atom centers.
     Voronoi {
-        thickness: f64,
+        probe: f64,
         contrast_density: f64,
     },
 }
@@ -383,7 +394,9 @@ impl Hydration {
                 probe,
                 ..
             } => grid::dummies(structure, formfactors, *spacing, *thickness, *probe),
-            Self::Voronoi { .. } => Ok(DummySet::default()),
+            Self::Voronoi { probe, .. } => {
+                voronoi_hydration::dummies(structure, formfactors, *probe)
+            }
         }
     }
 }

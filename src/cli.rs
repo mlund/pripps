@@ -116,6 +116,7 @@ pub enum HydrationKind {
     Disabled,
     Sasa,
     Grid,
+    Voronoi,
 }
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
@@ -235,6 +236,10 @@ fn command_to_scheme(
                     HydrationKind::Grid => Hydration::Grid {
                         spacing,
                         thickness,
+                        probe,
+                        contrast_density,
+                    },
+                    HydrationKind::Voronoi => Hydration::Voronoi {
                         probe,
                         contrast_density,
                     },

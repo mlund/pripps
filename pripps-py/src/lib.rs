@@ -137,9 +137,13 @@ fn solvent_from_kwargs(
             probe,
             contrast_density,
         },
+        "voronoi" => Hydration::Voronoi {
+            probe,
+            contrast_density,
+        },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown hydration model: {other} (expected `none`, `sasa`, or `grid`)"
+                "unknown hydration model: {other} (expected `none`, `sasa`, `grid`, or `voronoi`)"
             )));
         }
     };

@@ -21,11 +21,11 @@
 
 use std::f64::consts::PI;
 
-use voronota_ltr::{Ball, Results, compute_tessellation};
+use voronota_ltr::{Results, compute_tessellation};
 
 use crate::formfactor::FormFactorMap;
 use crate::solvent::fraser::{PEPSI_DENOMINATOR, fraser_form_factor};
-use crate::solvent::{DummySet, atom_radii};
+use crate::solvent::{DummySet, atom_radii, balls_from_radii};
 use crate::{Result, Structure};
 
 /// Build Voronoi excluded-volume dummies: one per atom, each with
@@ -41,10 +41,7 @@ pub(super) fn dummies(
         return DummySet::per_dummy(vec![], vec![]);
     }
 
-    let balls: Vec<Ball> = atoms
-        .iter()
-        .map(|(pos, r)| Ball::new(pos.x, pos.y, pos.z, *r))
-        .collect();
+    let balls = balls_from_radii(&atoms);
 
     // Probe=0 gives the radical tessellation: space is partitioned
     // by the power distance to each sphere, so every point in the

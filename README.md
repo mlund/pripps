@@ -99,7 +99,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 | Parameter | Values | Description |
 |-----------|--------|-------------|
 | `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"` | Excluded-volume model |
-| `hydration` | `"disabled"`, `"sasa"`, `"grid"` | Hydration-shell model |
+| `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
 | `contrast_density` | float (default 0.03) | Scales hydration shell (~0.03 for SASA, ~0.017 for grid) |
@@ -136,6 +136,7 @@ protein, which has a higher electron density than bulk solvent.
 |-------|-------------|
 | `sasa` | FoXS-style: one dummy per atom weighted by solvent-accessible surface area fraction (Voronoi tessellation). |
 | `grid` | PepsiSAXS-style: water dummies on a Cartesian grid in a shell around the molecular envelope. |
+| `voronoi` | Explicit solvent spheres on the molecular surface via voronota-ltr tessellation. Dummies sit at actual water-accessible positions (not atom centers). Probe-insensitive and needs only `radius`. |
 
 ## Form factor definitions
 
