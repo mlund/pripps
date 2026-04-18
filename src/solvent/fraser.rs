@@ -38,7 +38,11 @@ pub(super) const FOXS_DENOMINATOR: f64 = 16.0 * PI;
 /// ```text
 /// F(q) = ρ_s · V · exp(−V^(2/3) · q² / denominator)
 /// ```
-fn fraser_form_factor(volume: f64, bulk_electron_density: f64, denominator: f64) -> FormFactor {
+pub(super) fn fraser_form_factor(
+    volume: f64,
+    bulk_electron_density: f64,
+    denominator: f64,
+) -> FormFactor {
     FormFactor::single_gaussian(
         bulk_electron_density * volume,
         volume.powf(2.0 / 3.0) / denominator,

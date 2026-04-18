@@ -31,7 +31,9 @@
 
 mod fraser;
 mod grid;
+mod grid_excluded;
 mod sasa;
+mod uniform_excluded;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
 use crate::{Error, Result, Structure, Vector3};
@@ -116,7 +118,8 @@ impl ExcludedVolume {
             Self::Disabled => 0.0,
             Self::Fraser { volume_scale }
             | Self::FraserFoxs { volume_scale }
-            | Self::Grid { volume_scale, .. } => *volume_scale,
+            | Self::Grid { volume_scale, .. }
+            | Self::Uniform { volume_scale } => *volume_scale,
         }
     }
 }
@@ -178,6 +181,13 @@ pub enum ExcludedVolume {
     /// of the displaced volume is too coarse.
     Grid {
         spacing: f64,
+        volume_scale: f64,
+    },
+    /// Uniform excluded-volume subtraction: each atom displaces
+    /// the same average charge `ρ × V_total / N`, where V_total
+    /// is the total molecular volume from Voronoi tessellation
+    /// (probe=0, bare atomic radii).
+    Uniform {
         volume_scale: f64,
     },
 }
@@ -348,7 +358,12 @@ impl ExcludedVolume {
                 *volume_scale,
                 fraser::FOXS_DENOMINATOR,
             ),
-            Self::Grid { .. } => Ok(DummySet::default()),
+            Self::Grid { spacing, .. } => {
+                grid_excluded::dummies(structure, formfactors, bulk_electron_density, *spacing)
+            }
+            Self::Uniform { .. } => {
+                uniform_excluded::dummies(structure, formfactors, bulk_electron_density)
+            }
         }
     }
 }

@@ -98,12 +98,44 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `excluded` | `"disabled"`, `"fraser"`, `"foxs"` | Excluded-volume model |
+| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"uniform"` | Excluded-volume model |
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
-| `contrast_density` | float (default 0.03) | Scales hydration shell (FoXS `c₂`) |
-| `probe` | float (default 1.8) | SASA probe radius in Å |
+| `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
+| `contrast_density` | float (default 0.03) | Scales hydration shell (~0.03 for SASA, ~0.017 for grid) |
+| `probe` | float (default 1.8) | SASA/grid shell probe radius in Å |
+| `spacing` | float (default 1.5) | Grid spacing (Å) for `hydration="grid"` |
+| `thickness` | float (default 3.0) | Shell thickness (Å) for `hydration="grid"` |
 | `bulk_electron_density` | float (default 0.334) | Bulk solvent density in e/Å³ |
+
+### Excluded-volume models
+
+The excluded volume accounts for bulk solvent displaced by the
+protein. Each model places dummy scatterers whose contribution is
+subtracted from the atomic scattering via
+`|A − volume_scale·C + contrast_density·B|²`.
+
+| Model | Description | Requires |
+|-------|-------------|----------|
+| `fraser` | One Gaussian dummy per atom, sized by `displaced_volume` from the YAML file. Uses the PepsiSAXS/CRYSOL 4π denominator. Best for atomic-resolution structures with tabulated volumes. | `displaced_volume` per atom kind |
+| `foxs` | Same as `fraser` but with the FoXS 16π denominator, giving a sharper Gaussian that subtracts less at high q. | `displaced_volume` per atom kind |
+| `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian based on cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
+| `uniform` | All atoms share a single Fraser Gaussian sized by the average Voronoi cell volume (`V_total / N`). Simplest model; useful for coarse-grained structures where per-atom displaced volumes are unavailable. | `radius` per atom kind |
+
+The `fraser` and `foxs` models use per-atom displaced volumes from
+the form-factor YAML (derived from `radius` as `(4/3)πr³` when
+`displaced_volume` is not explicitly set). The `grid` and `uniform`
+models need only atomic radii.
+
+### Hydration-shell models
+
+The hydration shell accounts for the first water layer around the
+protein, which has a higher electron density than bulk solvent.
+
+| Model | Description |
+|-------|-------------|
+| `sasa` | FoXS-style: one dummy per atom weighted by solvent-accessible surface area fraction (Voronoi tessellation). |
+| `grid` | PepsiSAXS-style: water dummies on a Cartesian grid in a shell around the molecular envelope. |
 
 ## Form factor definitions
 

@@ -24,7 +24,7 @@ use crate::{Result, Structure, Vector3};
 
 /// Distance from `point` to the nearest atom surface: the minimum
 /// of `|point − atom_center| − atom_radius` over all atoms.
-fn nearest_surface_distance(point: &Vector3, atoms: &[(Vector3, f64)]) -> f64 {
+pub(super) fn nearest_surface_distance(point: &Vector3, atoms: &[(Vector3, f64)]) -> f64 {
     atoms
         .iter()
         .map(|(center, radius)| (point - center).norm() - radius)
@@ -32,7 +32,7 @@ fn nearest_surface_distance(point: &Vector3, atoms: &[(Vector3, f64)]) -> f64 {
 }
 
 /// Number of integer steps to cover `[lo, hi]` at the given spacing.
-fn grid_steps(lo: f64, hi: f64, spacing: f64) -> usize {
+pub(super) fn grid_steps(lo: f64, hi: f64, spacing: f64) -> usize {
     ((hi - lo) / spacing).ceil() as usize + 1
 }
 

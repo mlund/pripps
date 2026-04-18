@@ -31,6 +31,7 @@ impl PyPripps {
         l_max = None,
         excluded = "none",
         volume_scale = 1.0,
+        excluded_spacing = 1.0,
         hydration = "none",
         probe = 1.8,
         spacing = 1.5,
@@ -47,6 +48,7 @@ impl PyPripps {
         l_max: Option<usize>,
         excluded: &str,
         volume_scale: f64,
+        excluded_spacing: f64,
         hydration: &str,
         probe: f64,
         spacing: f64,
@@ -57,6 +59,7 @@ impl PyPripps {
         let cfg = solvent_from_kwargs(
             excluded,
             volume_scale,
+            excluded_spacing,
             hydration,
             probe,
             spacing,
@@ -99,6 +102,7 @@ impl PySvergunModel {
 fn solvent_from_kwargs(
     excluded: &str,
     volume_scale: f64,
+    excluded_spacing: f64,
     hydration: &str,
     probe: f64,
     spacing: f64,
@@ -110,9 +114,14 @@ fn solvent_from_kwargs(
         "none" | "disabled" => ExcludedVolume::Disabled,
         "fraser" => ExcludedVolume::Fraser { volume_scale },
         "foxs" => ExcludedVolume::FraserFoxs { volume_scale },
+        "grid" => ExcludedVolume::Grid {
+            spacing: excluded_spacing,
+            volume_scale,
+        },
+        "uniform" => ExcludedVolume::Uniform { volume_scale },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown excluded-volume model: {other} (expected `none`, `fraser`, or `foxs`)"
+                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, or `uniform`)"
             )));
         }
     };

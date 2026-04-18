@@ -73,6 +73,9 @@ pub enum Commands {
         /// Scale on excluded-volume displaced volumes (PepsiSAXS `r0`)
         #[clap(long, default_value = "1.0")]
         volume_scale: f64,
+        /// Grid spacing (Å) for `--excluded grid`
+        #[clap(long, default_value = "1.0")]
+        excluded_spacing: f64,
         /// Bulk solvent electron density (e/Å³)
         #[clap(long, default_value = "0.334")]
         bulk_electron_density: f64,
@@ -95,19 +98,18 @@ pub enum Commands {
     },
 }
 
-/// Which excluded-volume generator to use. Mirrors
-/// [`ExcludedVolume`] minus the `Grid` variant (Phase 2c).
+/// Which excluded-volume generator to use.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum ExcludedKind {
     #[value(alias = "none")]
     Disabled,
     Fraser,
     Foxs,
+    Grid,
+    Uniform,
 }
 
-/// Which hydration-shell generator to use. Mirrors the active
-/// [`Hydration`] variants (Phase 2b ships `Sasa` only; `Grid` and
-/// `Voronoi` land in later phases).
+/// Which hydration-shell generator to use.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum HydrationKind {
     #[value(alias = "none")]
@@ -205,6 +207,7 @@ fn command_to_scheme(
             lmax,
             excluded,
             volume_scale,
+            excluded_spacing,
             bulk_electron_density,
             hydration,
             probe,
@@ -217,6 +220,11 @@ fn command_to_scheme(
                     ExcludedKind::Disabled => ExcludedVolume::Disabled,
                     ExcludedKind::Fraser => ExcludedVolume::Fraser { volume_scale },
                     ExcludedKind::Foxs => ExcludedVolume::FraserFoxs { volume_scale },
+                    ExcludedKind::Grid => ExcludedVolume::Grid {
+                        spacing: excluded_spacing,
+                        volume_scale,
+                    },
+                    ExcludedKind::Uniform => ExcludedVolume::Uniform { volume_scale },
                 },
                 hydration: match hydration {
                     HydrationKind::Disabled => Hydration::Disabled,
