@@ -135,7 +135,8 @@ impl Pripps {
         l_max: Option<usize>,
         solvent: &SolventConfig,
     ) -> Result<MultipoleModel> {
-        let structure = Structure::from_file(structure_file, &self.atomkinds())?;
+        let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
+        structure.center();
         let sampler = q_sampler::QSampler::linear(self.formfactors.clone(), qmin, qmax, nq);
         let l_max = multipole::resolve_l_max(l_max, &structure.pos, &sampler.q_values);
         log::info!(

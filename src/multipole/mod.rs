@@ -138,7 +138,14 @@ pub(crate) fn resolve_l_max(
 
 impl IntensityCalculator for MultipoleIntensity {
     fn calc_intensities(&self, structure: &Structure) -> Result<Intensity> {
-        let l_max = self.effective_l_max(structure);
+        // Center the structure so r_max (and hence l_max) reflects
+        // the maximum extent from the geometric center, not from
+        // the arbitrary coordinate origin. This can halve l_max
+        // for off-center structures, making the O(N·Q·L²) expansion
+        // significantly cheaper.
+        let mut structure = structure.clone();
+        structure.center();
+        let l_max = self.effective_l_max(&structure);
         log::info!(
             "Multipole expansion: l_max = {} over {} atoms, {} q-points",
             l_max,
@@ -154,7 +161,7 @@ impl IntensityCalculator for MultipoleIntensity {
 
         match self.solvent.as_ref().filter(|cfg| cfg.is_active()) {
             None => vacuum_intensity(&self.sampler, &atoms_basis, &structure.ids, l_max),
-            Some(cfg) => solvent_intensity(&self.sampler, structure, &atoms_basis, cfg),
+            Some(cfg) => solvent_intensity(&self.sampler, &structure, &atoms_basis, cfg),
         }
     }
 }

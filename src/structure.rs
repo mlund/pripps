@@ -178,6 +178,19 @@ impl Structure {
         })
     }
 
+    /// Translate all positions so the geometric center is at the
+    /// origin. Returns the translation vector (the old center).
+    pub(crate) fn center(&mut self) -> Vector3 {
+        if self.pos.is_empty() {
+            return Vector3::zeros();
+        }
+        let center: Vector3 = self.pos.iter().sum::<Vector3>() / self.pos.len() as f64;
+        for p in &mut self.pos {
+            *p -= center;
+        }
+        center
+    }
+
     /// Axis-aligned bounding box of all atom positions.
     pub(crate) fn bounding_box(&self) -> (Vector3, Vector3) {
         let mut lo = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
