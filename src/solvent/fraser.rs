@@ -23,11 +23,18 @@ use crate::solvent::DummySet;
 use crate::{Error, Result, Structure};
 use std::f64::consts::PI;
 
-/// PepsiSAXS Fraser denominator: 4π.
+/// PepsiSAXS / CRYSOL Fraser denominator: 4π. Wider q-space
+/// Gaussian → faster decay with q → smaller excluded-volume
+/// subtraction at high q than the FoXS convention.
 pub(super) const PEPSI_DENOMINATOR: f64 = 4.0 * PI;
 
-/// FoXS Fraser denominator: 16π. Produces a 4× sharper Gaussian
-/// that subtracts less excluded volume at high q.
+/// FoXS Fraser denominator: 16π. The 4× larger denominator makes
+/// the q-space Gaussian 4× narrower in its exponent coefficient,
+/// which means it decays *more slowly* with q than the PepsiSAXS
+/// variant — the dummy form factor stays closer to its `q=0`
+/// value at high q, so the excluded-volume subtraction is larger
+/// there. (In real space this corresponds to a sharper, more
+/// concentrated dummy-density blob, the Fourier dual.)
 // FoXS `FormFactorTable.cpp:285`: `volr_coeff = -pow(V, 2/3) / (16*PI)`
 pub(super) const FOXS_DENOMINATOR: f64 = 16.0 * PI;
 

@@ -118,8 +118,8 @@ subtracted from the atomic scattering via
 
 | Model | Description | Requires |
 |-------|-------------|----------|
-| `fraser` | One Gaussian dummy per atom, sized by `displaced_volume` from the YAML. Broader Gaussian, subtracts more at high q — matches PepsiSAXS / CRYSOL. | `displaced_volume` per atom kind |
-| `foxs` | Same as `fraser` but narrower, subtracts less at high q — matches FoXS. | `displaced_volume` per atom kind |
+| `fraser` | One Gaussian dummy per atom, sized by `displaced_volume` from the YAML. Dummy form factor decays faster with q → smaller excluded-volume subtraction at high q. Matches PepsiSAXS / CRYSOL. | `displaced_volume` per atom kind |
+| `foxs` | Same formula as `fraser` but with the FoXS 16π denominator: dummy form factor decays more slowly with q → larger excluded-volume subtraction at high q. Matches FoXS. | `displaced_volume` per atom kind |
 | `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian sized by cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
 | `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes. Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
 
@@ -188,9 +188,17 @@ hydrogens that the effective radius does not account for.
 | `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files, `--excluded foxs` |
 
 Both files use Gaussian b values in the standard s² = (q/4π)²
-convention (International Tables / Cromer-Mann). The coefficients
-differ slightly (different parameterisations of the same physics)
-and the volume/radius tables match their respective tools.
+convention (International Tables / Cromer-Mann). The atomic
+coefficients differ (Cromer-Mann vs Stovgaard-2010) and the
+volume/radius tables match their respective tools.
+
+**Don't mix files with non-matching `--excluded` flags.** Each
+YAML + excluded-volume convention is a self-consistent bundle:
+`foxs_formfactors.yaml` was calibrated jointly with FoXS's
+`K = 16π` Gaussian, while `single_bead.yaml` was calibrated with
+PepsiSAXS's `K = 4π`. Swapping the denominator gives atomic and
+excluded contributions that were never fit together and yields
+subtly biased intensities.
 
 For atomic-resolution PDB files, use `foxs_formfactors.yaml` with
 `--excluded foxs` — this reproduces FoXS's χ²/N ≈ 0.29 on
