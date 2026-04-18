@@ -24,7 +24,7 @@ pretty_env_logger = { version = "0.5.0", optional = true }
 rayon = "1.10.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_yaml = "0.9.34"
-voronota-ltr = "0.4.0"
+voronota-ltr = { git = "https://github.com/mlund/voronota-ltr" }
 
 [dev-dependencies]
 approx = "0.5.1"

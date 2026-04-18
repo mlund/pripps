@@ -177,9 +177,9 @@ impl Pripps {
         }
 
         let active_solvent = solvent.filter(|cfg| cfg.is_active());
-        if active_solvent.is_some() && !matches!(scheme, IntensityScheme::Svergun { .. }) {
+        if active_solvent.is_some() && matches!(scheme, IntensityScheme::Debye { .. }) {
             return Err(Error::usage(
-                "solvent correction is only supported by the Svergun scheme",
+                "solvent correction is not supported by the Debye scheme",
             ));
         }
 
@@ -194,7 +194,11 @@ impl Pripps {
             }
             IntensityScheme::Direct { pmax } => {
                 log::info!("Using direct Fourier transform with p_max = {pmax}");
-                Box::new(DirectTransform::new(self.formfactors.clone(), pmax))
+                Box::new(DirectTransform::new(
+                    self.formfactors.clone(),
+                    pmax,
+                    active_solvent.cloned(),
+                ))
             }
             IntensityScheme::Svergun {
                 qmin,

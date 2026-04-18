@@ -49,10 +49,10 @@ pub enum Commands {
         /// Cubic box side length (Å)
         #[clap(short = 'b', long = "box", default_value = "200.0")]
         side_length: f64,
+        #[clap(flatten)]
+        solvent: SolventArgs,
     },
-    /// Scattering intensity via Svergun's spherical-harmonic multipole
-    /// expansion (Acta Cryst. A51, 1995). Linear in atom count —
-    /// preferred for large structures and iterative fitting.
+    /// Scattering intensity via spherical-harmonic multipole expansion, O(N).
     Svergun {
         /// Minimum q value (1/Å)
         #[clap(long, default_value = "0.0")]
@@ -67,35 +67,88 @@ pub enum Commands {
         /// auto-computed from the structure's extent and qmax.
         #[clap(long)]
         lmax: Option<usize>,
-        /// Excluded-volume model
-        #[clap(long, value_enum, default_value_t = ExcludedKind::Disabled)]
-        excluded: ExcludedKind,
-        /// Scale on excluded-volume displaced volumes (PepsiSAXS `r0`)
-        #[clap(long, default_value = "1.0")]
-        volume_scale: f64,
-        /// Grid spacing (Å) for `--excluded grid`
-        #[clap(long, default_value = "1.0")]
-        excluded_spacing: f64,
-        /// Bulk solvent electron density (e/Å³)
-        #[clap(long, default_value = "0.334")]
-        bulk_electron_density: f64,
-        /// Hydration-shell model
-        #[clap(long, value_enum, default_value_t = HydrationKind::Disabled)]
-        hydration: HydrationKind,
-        /// Water probe radius (Å) for SASA/grid shell
-        #[clap(long, default_value = "1.8")]
-        probe: f64,
-        /// Grid spacing (Å) for `--hydration grid`
-        #[clap(long, default_value = "1.5")]
-        spacing: f64,
-        /// Shell thickness (Å) for `--hydration grid`
-        #[clap(long, default_value = "3.0")]
-        thickness: f64,
-        /// Hydration shell excess electron density (e/Å³).
-        /// ~0.03 for SASA, ~0.017 for grid
-        #[clap(long, default_value = "0.03")]
-        contrast_density: f64,
+        #[clap(flatten)]
+        solvent: SolventArgs,
     },
+}
+
+/// Solvent correction parameters shared by Svergun and Direct.
+#[derive(Debug, Clone, clap::Args)]
+pub struct SolventArgs {
+    /// Excluded-volume model
+    #[clap(long, value_enum, default_value_t = ExcludedKind::Disabled)]
+    excluded: ExcludedKind,
+    /// Scale on excluded-volume displaced volumes (PepsiSAXS `r0`)
+    #[clap(long, default_value = "1.0")]
+    volume_scale: f64,
+    /// Grid spacing (Å) for `--excluded grid`
+    #[clap(long, default_value = "1.0")]
+    excluded_spacing: f64,
+    /// Bulk solvent electron density (e/Å³)
+    #[clap(long, default_value = "0.334")]
+    bulk_electron_density: f64,
+    /// Hydration-shell model
+    #[clap(long, value_enum, default_value_t = HydrationKind::Disabled)]
+    hydration: HydrationKind,
+    /// Water probe radius (Å) for SASA/grid/voronoi shell
+    #[clap(long, default_value = "1.8")]
+    probe: f64,
+    /// Grid spacing (Å) for `--hydration grid`
+    #[clap(long, default_value = "1.5")]
+    spacing: f64,
+    /// Shell thickness (Å) for `--hydration grid`
+    #[clap(long, default_value = "3.0")]
+    thickness: f64,
+    /// Hydration shell excess electron density (e/Å³).
+    /// ~0.03 for SASA, ~0.017 for grid
+    #[clap(long, default_value = "0.03")]
+    contrast_density: f64,
+}
+
+impl SolventArgs {
+    /// Build a [`SolventConfig`], returning `None` when neither
+    /// excluded volume nor hydration is active.
+    fn to_config(&self) -> Option<SolventConfig> {
+        let excluded = match self.excluded {
+            ExcludedKind::Disabled => ExcludedVolume::Disabled,
+            ExcludedKind::Fraser => ExcludedVolume::Fraser {
+                volume_scale: self.volume_scale,
+            },
+            ExcludedKind::Foxs => ExcludedVolume::FraserFoxs {
+                volume_scale: self.volume_scale,
+            },
+            ExcludedKind::Grid => ExcludedVolume::Grid {
+                spacing: self.excluded_spacing,
+                volume_scale: self.volume_scale,
+            },
+            ExcludedKind::Voronoi => ExcludedVolume::Voronoi {
+                volume_scale: self.volume_scale,
+            },
+        };
+        let hydration = match self.hydration {
+            HydrationKind::Disabled => Hydration::Disabled,
+            HydrationKind::Sasa => Hydration::Sasa {
+                probe: self.probe,
+                contrast_density: self.contrast_density,
+            },
+            HydrationKind::Grid => Hydration::Grid {
+                spacing: self.spacing,
+                thickness: self.thickness,
+                probe: self.probe,
+                contrast_density: self.contrast_density,
+            },
+            HydrationKind::Voronoi => Hydration::Voronoi {
+                probe: self.probe,
+                contrast_density: self.contrast_density,
+            },
+        };
+        let cfg = SolventConfig {
+            excluded,
+            hydration,
+            bulk_electron_density: self.bulk_electron_density,
+        };
+        cfg.is_active().then_some(cfg)
+    }
 }
 
 /// Which excluded-volume generator to use.
@@ -196,71 +249,31 @@ fn command_to_scheme(
         Commands::Debye { qmin, qmax, nq } => {
             (IntensityScheme::Debye { qmin, qmax, nq }, None, None)
         }
-        Commands::Direct { pmax, side_length } => (
+        Commands::Direct {
+            pmax,
+            side_length,
+            solvent,
+        } => (
             IntensityScheme::Direct { pmax },
             Some([side_length; 3]),
-            None,
+            solvent.to_config(),
         ),
         Commands::Svergun {
             qmin,
             qmax,
             nq,
             lmax,
-            excluded,
-            volume_scale,
-            excluded_spacing,
-            bulk_electron_density,
-            hydration,
-            probe,
-            spacing,
-            thickness,
-            contrast_density,
-        } => {
-            let solvent = SolventConfig {
-                excluded: match excluded {
-                    ExcludedKind::Disabled => ExcludedVolume::Disabled,
-                    ExcludedKind::Fraser => ExcludedVolume::Fraser { volume_scale },
-                    ExcludedKind::Foxs => ExcludedVolume::FraserFoxs { volume_scale },
-                    ExcludedKind::Grid => ExcludedVolume::Grid {
-                        spacing: excluded_spacing,
-                        volume_scale,
-                    },
-                    ExcludedKind::Voronoi => ExcludedVolume::Voronoi { volume_scale },
-                },
-                hydration: match hydration {
-                    HydrationKind::Disabled => Hydration::Disabled,
-                    HydrationKind::Sasa => Hydration::Sasa {
-                        probe,
-                        contrast_density,
-                    },
-                    HydrationKind::Grid => Hydration::Grid {
-                        spacing,
-                        thickness,
-                        probe,
-                        contrast_density,
-                    },
-                    HydrationKind::Voronoi => Hydration::Voronoi {
-                        probe,
-                        contrast_density,
-                    },
-                },
-                bulk_electron_density,
-            };
-            // Drop the config if neither contribution is active, so
-            // the vacuum fast path and its bit-identity stay intact
-            // when no solvent flag was passed.
-            let solvent = solvent.is_active().then_some(solvent);
-            (
-                IntensityScheme::Svergun {
-                    qmin,
-                    qmax,
-                    nq,
-                    l_max: lmax,
-                },
-                None,
-                solvent,
-            )
-        }
+            solvent,
+        } => (
+            IntensityScheme::Svergun {
+                qmin,
+                qmax,
+                nq,
+                l_max: lmax,
+            },
+            None,
+            solvent.to_config(),
+        ),
     }
 }
 

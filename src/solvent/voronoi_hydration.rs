@@ -36,8 +36,9 @@ pub(super) fn dummies(
     // Depth0 (12 icosahedron vertices per atom) is sufficient for
     // SAXS resolution — finer subdivisions add spheres without
     // improving the fit but increase the O(N·Q·L²) expansion cost.
-    let spheres = compute_solvent_spheres(&balls, probe, None, Some(SubdivisionDepth::Depth0))
-        .map_err(|e| Error::internal(format!("Voronoi solvent spheres: {e}")))?;
+    let spheres =
+        compute_solvent_spheres(&balls, probe, None, Some(SubdivisionDepth::Depth0), None)
+            .map_err(|e| Error::internal(format!("Voronoi solvent spheres: {e}")))?;
 
     let positions: Vec<Vector3> = spheres
         .iter()
@@ -58,11 +59,7 @@ pub(super) fn dummies(
         .iter()
         .map(|s| {
             let total = parent_weight_sum[s.parent_index];
-            if total > 0.0 {
-                s.weight / total
-            } else {
-                0.0
-            }
+            if total > 0.0 { s.weight / total } else { 0.0 }
         })
         .collect();
 
