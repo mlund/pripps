@@ -106,7 +106,7 @@ pub enum ExcludedKind {
     Fraser,
     Foxs,
     Grid,
-    Uniform,
+    Voronoi,
 }
 
 /// Which hydration-shell generator to use.
@@ -224,7 +224,7 @@ fn command_to_scheme(
                         spacing: excluded_spacing,
                         volume_scale,
                     },
-                    ExcludedKind::Uniform => ExcludedVolume::Uniform { volume_scale },
+                    ExcludedKind::Voronoi => ExcludedVolume::Voronoi { volume_scale },
                 },
                 hydration: match hydration {
                     HydrationKind::Disabled => Hydration::Disabled,

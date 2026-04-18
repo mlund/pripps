@@ -33,7 +33,7 @@ mod fraser;
 mod grid;
 mod grid_excluded;
 mod sasa;
-mod uniform_excluded;
+mod voronoi_excluded;
 
 use crate::formfactor::{FormFactor, FormFactorMap};
 use crate::{Error, Result, Structure, Vector3};
@@ -119,7 +119,7 @@ impl ExcludedVolume {
             Self::Fraser { volume_scale }
             | Self::FraserFoxs { volume_scale }
             | Self::Grid { volume_scale, .. }
-            | Self::Uniform { volume_scale } => *volume_scale,
+            | Self::Voronoi { volume_scale } => *volume_scale,
         }
     }
 }
@@ -183,11 +183,11 @@ pub enum ExcludedVolume {
         spacing: f64,
         volume_scale: f64,
     },
-    /// Uniform excluded-volume subtraction: each atom displaces
-    /// the same average charge `ρ × V_total / N`, where V_total
-    /// is the total molecular volume from Voronoi tessellation
-    /// (probe=0, bare atomic radii).
-    Uniform {
+    /// Per-atom excluded volume from radical Voronoi tessellation.
+    /// Each atom's displaced volume is its Voronoi cell volume
+    /// (probe=0), used to build a Fraser-style Gaussian. Needs
+    /// only atomic radii, not tabulated displaced volumes.
+    Voronoi {
         volume_scale: f64,
     },
 }
@@ -361,8 +361,8 @@ impl ExcludedVolume {
             Self::Grid { spacing, .. } => {
                 grid_excluded::dummies(structure, formfactors, bulk_electron_density, *spacing)
             }
-            Self::Uniform { .. } => {
-                uniform_excluded::dummies(structure, formfactors, bulk_electron_density)
+            Self::Voronoi { .. } => {
+                voronoi_excluded::dummies(structure, formfactors, bulk_electron_density)
             }
         }
     }

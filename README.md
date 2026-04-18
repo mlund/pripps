@@ -98,7 +98,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"uniform"` | Excluded-volume model |
+| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"` | Excluded-volume model |
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
@@ -120,7 +120,7 @@ subtracted from the atomic scattering via
 | `fraser` | One Gaussian dummy per atom, sized by `displaced_volume` from the YAML file. Uses the PepsiSAXS/CRYSOL 4π denominator. Best for atomic-resolution structures with tabulated volumes. | `displaced_volume` per atom kind |
 | `foxs` | Same as `fraser` but with the FoXS 16π denominator, giving a sharper Gaussian that subtracts less at high q. | `displaced_volume` per atom kind |
 | `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian based on cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
-| `uniform` | All atoms share a single Fraser Gaussian sized by the average Voronoi cell volume (`V_total / N`). Simplest model; useful for coarse-grained structures where per-atom displaced volumes are unavailable. | `radius` per atom kind |
+| `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes from the radical tessellation (probe=0). Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when

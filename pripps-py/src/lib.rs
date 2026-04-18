@@ -118,10 +118,10 @@ fn solvent_from_kwargs(
             spacing: excluded_spacing,
             volume_scale,
         },
-        "uniform" => ExcludedVolume::Uniform { volume_scale },
+        "voronoi" => ExcludedVolume::Voronoi { volume_scale },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, or `uniform`)"
+                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, or `voronoi`)"
             )));
         }
     };
