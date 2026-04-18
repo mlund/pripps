@@ -3,7 +3,7 @@ use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use ::pripps::{ExcludedVolume, Hydration, Intensity, Pripps, SolventConfig, SvergunModel};
+use ::pripps::{ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig};
 
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);
@@ -18,8 +18,8 @@ impl PyPripps {
             .map_err(into_py_err)
     }
 
-    /// Prepare a stateful Svergun fit. Caches per-q coefficient
-    /// triangles so `SvergunModel.intensity` is cheap to call
+    /// Prepare a stateful Multipole fit. Caches per-q coefficient
+    /// triangles so `MultipoleModel.intensity` is cheap to call
     /// repeatedly with different `(volume_scale, contrast_density)`.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
@@ -39,7 +39,7 @@ impl PyPripps {
         contrast_density = 0.03,
         bulk_electron_density = 0.334,
     ))]
-    fn svergun_model(
+    fn multipole_model(
         &self,
         structure_file: &str,
         qmin: f64,
@@ -55,7 +55,7 @@ impl PyPripps {
         thickness: f64,
         contrast_density: f64,
         bulk_electron_density: f64,
-    ) -> PyResult<PySvergunModel> {
+    ) -> PyResult<PyMultipoleModel> {
         let cfg = solvent_from_kwargs(
             excluded,
             volume_scale,
@@ -68,17 +68,17 @@ impl PyPripps {
             bulk_electron_density,
         )?;
         self.0
-            .svergun_model(structure_file.as_ref(), qmin, qmax, nq, l_max, &cfg)
-            .map(PySvergunModel)
+            .multipole_model(structure_file.as_ref(), qmin, qmax, nq, l_max, &cfg)
+            .map(PyMultipoleModel)
             .map_err(into_py_err)
     }
 }
 
-#[pyclass(name = "SvergunModel", module = "pripps")]
-struct PySvergunModel(SvergunModel);
+#[pyclass(name = "MultipoleModel", module = "pripps")]
+struct PyMultipoleModel(MultipoleModel);
 
 #[pymethods]
-impl PySvergunModel {
+impl PyMultipoleModel {
     /// Compute I(q) for the given fit parameters. Returns a dict of
     /// numpy arrays: `q`, `total`, `atoms`, `excluded`, `hydration`.
     fn intensity<'py>(
@@ -184,6 +184,6 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
 #[pymodule]
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPripps>()?;
-    m.add_class::<PySvergunModel>()?;
+    m.add_class::<PyMultipoleModel>()?;
     Ok(())
 }

@@ -53,7 +53,7 @@ pub enum Commands {
         solvent: SolventArgs,
     },
     /// Scattering intensity via spherical-harmonic multipole expansion, O(N).
-    Svergun {
+    Multipole {
         /// Minimum q value (1/Å)
         #[clap(long, default_value = "0.0")]
         qmin: f64,
@@ -72,7 +72,7 @@ pub enum Commands {
     },
 }
 
-/// Solvent correction parameters shared by Svergun and Direct.
+/// Solvent correction parameters shared by Multipole and Direct.
 #[derive(Debug, Clone, clap::Args)]
 pub struct SolventArgs {
     /// Excluded-volume model
@@ -235,13 +235,13 @@ pub fn do_main() -> Result<()> {
         let solvent = solvent.unwrap_or_default();
 
         match scheme {
-            IntensityScheme::Svergun {
+            IntensityScheme::Multipole {
                 qmin: _,
                 qmax: _,
                 nq,
                 l_max,
             } => {
-                let model = pripps.svergun_model(
+                let model = pripps.multipole_model(
                     &args.input,
                     0.0,
                     exp.q_max(),
@@ -255,7 +255,7 @@ pub fn do_main() -> Result<()> {
             }
             _ => {
                 return Err(crate::Error::usage(
-                    "fitting is currently only supported by the Svergun scheme",
+                    "fitting is currently only supported by the Multipole scheme",
                 ));
             }
         };
@@ -277,7 +277,7 @@ pub fn do_main() -> Result<()> {
 
 /// Translate parsed CLI arguments into an [`IntensityScheme`], an
 /// optional explicit box override (used by `Direct`), and an optional
-/// [`SolventConfig`] (only produced by `Svergun` when an excluded or
+/// [`SolventConfig`] (only produced by `Multipole` when an excluded or
 /// hydration model is selected).
 fn command_to_scheme(
     command: Commands,
@@ -295,14 +295,14 @@ fn command_to_scheme(
             Some([side_length; 3]),
             solvent.to_config(),
         ),
-        Commands::Svergun {
+        Commands::Multipole {
             qmin,
             qmax,
             nq,
             lmax,
             solvent,
         } => (
-            IntensityScheme::Svergun {
+            IntensityScheme::Multipole {
                 qmin,
                 qmax,
                 nq,
@@ -315,7 +315,7 @@ fn command_to_scheme(
 }
 
 /// Write the intensity curve as CSV: two columns for the vacuum path,
-/// five when the three-contribution Svergun path populated
+/// five when the three-contribution Multipole path populated
 /// `contributions`. The first row is a literal header; subsequent
 /// rows are comma-separated `f64` values — safe raw-format CSV
 /// because numeric fields never contain commas or quotes.

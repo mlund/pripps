@@ -17,7 +17,7 @@
 //!   bulk for most proteins). PepsiSAXS calls this `B` (`B_l^m`).
 //!
 //! Both are combined coherently with the protein contribution (`A`)
-//! in the Svergun multipole expansion
+//! in the Multipole expansion
 //! (<https://doi.org/10.1107/S0021889895007047>, also the scheme used
 //! in PepsiSAXS, <https://doi.org/10.1107/S1600576717007257>). The
 //! orientation-averaged total intensity is the squared magnitude of
@@ -108,7 +108,7 @@ impl Default for SolventConfig {
 }
 
 impl SolventConfig {
-    /// `true` when at least one contribution is active. Svergun's
+    /// `true` when at least one contribution is active. The multipole method's
     /// three-contribution path is skipped entirely for the all-`None`
     /// config so vacuum callers pay nothing.
     pub(crate) const fn is_active(&self) -> bool {
@@ -230,7 +230,7 @@ pub enum Hydration {
     },
 }
 
-/// A set of dummy scatterers that feed into the Svergun multipole
+/// A set of dummy scatterers that feed into the Multipole
 /// kernel. Positions are per-dummy; form factors come in two
 /// flavours via [`DummyFormFactors`] — per-dummy (Fraser) or one
 /// shared factor with per-dummy scalar weights (SASA).
@@ -272,7 +272,7 @@ impl Default for DummyFormFactors {
 impl DummySet {
     // `Result` instead of `debug_assert`: the positions/form-factors
     // parity is a data-shape contract every generator must uphold,
-    // and a silent mismatch in release would corrupt the Svergun
+    // and a silent mismatch in release would corrupt the Multipole
     // per-atom iteration without an explicit panic site.
     pub(super) fn per_dummy(
         positions: Vec<Vector3>,
@@ -322,7 +322,7 @@ impl DummySet {
     //
     // Out-parameter rather than returning `Vec<f64>` so the rayon
     // worker's per-q scratch (`PerQBuffers::form_factors` in
-    // `svergun::mod`) can be reused across every q iteration. A
+    // `multipole::mod`) can be reused across every q iteration. A
     // returned `Vec` would allocate once per q per contribution —
     // three allocations per inner-loop iteration in the
     // three-contribution path.

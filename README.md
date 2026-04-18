@@ -24,7 +24,7 @@ uv pip install -e .          # with uv (recommended)
 import pripps
 
 pr = pripps.Pripps(atomfile="assets/foxs_formfactors.yaml")
-model = pr.svergun_model(
+model = pr.multipole_model(
     structure_file="tests/lysozyme/6lyz.pdb",
     qmin=0.0,
     qmax=0.5,
@@ -56,7 +56,7 @@ The returned dict contains:
 
 The expensive per-structure work (basis construction, SASA
 tessellation, per-q coefficient triangles) runs once in
-`svergun_model`. Each `model.intensity(volume_scale,
+`multipole_model`. Each `model.intensity(volume_scale,
 contrast_density)` call re-runs only the cheap coefficient-level
 combine — fast enough for scipy or a grid search.
 
@@ -219,20 +219,20 @@ pripps --help
 # Debye formula (exact, O(N²))
 pripps -a atoms.yaml -i structure.pdb debye
 
-# Svergun multipole expansion (fast, O(N·L²))
-pripps -a atoms.yaml -i structure.pdb svergun
+# Multipole expansion (fast, O(N·L²))
+pripps -a atoms.yaml -i structure.pdb multipole
 
 # With solvent correction — CSV output with 5 columns
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
-    svergun --excluded fraser --hydration sasa
+    multipole --excluded fraser --hydration sasa
 
 # Fit against experimental data
 pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
     -f experimental.dat -o fit.csv \
-    svergun --excluded foxs --hydration sasa
+    multipole --excluded foxs --hydration sasa
 
 # Trajectory averaging
-pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc svergun
+pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc multipole
 ```
 
 Output is CSV: `q,total` for vacuum, or

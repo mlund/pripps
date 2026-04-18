@@ -13,25 +13,25 @@ mod explicit;
 pub mod fit;
 mod formfactor;
 mod input;
+mod multipole;
 mod q_sampler;
 mod solvent;
 mod structure;
-mod svergun;
 mod trajectory;
 
 use std::path::{self, Path};
 
 use debye::DebyeIntensity;
 use explicit::DirectTransform;
+use multipole::MultipoleIntensity;
 use structure::Structure;
-use svergun::SvergunIntensity;
 use trajectory::trajectory_average;
 
 pub use atomkind::{AtomKind, FindByName};
 pub use error::{Error, Result};
 pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
+pub use multipole::MultipoleModel;
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
-pub use svergun::SvergunModel;
 
 /// Crate-internal short alias. Not re-exported; public signatures use
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
@@ -45,9 +45,9 @@ pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 /// zero-copy `ndarray` view. All pripps calculators return this type;
 /// callers typically iterate via `.q.iter().zip(&curve.total)`.
 ///
-/// `contributions` is populated when Svergun runs with an active
+/// `contributions` is populated when Multipole runs with an active
 /// [`SolventConfig`], carrying the per-contribution diagnostic
-/// columns. It is `None` for vacuum Svergun, Debye, and Direct.
+/// columns. It is `None` for vacuum Multipole, Debye, and Direct.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Intensity {
     pub q: Vec<f64>,
@@ -56,7 +56,7 @@ pub struct Intensity {
 }
 
 /// Per-contribution intensity curves emitted by the three-contribution
-/// Svergun path, each parallel to [`Intensity::q`].
+/// Multipole path, each parallel to [`Intensity::q`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contributions {
     pub atoms: Vec<f64>,
@@ -76,12 +76,12 @@ pub enum IntensityScheme {
     /// frame when averaging over an XTC, or via the `box_sides` override
     /// parameter of [`Pripps::intensity`] for single-frame calls.
     Direct { pmax: usize },
-    /// Svergun's spherical-harmonic multipole expansion
+    /// Spherical-harmonic multipole expansion
     /// (*Acta Cryst. A51*, 1995). O(N·Q·L²), linear in atom count —
     /// preferred for large structures and iterative fitting. `l_max`
     /// is the multipole truncation order; `None` auto-selects from
     /// the structure's extent and `qmax`.
-    Svergun {
+    Multipole {
         qmin: f64,
         qmax: f64,
         nq: usize,
@@ -120,13 +120,13 @@ impl Pripps {
         self.formfactors.kinds().cloned().collect()
     }
 
-    /// Prepare a stateful Svergun fit. Caches the per-q multipole
+    /// Prepare a stateful Multipole fit. Caches the per-q multipole
     /// coefficient triangles (atoms, excluded volume, hydration) so
-    /// repeated calls to [`SvergunModel::intensity`] with different
+    /// repeated calls to [`MultipoleModel::intensity`] with different
     /// `(volume_scale, contrast_density)` only pay the cheap
     /// O(Q·L²) combine, not the full O(N·Q·L²) basis + coefficient
     /// construction.
-    pub fn svergun_model(
+    pub fn multipole_model(
         &self,
         structure_file: &path::Path,
         qmin: f64,
@@ -134,18 +134,18 @@ impl Pripps {
         nq: usize,
         l_max: Option<usize>,
         solvent: &SolventConfig,
-    ) -> Result<SvergunModel> {
+    ) -> Result<MultipoleModel> {
         let structure = Structure::from_file(structure_file, &self.atomkinds())?;
         let sampler = q_sampler::QSampler::linear(self.formfactors.clone(), qmin, qmax, nq);
-        let l_max = svergun::resolve_l_max(l_max, &structure.pos, &sampler.q_values);
+        let l_max = multipole::resolve_l_max(l_max, &structure.pos, &sampler.q_values);
         log::info!(
-            "Svergun fit preparation: l_max = {} over {} atoms, {} q-points",
+            "Multipole fit preparation: l_max = {} over {} atoms, {} q-points",
             l_max,
             structure.pos.len(),
             sampler.q_values.len(),
         );
-        let atoms_basis = svergun::SphericalBasis::new(&structure.pos, l_max);
-        svergun::build_model(&sampler, &structure, &atoms_basis, solvent)
+        let atoms_basis = multipole::SphericalBasis::new(&structure.pos, l_max);
+        multipole::build_model(&sampler, &structure, &atoms_basis, solvent)
     }
 
     /// Compute I(q) for a structure under the given [`IntensityScheme`].
@@ -201,16 +201,14 @@ impl Pripps {
                     active_solvent.cloned(),
                 ))
             }
-            IntensityScheme::Svergun {
+            IntensityScheme::Multipole {
                 qmin,
                 qmax,
                 nq,
                 l_max,
             } => {
-                log::info!(
-                    "Using Svergun multipole expansion for 𝐼(𝑞) over {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹"
-                );
-                Box::new(SvergunIntensity::new(
+                log::info!("Using Multipole expansion for 𝐼(𝑞) over {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
+                Box::new(MultipoleIntensity::new(
                     self.formfactors.clone(),
                     (qmin, qmax),
                     nq,
@@ -288,7 +286,7 @@ mod tests {
         };
         let one_shot = pripps
             .intensity(
-                IntensityScheme::Svergun {
+                IntensityScheme::Multipole {
                     qmin: 0.0,
                     qmax: 0.3,
                     nq: 20,
@@ -303,7 +301,7 @@ mod tests {
             .unwrap();
 
         let fit = pripps
-            .svergun_model(&xyz, 0.0, 0.3, 20, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, 20, None, &solvent)
             .unwrap();
         let from_fit = fit.intensity(1.0, 0.03);
 
@@ -323,7 +321,7 @@ mod tests {
             ..Default::default()
         };
         let fit = pripps
-            .svergun_model(&xyz, 0.0, 0.3, 20, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, 20, None, &solvent)
             .unwrap();
         let zero = fit.intensity(0.0, 0.0);
         let contributions = zero.contributions.as_ref().unwrap();
@@ -338,7 +336,7 @@ mod tests {
             ..Default::default()
         };
         let fit = pripps
-            .svergun_model(&xyz, 0.0, 0.3, 10, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, 10, None, &solvent)
             .unwrap();
         let a = fit.intensity(1.0, 0.0);
         let b = fit.intensity(1.0, 0.0);
@@ -357,7 +355,7 @@ mod tests {
             ..Default::default()
         };
         let fit = pripps
-            .svergun_model(&xyz, 0.0, 0.3, 10, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, 10, None, &solvent)
             .unwrap();
         let a = fit.intensity(1.0, 0.0);
         let b = fit.intensity(1.0, 0.1);
@@ -383,7 +381,7 @@ mod tests {
         };
         let intensity = pripps
             .intensity(
-                IntensityScheme::Svergun {
+                IntensityScheme::Multipole {
                     qmin: 0.0,
                     qmax: 0.5,
                     nq: 500,
@@ -421,7 +419,7 @@ mod tests {
         };
         let intensity = pripps
             .intensity(
-                IntensityScheme::Svergun {
+                IntensityScheme::Multipole {
                     qmin: 0.0,
                     qmax: 0.5,
                     nq: 500,

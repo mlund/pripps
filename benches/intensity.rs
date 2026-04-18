@@ -3,19 +3,19 @@
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
 
-//! Criterion benchmarks comparing Debye vs Svergun intensity
+//! Criterion benchmarks comparing Debye vs Multipole intensity
 //! calculators across a range of structure sizes.
 //!
 //! Tests go through the public `Pripps::intensity` API, so the
 //! measured time includes file parsing, calculator construction
-//! (including `SphericalBasis::build` for Svergun), and the actual
+//! (including `SphericalBasis::build` for Multipole), and the actual
 //! compute. This is what a library consumer actually pays per call —
 //! a pure kernel benchmark would need a different entry point.
 //!
 //! Size picks: 100 / 500 / 5000 synthetic structures on a cubic
 //! lattice (lives in tempfiles built once at bench startup). The
-//! theoretical Debye-vs-Svergun crossover is around N ≈ 500 for
-//! typical l_max; in practice Svergun is already ahead at N = 100
+//! theoretical Debye-vs-Multipole crossover is around N ≈ 500 for
+//! typical l_max; in practice Multipole is already ahead at N = 100
 //! because the setup cost is dominated by the per-frame Debye pair
 //! sum even at that size.
 //!
@@ -68,7 +68,7 @@ const NQ: usize = 50;
 /// perturbation, not noise from different positions.
 ///
 /// 3 Å spacing matches the scale of real proteins (Cα–Cα ≈ 3.8 Å)
-/// so `r_max` and the Svergun criterion `l_max ≈ q_max · r_max`
+/// so `r_max` and the Multipole criterion `l_max ≈ q_max · r_max`
 /// land in a realistic range (l_max ≈ 10 at N=100, ≈ 25 at N=500,
 /// ≈ 50 at N=5000).
 ///
@@ -172,9 +172,9 @@ fn bench_intensity(c: &mut Criterion) {
             });
         });
 
-        group.bench_function(BenchmarkId::new("svergun", &id), |b| {
+        group.bench_function(BenchmarkId::new("multipole", &id), |b| {
             b.iter(|| {
-                let scheme = IntensityScheme::Svergun {
+                let scheme = IntensityScheme::Multipole {
                     qmin: QMIN,
                     qmax: QMAX,
                     nq: NQ,

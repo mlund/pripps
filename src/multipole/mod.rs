@@ -3,10 +3,10 @@
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
 
-//! Scattering intensity via Svergun's spherical-harmonic multipole
+//! Scattering intensity via Spherical-harmonic multipole
 //! expansion.
 //!
-//! Reference: Svergun, Barberato, Koch — CRYSOL, *J. Appl. Cryst.*
+//! Reference: Multipole, Barberato, Koch — CRYSOL, *J. Appl. Cryst.*
 //! **28**, 768 (1995). <https://doi.org/10.1107/S0021889895007047>
 //!
 //! Expands the plane wave `exp(i q·r)` in spherical harmonics so the
@@ -47,7 +47,7 @@ use num_complex::Complex;
 use rayon::prelude::*;
 
 /// Per-atom spherical-harmonic basis values: the spherical coordinates
-/// of every atom and the conjugated `Y_l^m*` tables Svergun's
+/// of every atom and the conjugated `Y_l^m*` tables that the multipole
 /// expansion evaluates at those coordinates.
 ///
 /// Built once per structure by [`SphericalBasis::build`] and reused
@@ -87,13 +87,13 @@ impl SphericalBasis {
     }
 }
 
-pub(crate) struct SvergunIntensity {
+pub(crate) struct MultipoleIntensity {
     sampler: QSampler,
     l_max_override: Option<usize>,
     solvent: Option<SolventConfig>,
 }
 
-impl SvergunIntensity {
+impl MultipoleIntensity {
     pub(crate) fn new(
         formfactors: FormFactorMap,
         q_minmax: (f64, f64),
@@ -114,7 +114,7 @@ impl SvergunIntensity {
 }
 
 /// Resolve the effective expansion order: user override if given,
-/// else the Svergun criterion `⌈q_max · r_max⌉ + 2`.
+/// else the Multipole criterion `⌈q_max · r_max⌉ + 2`.
 ///
 /// Uses `r_max` (farthest atom from origin) rather than `R_g`
 /// (radius of gyration) as a safe upper bound: `R_g` can
@@ -136,11 +136,11 @@ pub(crate) fn resolve_l_max(
     ((q_max * r_max).ceil() as usize) + 2
 }
 
-impl IntensityCalculator for SvergunIntensity {
+impl IntensityCalculator for MultipoleIntensity {
     fn calc_intensities(&self, structure: &Structure) -> Result<Intensity> {
         let l_max = self.effective_l_max(structure);
         log::info!(
-            "Svergun expansion: l_max = {} over {} atoms, {} q-points",
+            "Multipole expansion: l_max = {} over {} atoms, {} q-points",
             l_max,
             structure.pos.len(),
             self.sampler.q_values.len(),
@@ -249,7 +249,7 @@ impl<'a> Contribution<'a> {
     }
 }
 
-/// Vacuum Svergun: one scatterer set, single-column [`Intensity`].
+/// Vacuum Multipole: one scatterer set, single-column [`Intensity`].
 fn vacuum_intensity(
     sampler: &QSampler,
     atoms_basis: &SphericalBasis,
@@ -277,7 +277,7 @@ fn vacuum_intensity(
     })
 }
 
-/// Three-contribution Svergun path: atoms + excluded volume +
+/// Three-contribution Multipole path: atoms + excluded volume +
 /// hydration shell, combined coherently at the coefficient level.
 fn solvent_intensity(
     sampler: &QSampler,
@@ -294,13 +294,13 @@ fn solvent_intensity(
 
 /// Precompute the three per-q coefficient triangles for a structure.
 /// All the expensive, fit-invariant work lives here; the returned
-/// [`SvergunModel`] is cheap to re-query with different fit knobs.
+/// [`MultipoleModel`] is cheap to re-query with different fit knobs.
 pub(crate) fn build_model(
     sampler: &QSampler,
     structure: &Structure,
     atoms_basis: &SphericalBasis,
     cfg: &SolventConfig,
-) -> Result<SvergunModel> {
+) -> Result<MultipoleModel> {
     let l_max = atoms_basis.l_max;
     let excluded_dummies =
         cfg.excluded
@@ -348,7 +348,7 @@ pub(crate) fn build_model(
     debug_assert_eq!(excluded_coeffs.len(), sampler.q_values.len());
     debug_assert_eq!(hydration_coeffs.len(), sampler.q_values.len());
 
-    Ok(SvergunModel {
+    Ok(MultipoleModel {
         q_values: sampler.q_values.clone(),
         l_max,
         atoms_coeffs,
@@ -357,15 +357,15 @@ pub(crate) fn build_model(
     })
 }
 
-/// Cached three-contribution Svergun state for a single structure.
+/// Cached three-contribution Multipole state for a single structure.
 ///
 /// Holds the per-q multipole coefficient triangles for atoms,
 /// excluded volume, and hydration shell. The expensive O(N·Q·L²)
 /// work runs once at construction (via
-/// [`Pripps::svergun_model`]); the cheap O(Q·L²) combine
-/// runs per [`intensity`](SvergunModel::intensity) call with
+/// [`Pripps::multipole_model`]); the cheap O(Q·L²) combine
+/// runs per [`intensity`](MultipoleModel::intensity) call with
 /// different fit knobs `(volume_scale, contrast_density)`.
-pub struct SvergunModel {
+pub struct MultipoleModel {
     q_values: Vec<f64>,
     l_max: usize,
     atoms_coeffs: Vec<LowerTriangle<Complex<f64>>>,
@@ -373,7 +373,7 @@ pub struct SvergunModel {
     hydration_coeffs: Vec<LowerTriangle<Complex<f64>>>,
 }
 
-impl SvergunModel {
+impl MultipoleModel {
     /// Compute `I(q)` for the given fit parameters. Infallible —
     /// the inner loop is pure complex arithmetic over the cached
     /// coefficient triangles, no form-factor evaluation, no basis
@@ -422,7 +422,7 @@ impl SvergunModel {
     }
 }
 
-/// Build the Svergun multipole coefficients for one scatterer set.
+/// Build the Multipole coefficients for one scatterer set.
 /// The complex triangle is what lets the three contributions
 /// recombine coherently later; if each set returned a squared
 /// intensity the cross terms would already be lost.
@@ -506,7 +506,7 @@ fn combine_contributions(
 /// the `multipole_refactor_is_no_op` test which asserts that the
 /// split kernel matches the original's output bit-for-bit.
 #[cfg(test)]
-fn svergun_at_q(
+fn multipole_at_q(
     basis: &SphericalBasis,
     formfactors: &FormFactorMap,
     atom_ids: &[usize],
@@ -576,7 +576,7 @@ mod tests {
         // One atom at origin, f(q) = c. Only Y_0^0 contributes;
         // I(q) = 4π · |A_00|² · c² = c² (after normalization).
         let c = 3.0;
-        let calc = SvergunIntensity::new(constant_ff(c), (0.1, 0.5), 10, None, None).unwrap();
+        let calc = MultipoleIntensity::new(constant_ff(c), (0.1, 0.5), 10, None, None).unwrap();
         let structure = structure_with_ids(vec![(0.0, 0.0, 0.0)]);
         let out = calc.calc_intensities(&structure).unwrap();
         for i in &out.total {
@@ -596,8 +596,8 @@ mod tests {
         ]);
         let n = structure.pos.len() as f64;
 
-        let svergun = SvergunIntensity::new(constant_ff(c), (0.0, 0.1), 5, None, None).unwrap();
-        let s_out = svergun.calc_intensities(&structure).unwrap();
+        let multipole = MultipoleIntensity::new(constant_ff(c), (0.0, 0.1), 5, None, None).unwrap();
+        let s_out = multipole.calc_intensities(&structure).unwrap();
         let s0 = s_out.total[0];
 
         let debye = DebyeIntensity::new(constant_ff(c), (0.0, 0.1), 5).unwrap();
@@ -607,7 +607,7 @@ mod tests {
         let expected = (n * c) * (n * c);
         assert!(
             (s0 - expected).abs() < 1e-10,
-            "svergun q=0: {s0} ≠ {expected}"
+            "multipole q=0: {s0} ≠ {expected}"
         );
         assert!(
             (d0 - expected).abs() < 1e-10,
@@ -615,13 +615,13 @@ mod tests {
         );
         assert!(
             (s0 - d0).abs() < 1e-10,
-            "svergun ≠ debye at q=0: {s0} vs {d0}"
+            "multipole ≠ debye at q=0: {s0} vs {d0}"
         );
     }
 
     #[test]
     fn agrees_with_debye_on_two_atoms() {
-        // Closed-form: I_Debye(q) = 2 + 2 · sinc(q · r_12). Svergun
+        // Closed-form: I_Debye(q) = 2 + 2 · sinc(q · r_12). Multipole
         // truncates the expansion at finite l_max so disagreement is
         // truncation-order (a few × 1e-6 here); not a correctness bug.
         let structure = structure_with_ids(vec![(0.0, 0.0, 0.0), (4.0, 0.0, 0.0)]);
@@ -629,11 +629,11 @@ mod tests {
         let qmax = 0.5;
         let nq = 20;
 
-        let svergun =
-            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
+        let multipole =
+            MultipoleIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let debye = DebyeIntensity::new(constant_ff(1.0), (qmin, qmax), nq).unwrap();
 
-        let s_out = svergun.calc_intensities(&structure).unwrap();
+        let s_out = multipole.calc_intensities(&structure).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
 
         assert_eq!(s_out.q, d_out.q);
@@ -641,14 +641,14 @@ mod tests {
             let rel = (is - id).abs() / id.max(1e-10);
             assert!(
                 rel < 1e-4,
-                "q = {q}: svergun = {is}, debye = {id}, rel err = {rel}"
+                "q = {q}: multipole = {is}, debye = {id}, rel err = {rel}"
             );
         }
     }
 
     #[test]
     fn agrees_with_debye_on_small_cluster() {
-        // 10 deterministic positions inside a 15-Å box; Svergun vs
+        // 10 deterministic positions inside a 15-Å box; Multipole vs
         // Debye at 20 q values should agree to < 1% rel err.
         // Positions are a simple lattice shifted off the origin so
         // no atom sits at r = 0.
@@ -668,18 +668,18 @@ mod tests {
         let qmax = 0.5;
         let nq = 20;
 
-        let svergun =
-            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
+        let multipole =
+            MultipoleIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let debye = DebyeIntensity::new(constant_ff(1.0), (qmin, qmax), nq).unwrap();
 
-        let s_out = svergun.calc_intensities(&structure).unwrap();
+        let s_out = multipole.calc_intensities(&structure).unwrap();
         let d_out = debye.calc_intensities(&structure).unwrap();
 
         for ((q, &is), &id) in s_out.q.iter().zip(&s_out.total).zip(&d_out.total) {
             let rel = (is - id).abs() / id.max(1e-10);
             assert!(
                 rel < 0.01,
-                "q = {q}: svergun = {is}, debye = {id}, rel err = {rel}"
+                "q = {q}: multipole = {is}, debye = {id}, rel err = {rel}"
             );
         }
     }
@@ -688,7 +688,7 @@ mod tests {
     fn auto_l_max_respects_structure_extent() {
         // q_max · r_max = 1.0 · 50.0 = 50, so auto l_max = 52 (+2 margin).
         let structure = structure_with_ids(vec![(50.0, 0.0, 0.0)]);
-        let calc = SvergunIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, None, None).unwrap();
+        let calc = MultipoleIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, None, None).unwrap();
         let l = calc.effective_l_max(&structure);
         assert_eq!(l, 52);
     }
@@ -697,7 +697,7 @@ mod tests {
     fn explicit_l_max_overrides_auto() {
         // Would auto-select >> 5, but user forced 5.
         let structure = structure_with_ids(vec![(50.0, 0.0, 0.0)]);
-        let calc = SvergunIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, Some(5), None).unwrap();
+        let calc = MultipoleIntensity::new(constant_ff(1.0), (0.5, 1.0), 2, Some(5), None).unwrap();
         assert_eq!(calc.effective_l_max(&structure), 5);
     }
 
@@ -716,13 +716,14 @@ mod tests {
         let qmax = 0.4;
         let nq = 10;
 
-        let vacuum = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
+        let vacuum =
+            MultipoleIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let solvent_cfg = SolventConfig {
             excluded: crate::ExcludedVolume::Fraser { volume_scale: 0.0 },
             ..Default::default()
         };
         let solvent_calc =
-            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, Some(solvent_cfg))
+            MultipoleIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, Some(solvent_cfg))
                 .unwrap();
 
         let v_out = vacuum.calc_intensities(&structure).unwrap();
@@ -744,8 +745,9 @@ mod tests {
             excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
             ..Default::default()
         };
-        let calc = SvergunIntensity::new(constant_ff(1.0), (0.0, 0.3), nq, None, Some(solvent_cfg))
-            .unwrap();
+        let calc =
+            MultipoleIntensity::new(constant_ff(1.0), (0.0, 0.3), nq, None, Some(solvent_cfg))
+                .unwrap();
         let out = calc.calc_intensities(&structure).unwrap();
 
         assert_eq!(out.total.len(), nq);
@@ -770,8 +772,9 @@ mod tests {
             excluded: crate::ExcludedVolume::Fraser { volume_scale: 1.0 },
             ..Default::default()
         };
-        let calc = SvergunIntensity::new(constant_ff(6.0), (0.0, 0.05), 2, None, Some(solvent_cfg))
-            .unwrap();
+        let calc =
+            MultipoleIntensity::new(constant_ff(6.0), (0.0, 0.05), 2, None, Some(solvent_cfg))
+                .unwrap();
         let out = calc.calc_intensities(&structure).unwrap();
         let contributions = out.contributions.expect("contributions populated");
 
@@ -792,7 +795,8 @@ mod tests {
         let qmax = 0.4;
         let nq = 8;
 
-        let vacuum = SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
+        let vacuum =
+            MultipoleIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, None).unwrap();
         let solvent_cfg = SolventConfig {
             hydration: crate::Hydration::Sasa {
                 probe: 1.4,
@@ -801,7 +805,7 @@ mod tests {
             ..Default::default()
         };
         let sasa_calc =
-            SvergunIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, Some(solvent_cfg))
+            MultipoleIntensity::new(constant_ff(1.0), (qmin, qmax), nq, None, Some(solvent_cfg))
                 .unwrap();
 
         let v_out = vacuum.calc_intensities(&structure).unwrap();
@@ -829,8 +833,9 @@ mod tests {
             },
             ..Default::default()
         };
-        let calc = SvergunIntensity::new(constant_ff(6.0), (0.0, 0.2), 5, None, Some(solvent_cfg))
-            .unwrap();
+        let calc =
+            MultipoleIntensity::new(constant_ff(6.0), (0.0, 0.2), 5, None, Some(solvent_cfg))
+                .unwrap();
         let out = calc.calc_intensities(&structure).unwrap();
         let c = out.contributions.expect("contributions populated");
 
@@ -853,7 +858,7 @@ mod tests {
         let mut j_l = vec![0.0; l_max + 1];
 
         for q in [0.05, 0.1, 0.25, 0.4] {
-            let via_helper = svergun_at_q(&basis, &ffs, &structure.ids, q).unwrap();
+            let via_helper = multipole_at_q(&basis, &ffs, &structure.ids, q).unwrap();
             let ff = formfactor::formfactor_by_index(&ffs, q, &structure.ids).unwrap();
             let coeffs = multipole_coefficients(&basis, ff.as_slice(), q, &mut j_l);
             let via_split = intensity_from_multipoles(&coeffs, l_max);

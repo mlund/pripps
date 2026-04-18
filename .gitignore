@@ -11,6 +11,12 @@ Cargo.lock
 .DS_Store
 CLAUDE.md
 
+# Generated output files
+/*.csv
+/*.fit
+/*.log
+**/uv.lock
+
 # Python / maturin
 __pycache__/
 *.pyc

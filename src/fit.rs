@@ -256,7 +256,7 @@ where
     let cost = |c1: f64, c2: f64| chi2_per_point(&eval(c1, c2), exp);
 
     log::info!(
-        "Fit: initial χ²/N = {:.4} at c₁=1.0, c₂=0.03",
+        "Fit: initial χ²/N = {:.4} at excluded volume (c₁) = 1.0, hydration shell (c₂) = 0.03",
         cost(1.0, 0.03)
     );
 
@@ -265,7 +265,10 @@ where
     let theory = eval(c1, c2);
     let scale = compute_scale(&theory, exp);
 
-    log::info!("Fit: χ²/N = {chi2:.4}, c₁ = {c1:.4}, c₂ = {c2:.4}, scale = {scale:.6e}");
+    log::info!(
+        "Fit: χ²/N = {chi2:.4}, excluded volume (c₁) = {c1:.4}, \
+         hydration shell (c₂) = {c2:.4}, scale = {scale:.6e}"
+    );
 
     Ok(FitResult {
         volume_scale: c1,

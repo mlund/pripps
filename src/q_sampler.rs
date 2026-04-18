@@ -6,7 +6,7 @@
 //! Shared infrastructure for per-q-parallel intensity calculators.
 //!
 //! Every scheme pripps ships ([`crate::debye::DebyeIntensity`],
-//! [`crate::svergun::SvergunIntensity`], …) follows the same outer shape:
+//! [`crate::multipole::MultipoleIntensity`], …) follows the same outer shape:
 //! a grid of q values, a form-factor map, and a closure that turns a
 //! single q into `I(q)` using whatever per-structure state the
 //! calculator precomputed. [`QSampler`] captures exactly that pattern

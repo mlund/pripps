@@ -34,10 +34,10 @@ def chi2_per_point(q_theory, i_theory, exp):
     return np.sum(((scale * theory - i_exp) / sigma) ** 2) / len(q_exp)
 
 
-class TestSvergunModel(unittest.TestCase):
+class TestMultipoleModel(unittest.TestCase):
     def test_prepare_and_call(self):
         pr = pripps.Pripps("../assets/single_bead.yaml")
-        fit = pr.svergun_model(
+        fit = pr.multipole_model(
             "../tests/lysozyme/4lzt.xyz",
             qmin=0.0,
             qmax=0.5,
@@ -53,7 +53,7 @@ class TestSvergunModel(unittest.TestCase):
 
     def test_refit_produces_different_curves(self):
         pr = pripps.Pripps("../assets/single_bead.yaml")
-        fit = pr.svergun_model(
+        fit = pr.multipole_model(
             "../tests/lysozyme/4lzt.xyz",
             qmin=0.0,
             qmax=0.5,
@@ -68,7 +68,7 @@ class TestSvergunModel(unittest.TestCase):
     def test_bad_excluded_raises(self):
         pr = pripps.Pripps("../assets/single_bead.yaml")
         with self.assertRaises(ValueError) as ctx:
-            pr.svergun_model(
+            pr.multipole_model(
                 "../tests/lysozyme/4lzt.xyz",
                 qmin=0.0,
                 qmax=0.5,
@@ -102,7 +102,7 @@ class TestPepsiFit(unittest.TestCase):
         cls.exp = load_lyzexp()
         q_max = float(cls.exp[-1, 0])
         pr = pripps.Pripps("../assets/single_bead.yaml")
-        cls.model = pr.svergun_model(
+        cls.model = pr.multipole_model(
             "../tests/lysozyme/4lzt.pdb",
             qmin=0.0,
             qmax=q_max,

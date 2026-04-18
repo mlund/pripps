@@ -30,11 +30,11 @@ for line in open("tests/lysozyme/lyzexp.dat"):
 data = np.array(data)
 q_exp, i_exp, sigma = data[:, 0], data[:, 1], data[:, 2]
 
-# Prepare the Svergun model — expensive work runs once here.
+# Prepare the Multipole model — expensive work runs once here.
 # Uses FoXS-compatible Cromer-Mann form factors with the 16π
 # Fraser excluded-volume formula and SASA hydration.
 pr = pripps.Pripps(atomfile="assets/foxs_formfactors.yaml")
-model = pr.svergun_model(
+model = pr.multipole_model(
     structure_file="tests/lysozyme/6lyz.pdb",
     qmin=0.0,
     qmax=float(q_exp[-1]),

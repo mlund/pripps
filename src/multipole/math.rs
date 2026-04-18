@@ -3,11 +3,11 @@
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
 
-//! Numerical helpers for the Svergun multipole expansion: spherical
+//! Numerical helpers for the Multipole expansion: spherical
 //! coordinates, packed lower-triangular storage, normalized associated
 //! Legendre functions, spherical Bessel functions, and complex
 //! spherical harmonics. All crate-private, all specific to the
-//! Svergun calculator's needs.
+//! Multipole calculator's needs.
 
 use crate::Vector3;
 use num_complex::Complex;
