@@ -226,12 +226,20 @@ pripps -a atoms.yaml -i structure.pdb svergun
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
     svergun --excluded fraser --hydration sasa
 
+# Fit against experimental data
+pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
+    -f experimental.dat -o fit.csv \
+    svergun --excluded foxs --hydration sasa
+
 # Trajectory averaging
 pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc svergun
 ```
 
 Output is CSV: `q,total` for vacuum, or
 `q,total,atoms,excluded,hydration` when solvent is active.
+With `--fit`, output is `q,i_exp,i_fit,sigma` at experimental
+q points. The experimental file is auto-detected as CSV or
+whitespace-separated (3 columns: q, I, σ).
 
 ### Environment variables
 

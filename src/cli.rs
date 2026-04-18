@@ -194,6 +194,10 @@ pub struct Args {
     #[clap(short = 'o', long, default_value = "intensity.csv")]
     output: PathBuf,
 
+    /// Experimental SAXS data (q, I, σ) for fitting c₁ and c₂
+    #[clap(short = 'f', long)]
+    fit: Option<PathBuf>,
+
     /// Optional .xtc trajectory file with structures to average over
     #[clap(short = 'x', long)]
     xtcfile: Option<PathBuf>,
@@ -225,15 +229,48 @@ pub fn do_main() -> Result<()> {
     let pripps = Pripps::from_yaml(&args.atomfile)?;
     let (scheme, box_override, solvent) = command_to_scheme(args.command);
 
-    let intensity = pripps.intensity(
-        scheme,
-        &args.input,
-        args.xtcfile.as_deref(),
-        args.weights.as_deref(),
-        box_override,
-        solvent.as_ref(),
-    )?;
-    write_csv(&args.output, &intensity)?;
+    if let Some(fit_path) = &args.fit {
+        // Fit mode: optimise (c1, c2) against experimental data
+        let exp = crate::fit::ExpData::from_file(fit_path)?;
+        let solvent = solvent.unwrap_or_default();
+
+        match scheme {
+            IntensityScheme::Svergun {
+                qmin: _,
+                qmax: _,
+                nq,
+                l_max,
+            } => {
+                let model = pripps.svergun_model(
+                    &args.input,
+                    0.0,
+                    exp.q_max(),
+                    nq.max(500),
+                    l_max,
+                    &solvent,
+                )?;
+                let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                let out = model.intensity(result.volume_scale, result.contrast_density);
+                crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
+            }
+            _ => {
+                return Err(crate::Error::usage(
+                    "fitting is currently only supported by the Svergun scheme",
+                ));
+            }
+        };
+    } else {
+        // Normal mode: compute I(q) and write output
+        let intensity = pripps.intensity(
+            scheme,
+            &args.input,
+            args.xtcfile.as_deref(),
+            args.weights.as_deref(),
+            box_override,
+            solvent.as_ref(),
+        )?;
+        write_csv(&args.output, &intensity)?;
+    }
 
     Ok(())
 }
