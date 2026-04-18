@@ -31,7 +31,7 @@ pub enum Error {
 
     /// YAML parsing or serialization failure.
     #[error("YAML error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] yaml_serde::Error),
 
     /// Atom name in a structure file not found in the form-factor map.
     #[error("unknown atom name: {0}")]

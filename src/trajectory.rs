@@ -128,9 +128,11 @@ fn normalize_vector(v: &mut [f64]) -> Result<()> {
 /// Assumes that values are in nm and converts to Å
 pub fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
     const ANGSTROM_PER_NM: f64 = 10.0;
-    let sides = frame.boxvec.to_cols_array_2d();
-    let sides =
-        ANGSTROM_PER_NM * Vector3::new(sides[0][0] as f64, sides[1][1] as f64, sides[2][2] as f64);
+    // molly 0.6's BoxVec is [f32; 9] in column-major 3x3 layout;
+    // the orthorhombic side lengths are the (0,0), (1,1), (2,2)
+    // diagonal entries at indices 0, 4, 8.
+    let b = &frame.boxvec;
+    let sides = ANGSTROM_PER_NM * Vector3::new(b[0] as f64, b[4] as f64, b[8] as f64);
     log::trace!("frame side-length = {sides:?}");
     sides.norm_squared().gt(&f64::EPSILON).then_some(sides)
 }

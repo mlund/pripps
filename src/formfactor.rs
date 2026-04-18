@@ -332,7 +332,7 @@ fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
 /// Read YAML file with form factors for different atom types (atomic or coarse grained)
 pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     let file = File::open(path).with_path(path)?;
-    let mut specs: BTreeMap<String, AtomSpec> = serde_yaml::from_reader(file)?;
+    let mut specs: BTreeMap<String, AtomSpec> = yaml_serde::from_reader(file)?;
 
     convert_alias(&mut specs)?;
     convert_linear(&mut specs)?;
@@ -372,7 +372,7 @@ pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> 
         .try_collect()?;
 
     let mut file = File::create(path).with_path(path)?;
-    serde_yaml::to_writer(&mut file, &formfactor)?;
+    yaml_serde::to_writer(&mut file, &formfactor)?;
     Ok(())
 }
 
