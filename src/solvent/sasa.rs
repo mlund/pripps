@@ -57,6 +57,10 @@ pub(super) fn dummies(
         })
         .collect();
 
+    log::info!(
+        "SASA hydration: {} dummies at probe={probe:.1} Å",
+        weights.len()
+    );
     let water = water_form_factor(formfactors, "Hydration::Sasa")?;
     DummySet::weighted(structure.pos.clone(), water, weights)
 }

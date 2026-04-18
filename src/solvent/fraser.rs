@@ -85,6 +85,10 @@ pub(super) fn dummies(
         ));
     }
 
+    log::info!(
+        "Fraser excluded volume: {} dummies, ρ={bulk_electron_density:.3} e/ų",
+        positions.len()
+    );
     DummySet::per_dummy(positions, form_factors)
 }
 
