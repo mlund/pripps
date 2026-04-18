@@ -125,7 +125,7 @@ subtracted from the atomic scattering via
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when
-`displaced_volume` is not explicitly set). The `grid` and `uniform`
+`displaced_volume` is not explicitly set). The `grid` and `voronoi`
 models need only atomic radii.
 
 ### Hydration-shell models
@@ -226,7 +226,7 @@ full atomic-resolution form factors (vacuum):
 | Hardware | wall |
 |---|---:|
 | 10-core Apple Silicon laptop | ~4 s |
-| 64-thread AMD Threadripper (native build) | ~10 s |
+| 64-thread AMD Threadripper 3970X (`-C target-cpu=native`) | ~9 s |
 
 ### Tuning knob
 
@@ -267,9 +267,18 @@ pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
     -f experimental.dat -o fit.csv \
     multipole --excluded foxs --hydration sasa
 
-# Trajectory averaging
-pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc multipole
+# Trajectory averaging — use `direct` so each frame's periodic box
+# is honoured (multipole ignores PBC).
+pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc direct
 ```
+
+### Choosing a scheme
+
+| Scheme | Best for | Notes |
+|---|---|---|
+| `multipole` | Single structures, fitting loops | Fastest for large atomic PDBs; no periodic boundaries. |
+| `direct` | MD trajectories with periodic box | Evaluates I(q) on discrete Miller-index q-vectors; each frame's box is picked up from the XTC. |
+| `debye` | Small clusters, reference checks | Exact pair-distance sum; quadratic in atoms, fine under a few hundred. |
 
 Output is CSV: `q,total` for vacuum, or
 `q,total,atoms,excluded,hydration` when solvent is active.
