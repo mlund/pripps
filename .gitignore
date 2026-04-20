@@ -19,6 +19,9 @@ CLAUDE.md
 /*.pdb
 **/uv.lock
 
+# Benchmark cache (downloaded PDBs, fits, logs)
+sasbdb_bench/
+
 # Python / maturin
 __pycache__/
 *.pyc
