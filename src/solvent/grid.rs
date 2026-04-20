@@ -32,7 +32,7 @@ pub(super) fn nearest_surface_distance(point: &Vector3, atoms: &[(Vector3, f64)]
 }
 
 /// Number of integer steps to cover `[lo, hi]` at the given spacing.
-pub(super) fn grid_steps(lo: f64, hi: f64, spacing: f64) -> usize {
+pub(super) const fn grid_steps(lo: f64, hi: f64, spacing: f64) -> usize {
     ((hi - lo) / spacing).ceil() as usize + 1
 }
 

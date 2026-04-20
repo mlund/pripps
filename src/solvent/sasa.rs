@@ -28,6 +28,9 @@ use crate::formfactor::FormFactorMap;
 use crate::solvent::{DummySet, atom_radii, balls_from_radii, water_form_factor};
 use crate::{Result, Structure};
 
+/// CRYSOL/PepsiSAXS-style hydration shell thickness (Å).
+const SHELL_THICKNESS: f64 = 3.0;
+
 pub(super) fn dummies(
     structure: &Structure,
     formfactors: &FormFactorMap,
@@ -36,10 +39,8 @@ pub(super) fn dummies(
     let atoms = atom_radii(structure, formfactors, "Hydration::Sasa")?;
     let balls = balls_from_radii(&atoms);
 
-    // One tessellation pass gives per-atom accessible surface area.
-    // `None` means the atom's Voronoi cell is unbounded — i.e. it
-    // has no occluding neighbors, which physically means fully
-    // exposed, so the accessibility fraction is 1.
+    // `None` area means the atom's Voronoi cell is unbounded:
+    // fully exposed, equivalent to a full sphere at this radius.
     let tessellation = compute_tessellation(&balls, probe, None, None, false);
     let areas = tessellation.sas_areas();
 
@@ -47,19 +48,22 @@ pub(super) fn dummies(
         .iter()
         .zip(areas.iter())
         .map(|(ball, area)| {
+            // Voronota cell areas can slightly exceed the flat sphere
+            // cap because boundaries track tangent planes, not curved
+            // surfaces — clamp to keep the bulk-water count sensible.
             let full_sphere = 4.0 * PI * (ball.r + probe).powi(2);
-            // `clamp`: Voronoi areas can slightly exceed the flat
-            // sphere area because cell boundaries track tangent
-            // planes, not curved surfaces. Keeps the weight
-            // meaningful.
-            area.as_ref()
-                .map_or(1.0, |a| (a / full_sphere).clamp(0.0, 1.0))
+            let a = area
+                .as_ref()
+                .map_or(full_sphere, |a| a.clamp(0.0, full_sphere));
+            a * SHELL_THICKNESS / super::WATER_VOLUME
         })
         .collect();
 
     log::info!(
-        "SASA hydration: {} dummies at probe={probe:.1} Å",
-        weights.len()
+        "SASA hydration: {} dummies at probe={probe:.1} Å, \
+         {:.0} bulk waters equivalent",
+        weights.len(),
+        weights.iter().sum::<f64>(),
     );
     let water = water_form_factor(formfactors, "Hydration::Sasa")?;
     DummySet::weighted(structure.pos.clone(), water, weights)
@@ -93,10 +97,12 @@ mod tests {
         ])
     }
 
+    fn lonely_weight() -> f64 {
+        4.0 * PI * (1.7 + 1.4_f64).powi(2) * SHELL_THICKNESS / crate::solvent::WATER_VOLUME * 10.0
+    }
+
     #[test]
     fn lonely_atom_has_full_weight() {
-        // Single atom has no neighbors → voronota returns None →
-        // fully exposed → weight = 1.0 exactly.
         let ff = ff_with_water(Some(1.7));
         let structure = Structure {
             pos: vec![crate::Vector3::new(0.0, 0.0, 0.0)],
@@ -107,14 +113,11 @@ mod tests {
         let mut out = Vec::new();
         dummies.form_factors_at(0.0, &mut out).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0], 10.0, "weight 1.0 × water 10.0 = 10.0");
+        assert!((out[0] - lonely_weight()).abs() < 1e-6);
     }
 
     #[test]
     fn two_nearby_atoms_have_reduced_weight() {
-        // Two atoms 1.0 Å apart, each radius 1.7. At probe 1.4 the
-        // probe sphere can't fit between them, so each atom's
-        // accessibility drops below 1.
         let ff = ff_with_water(Some(1.7));
         let structure = Structure {
             pos: vec![
@@ -128,9 +131,10 @@ mod tests {
         let mut out = Vec::new();
         dummies.form_factors_at(0.0, &mut out).unwrap();
         assert_eq!(out.len(), 2);
+        let lonely = lonely_weight();
         for f in out {
-            assert!(f > 0.0, "surface still partially accessible");
-            assert!(f < 10.0, "weight must drop below full (1.0 × 10.0)");
+            assert!(f > 0.0);
+            assert!(f < lonely);
         }
     }
 

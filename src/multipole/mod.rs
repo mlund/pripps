@@ -90,7 +90,7 @@ impl SphericalBasis {
     }
 
     /// Number of `Complex<f64>` slots per atom's angular triangle.
-    fn tri_len(&self) -> usize {
+    const fn tri_len(&self) -> usize {
         (self.l_max + 1) * (self.l_max + 2) / 2
     }
 }
@@ -139,6 +139,17 @@ impl MultipoleIntensity {
 /// The `+2` absorbs the usual "rule of thumb" margin — tests
 /// confirm it's enough for agreement with Debye to 1% on small
 /// clusters.
+/// Hard cap on the auto-selected expansion order. The `r_max`-based
+/// criterion can ask for hundreds of multipoles on large complexes
+/// fitted against WAXS-range data (e.g. a 16 000-atom structure at
+/// q_max ≈ 6 Å⁻¹ wants l_max ≈ 450). Above ~300 the per-atom angular
+/// storage becomes GB-scale and the kernel approaches the point
+/// where the `direct` Fourier-transform scheme is a better choice
+/// anyway. Cap + warn lets the user keep going with a noted loss
+/// of high-q convergence; override with `--lmax <N>` to force a
+/// larger value.
+const AUTO_L_MAX_CAP: usize = 300;
+
 pub(crate) fn resolve_l_max_per_q(
     override_val: Option<usize>,
     positions: &[Vector3],
@@ -148,10 +159,24 @@ pub(crate) fn resolve_l_max_per_q(
         return vec![l; q_values.len()];
     }
     let r_max = positions.iter().map(|p| p.norm()).fold(0.0_f64, f64::max);
-    q_values
+    let raw: Vec<usize> = q_values
         .iter()
         .map(|&q| ((q * r_max).ceil() as usize) + 2)
-        .collect()
+        .collect();
+    let max_raw = raw.iter().copied().max().unwrap_or(0);
+    if max_raw > AUTO_L_MAX_CAP {
+        log::warn!(
+            "capping auto-selected multipole order at l_max = {} \
+             (criterion asked for {} given r_max = {:.1} Å and \
+             q_max = {:.3} Å⁻¹). High-q convergence may be incomplete; \
+             override with `--lmax <N>` or switch to the `direct` scheme.",
+            AUTO_L_MAX_CAP,
+            max_raw,
+            r_max,
+            q_values.iter().copied().fold(0.0_f64, f64::max),
+        );
+    }
+    raw.into_iter().map(|l| l.min(AUTO_L_MAX_CAP)).collect()
 }
 
 /// Scalar maximum over per-q expansion orders. Kept for tests that

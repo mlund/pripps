@@ -68,7 +68,7 @@ impl PyPripps {
             bulk_electron_density,
         )?;
         self.0
-            .multipole_model(structure_file.as_ref(), qmin, qmax, nq, l_max, &cfg)
+            .multipole_model(structure_file.as_ref(), qmin, qmax, Some(nq), l_max, &cfg)
             .map(PyMultipoleModel)
             .map_err(into_py_err)
     }

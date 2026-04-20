@@ -103,8 +103,8 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
-| `contrast_density` | float (default 0.03) | Scales hydration shell (~0.03 for SASA, ~0.017 for grid) |
-| `probe` | float (default 1.8) | SASA/grid shell probe radius in Å |
+| `contrast_density` | float (default 0.03) | Fractional hydration-layer excess density (c₂ in `A − c₁·C + c₂·B`) — pepsi's `d_rho / ρ_water`, ~0.1 for a 10 % excess layer |
+| `probe` | float (default: 1.8 for SASA/grid, 6.0 for voronoi) | Water probe radius in Å |
 | `spacing` | float (default 1.5) | Grid spacing (Å) for `hydration="grid"` |
 | `thickness` | float (default 3.0) | Shell thickness (Å) for `hydration="grid"` |
 | `bulk_electron_density` | float (default 0.334) | Bulk solvent density in e/Å³ |
@@ -133,11 +133,17 @@ models need only atomic radii.
 The hydration shell accounts for the first water layer around the
 protein, which has a higher electron density than bulk solvent.
 
+All three schemes weight their dummies so `weight × F_water(q)`
+represents the scattering from bulk-density water in the dummy's
+associated volume — so `contrast_density` has a consistent
+physical meaning (fractional excess density above bulk) across
+schemes. Pepsi's `d_rho` in e/Å³ maps as `contrast_density ≈ d_rho / ρ_water`.
+
 | Model | Description |
 |-------|-------------|
-| `sasa` | FoXS-style: one dummy per atom weighted by solvent-accessible surface area fraction (Voronoi tessellation). |
-| `grid` | PepsiSAXS-style: water dummies on a Cartesian grid in a shell around the molecular envelope. |
-| `voronoi` | Explicit solvent spheres on the molecular surface via voronota-ltr tessellation. Dummies sit at actual water-accessible positions (not atom centers). Probe-insensitive and needs only `radius`. |
+| `sasa` | FoXS-style: one dummy per atom, weight = SASA area × 3 Å / 30 Å³ (accessible-area × shell-thickness → bulk-water count). Best with atomic-resolution YAMLs. |
+| `grid` | PepsiSAXS-style: water dummies on a Cartesian grid in a shell around the molecular envelope, weight = waters per cell at bulk density. |
+| `voronoi` | Explicit solvent spheres on the molecular surface via voronota-ltr, weight = cell volume / 30 Å³. Dummies sit at actual water-accessible positions (not atom centers). Needs only `radius`. Larger probe (default 6 Å) smooths the granular shell into an envelope-like layer that avoids spurious first-minimum interference. |
 
 ## Form factor definitions
 
@@ -184,8 +190,8 @@ hydrogens that the effective radius does not account for.
 
 | File | Description | Best for |
 |------|-------------|----------|
-| `assets/single_bead.yaml` | PepsiSAXS coefficients + coarse-grained residues | Cα / single-bead models, `--excluded fraser` |
-| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files, `--excluded foxs` |
+| `assets/single_bead.yaml` | PepsiSAXS coefficients + coarse-grained residues; also covers united-atom kinds (CH/CH₂/NH/…) used by atomic PDBs | Cα / single-bead models; atomic PDBs with `--excluded voronoi` |
+| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files with `--excluded foxs` |
 
 Both files use Gaussian b values in the standard s² = (q/4π)²
 convention (International Tables / Cromer-Mann). The atomic
@@ -222,6 +228,13 @@ thousands of atoms.
   (elongated complexes, stacked rings, multi-domain assemblies)
   where radius-of-gyration-based heuristics in other tools can
   silently under-converge at high q.
+- **Auto-selected q-grid density at the Nyquist rate** (`2·L + 1`
+  points) when `--nq` is omitted. The theory `I(q)` is band-limited
+  by the multipole truncation, so sampling any denser just computes
+  redundant points — experimental q values are reached via natural
+  cubic-spline interpolation on the theory grid. Shannon-Nyquist
+  sampling applied to SAXS is discussed by Moore,
+  [*J. Appl. Cryst.* **13**, 168-175 (1980)](https://doi.org/10.1107/S002188988001179X).
 - **Parallel across CPU cores and SIMD-vectorised.** No tuning
   needed; the workload scales with hardware.
 - **Cached fit setup.** `multipole_model` amortises the
@@ -236,13 +249,17 @@ full atomic-resolution form factors (vacuum):
 | 10-core Apple Silicon laptop | ~4 s |
 | 64-thread AMD Threadripper 3970X (`-C target-cpu=native`) | ~9 s |
 
-### Tuning knob
+### Tuning knobs
 
-`--lmax <N>` (CLI) or `l_max=N` (Python) overrides the
-auto-selected truncation order. Useful for reproducing a fixed
-reference, timing sweeps, or trading a little high-q accuracy
-for extra speed on very elongated structures — the default is
-correct but conservative for those.
+- `--lmax <N>` (CLI) or `l_max=N` (Python) overrides the
+  auto-selected truncation order. Useful for reproducing a fixed
+  reference, timing sweeps, or trading a little high-q accuracy
+  for extra speed on very elongated structures — the default is
+  correct but conservative for those.
+- `--nq <N>` (CLI) overrides the auto-selected q-grid density.
+  The default `2·L_max + 1` is enough to represent the band-
+  limited theory without aliasing; pass a larger value to
+  oversample the output curve for visualisation.
 
 ## Command-line interface (Rust)
 
@@ -270,7 +287,8 @@ pripps -a atoms.yaml -i structure.pdb multipole --lmax 68  # fixed order
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
     multipole --excluded fraser --hydration sasa
 
-# Fit against experimental data
+# Fit against experimental data (box-constrained Nelder-Mead over
+# c₁ ∈ [0.5, 2.0] and c₂ ∈ [0.0, 0.1]; warns if the fit hits a bound)
 pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
     -f experimental.dat -o fit.csv \
     multipole --excluded foxs --hydration sasa

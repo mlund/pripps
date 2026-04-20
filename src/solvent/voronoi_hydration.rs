@@ -45,27 +45,18 @@ pub(super) fn dummies(
         .map(|s| Vector3::new(s.x, s.y, s.z))
         .collect();
 
-    // Normalize per parent atom so each atom's spheres sum to 1.
-    // Without this, the ~12 spheres per atom with raw Voronoi
-    // cell volumes (ų) make the hydration intensity ~100× larger
-    // than SASA's, pushing c₂ to ~0.0003 (unmeaningful). Per-atom
-    // normalization keeps c₂ in the ~0.02 range and makes the
-    // model probe-insensitive.
-    let mut parent_weight_sum = vec![0.0_f64; atoms.len()];
-    for s in &spheres {
-        parent_weight_sum[s.parent_index] += s.weight;
-    }
+    // Weights are bulk-water counts per cell so `c₂` is fractional
+    // excess density (dimensionless) — matches grid and SASA.
     let weights: Vec<f64> = spheres
         .iter()
-        .map(|s| {
-            let total = parent_weight_sum[s.parent_index];
-            if total > 0.0 { s.weight / total } else { 0.0 }
-        })
+        .map(|s| s.weight / super::WATER_VOLUME)
         .collect();
 
     log::info!(
-        "Voronoi hydration shell: {} solvent spheres at probe={probe:.1} Å",
-        positions.len()
+        "Voronoi hydration shell: {} solvent spheres at probe={probe:.1} Å, \
+         {:.0} bulk waters equivalent",
+        positions.len(),
+        weights.iter().sum::<f64>(),
     );
 
     let water = water_form_factor(formfactors, "Hydration::Voronoi")?;

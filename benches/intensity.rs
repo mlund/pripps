@@ -177,7 +177,7 @@ fn bench_intensity(c: &mut Criterion) {
                 let scheme = IntensityScheme::Multipole {
                     qmin: QMIN,
                     qmax: QMAX,
-                    nq: NQ,
+                    nq: Some(NQ),
                     // None = auto-select l_max from structure extent,
                     // matching the default CLI behaviour.
                     l_max: None,

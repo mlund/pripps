@@ -377,20 +377,28 @@ pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> 
 }
 
 /// Create N vector of form factors at given q value (N = number of atoms)
+//
+// Only evaluates kinds that are actually referenced by `atom_ids`,
+// not every kind in the map. Form-factor YAMLs can mix definitions
+// with different q-ranges — e.g. `single_bead.yaml` has atomic
+// Gaussians out to q = 6 Å⁻¹ alongside residue-level Polynomials
+// limited to q ≤ 0.75 — and evaluating all of them at a common q
+// would error on unused entries with narrower ranges.
 pub fn formfactor_by_index(
     formfactors: &FormFactorMap,
     q: f64,
     atom_ids: &[usize],
 ) -> Result<DVector<f64>> {
-    // Evaluate each atom kind's form factor once, then broadcast to atoms.
-    let f: Vec<_> = formfactors
-        .form_factors()
-        .map(|ff| ff.eval(q))
-        .try_collect()?;
-
+    let ffs: Vec<_> = formfactors.form_factors().collect();
+    let mut cache: Vec<Option<f64>> = vec![None; ffs.len()];
+    for &id in atom_ids {
+        if cache[id].is_none() {
+            cache[id] = Some(ffs[id].eval(q)?);
+        }
+    }
     Ok(DVector::from_iterator(
         atom_ids.len(),
-        atom_ids.iter().map(|id| f[*id]),
+        atom_ids.iter().map(|id| cache[*id].expect("filled above")),
     ))
 }
 

@@ -25,8 +25,7 @@
 pub struct AtomKind {
     /// Human-readable name (e.g. "C", "ALA", "H2O").
     pub name: String,
-    /// 2 × radius (Å), parsed from the YAML `radius` field. Consumed
-    /// by the planned voronota-ltr SASA path.
+    /// 2 × radius (Å), parsed from the YAML `radius` field.
     pub sigma: Option<f64>,
     /// Displaced solvent volume in Å³, parsed from the YAML
     /// `displaced_volume` field. `None` is legal for coarse-grained

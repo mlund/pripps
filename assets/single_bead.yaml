@@ -13,7 +13,7 @@ N:
     radius: 0.84,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [11.89378, 0.000158],
@@ -31,7 +31,7 @@ C:
     radius: 1.577,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [2.657506, 14.780758],
@@ -49,7 +49,7 @@ O:
     radius: 1.3,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [2.960427, 14.182259],
@@ -67,7 +67,7 @@ S:
     radius: 1.68,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [6.372157, 1.514347],
@@ -88,7 +88,7 @@ H:
     radius: 1.06893,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [0.493002, 10.5109],
@@ -134,7 +134,7 @@ O_:
     radius: 1.3,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [3.106934, 19.86808],
@@ -151,7 +151,7 @@ Ocarbox:
     radius: 1.3,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [0.688944, 29.3192],
@@ -180,7 +180,7 @@ NIV:
     displaced_volume: 2.49,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [10.19466857142857, 0.000158],
@@ -212,7 +212,7 @@ N_guan:
     radius: 1.54,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [1.792216, 10.83006],
@@ -229,7 +229,7 @@ N_guan_1:
     radius: 1.45,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [3.630164, 10.267139],
@@ -253,7 +253,7 @@ UNK:
     radius: 1.577,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [2.657506, 14.780758],
@@ -276,7 +276,7 @@ MG:
     radius: 1.6,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [4.708971, 4.875207],
@@ -294,7 +294,7 @@ CU:
     radius: 1.28,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [14.014192, 3.73828],
@@ -312,7 +312,7 @@ FE:
     radius: 1.24,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [12.311098, 5.009415],
@@ -330,7 +330,7 @@ CL:
     radius: 1.75,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [1.446071, 0.052357],
@@ -348,7 +348,7 @@ ZN:
     radius: 1.33,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [14.741002, 3.388232],
@@ -365,7 +365,7 @@ IR:
     radius: 1.58,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [32.004436, 1.353767],
@@ -382,7 +382,7 @@ Cr:
     radius: 1.85,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [11.007069, 6.366281],
@@ -399,7 +399,7 @@ P:
     radius: 1.11,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [1.950541, 0.908139],
@@ -416,7 +416,7 @@ CA:
     radius: 1.97,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [8.593655, 10.460644],
@@ -433,7 +433,7 @@ I:
     radius: 1.98,
     ff:
       !Gaussian {
-        qrange: [0.0, 1.0],
+        qrange: [0.0, 6.0],
         ab:
           [
             [19.884502, 4.628591],

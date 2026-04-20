@@ -84,7 +84,8 @@ pub enum IntensityScheme {
     Multipole {
         qmin: f64,
         qmax: f64,
-        nq: usize,
+        /// `None` → auto-select at the Nyquist rate `2·l_max + 1`.
+        nq: Option<usize>,
         l_max: Option<usize>,
     },
 }
@@ -93,6 +94,39 @@ pub enum IntensityScheme {
 /// structure; library consumers don't implement or name this trait.
 pub(crate) trait IntensityCalculator: Sync {
     fn calc_intensities(&self, structure: &Structure) -> Result<Intensity>;
+}
+
+/// Resolve the q-grid density for the multipole kernel. If the
+/// caller supplied an explicit `nq`, use it; otherwise pick
+/// `2·L_max + 1` (Nyquist-rate for a band-limited spherical-
+/// harmonic expansion at truncation L — see the Shannon sampling
+/// theorem applied to SAXS by Moore 1980,
+/// <https://doi.org/10.1107/S002188988001179X>). Floored at 21 so
+/// tiny or very-low-q inputs still sample the theory curve
+/// densely enough for smooth cubic-spline interpolation onto
+/// experimental q values.
+fn resolve_nq(
+    requested: Option<usize>,
+    positions: &[Vector3],
+    qmax: f64,
+    l_max_override: Option<usize>,
+) -> usize {
+    if let Some(n) = requested {
+        return n;
+    }
+    let l_max = l_max_override.unwrap_or_else(|| {
+        let center: Vector3 = if positions.is_empty() {
+            Vector3::zeros()
+        } else {
+            positions.iter().sum::<Vector3>() / positions.len() as f64
+        };
+        let r_max = positions
+            .iter()
+            .map(|p| (p - center).norm())
+            .fold(0.0_f64, f64::max);
+        ((qmax * r_max).ceil() as usize) + 2
+    });
+    (2 * l_max + 1).max(21)
 }
 
 /// High-level interface to the Pripps library
@@ -131,12 +165,13 @@ impl Pripps {
         structure_file: &path::Path,
         qmin: f64,
         qmax: f64,
-        nq: usize,
+        nq: Option<usize>,
         l_max: Option<usize>,
         solvent: &SolventConfig,
     ) -> Result<MultipoleModel> {
         let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
         structure.center();
+        let nq = resolve_nq(nq, &structure.pos, qmax, l_max);
         let sampler = q_sampler::QSampler::linear(self.formfactors.clone(), qmin, qmax, nq);
         let l_max_per_q = multipole::resolve_l_max_per_q(l_max, &structure.pos, &sampler.q_values);
         let l_max = l_max_per_q.iter().copied().max().unwrap_or(0);
@@ -209,7 +244,10 @@ impl Pripps {
                 nq,
                 l_max,
             } => {
-                log::info!("Using Multipole expansion for 𝐼(𝑞) over {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
+                let nq = resolve_nq(nq, &structure.pos, qmax, l_max);
+                log::info!(
+                    "Using Multipole expansion for 𝐼(𝑞) over {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹, {nq} q-points"
+                );
                 Box::new(MultipoleIntensity::new(
                     self.formfactors.clone(),
                     (qmin, qmax),
@@ -291,7 +329,7 @@ mod tests {
                 IntensityScheme::Multipole {
                     qmin: 0.0,
                     qmax: 0.3,
-                    nq: 20,
+                    nq: Some(20),
                     l_max: None,
                 },
                 &xyz,
@@ -303,7 +341,7 @@ mod tests {
             .unwrap();
 
         let fit = pripps
-            .multipole_model(&xyz, 0.0, 0.3, 20, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, Some(20), None, &solvent)
             .unwrap();
         let from_fit = fit.intensity(1.0, 0.03);
 
@@ -323,7 +361,7 @@ mod tests {
             ..Default::default()
         };
         let fit = pripps
-            .multipole_model(&xyz, 0.0, 0.3, 20, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, Some(20), None, &solvent)
             .unwrap();
         let zero = fit.intensity(0.0, 0.0);
         let contributions = zero.contributions.as_ref().unwrap();
@@ -338,7 +376,7 @@ mod tests {
             ..Default::default()
         };
         let fit = pripps
-            .multipole_model(&xyz, 0.0, 0.3, 10, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, Some(10), None, &solvent)
             .unwrap();
         let a = fit.intensity(1.0, 0.0);
         let b = fit.intensity(1.0, 0.0);
@@ -357,7 +395,7 @@ mod tests {
             ..Default::default()
         };
         let fit = pripps
-            .multipole_model(&xyz, 0.0, 0.3, 10, None, &solvent)
+            .multipole_model(&xyz, 0.0, 0.3, Some(10), None, &solvent)
             .unwrap();
         let a = fit.intensity(1.0, 0.0);
         let b = fit.intensity(1.0, 0.1);
@@ -386,7 +424,7 @@ mod tests {
                 IntensityScheme::Multipole {
                     qmin: 0.0,
                     qmax: 0.5,
-                    nq: 500,
+                    nq: Some(500),
                     l_max: None,
                 },
                 &pdb,
@@ -424,7 +462,7 @@ mod tests {
                 IntensityScheme::Multipole {
                     qmin: 0.0,
                     qmax: 0.5,
-                    nq: 500,
+                    nq: Some(500),
                     l_max: None,
                 },
                 &pdb,

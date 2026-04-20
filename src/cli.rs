@@ -60,9 +60,12 @@ pub enum Commands {
         /// Maximum q value (1/Å)
         #[clap(long, default_value = "0.75")]
         qmax: f64,
-        /// Number of q values
-        #[clap(long, default_value = "100")]
-        nq: usize,
+        /// Number of q values. If unset, auto-selected at the
+        /// Nyquist rate `2·l_max + 1` (floored at 21) so the theory
+        /// curve is sampled densely enough to cubic-spline-interpolate
+        /// onto experimental q without aliasing.
+        #[clap(long)]
+        nq: Option<usize>,
         /// Expansion order (multipole truncation). If unset,
         /// auto-computed from the structure's extent and qmax.
         #[clap(long)]
@@ -90,9 +93,11 @@ pub struct SolventArgs {
     /// Hydration-shell model
     #[clap(long, value_enum, default_value_t = HydrationKind::Disabled)]
     hydration: HydrationKind,
-    /// Water probe radius (Å) for SASA/grid/voronoi shell
-    #[clap(long, default_value = "1.8")]
-    probe: f64,
+    /// Water probe radius (Å). Defaults: 1.8 for SASA/grid,
+    /// 6.0 for voronoi (larger probe smooths the granular
+    /// explicit-sphere shell into an envelope-like layer).
+    #[clap(long)]
+    probe: Option<f64>,
     /// Grid spacing (Å) for `--hydration grid`
     #[clap(long, default_value = "1.5")]
     spacing: f64,
@@ -128,17 +133,17 @@ impl SolventArgs {
         let hydration = match self.hydration {
             HydrationKind::Disabled => Hydration::Disabled,
             HydrationKind::Sasa => Hydration::Sasa {
-                probe: self.probe,
+                probe: self.probe.unwrap_or(1.8),
                 contrast_density: self.contrast_density,
             },
             HydrationKind::Grid => Hydration::Grid {
                 spacing: self.spacing,
                 thickness: self.thickness,
-                probe: self.probe,
+                probe: self.probe.unwrap_or(1.8),
                 contrast_density: self.contrast_density,
             },
             HydrationKind::Voronoi => Hydration::Voronoi {
-                probe: self.probe,
+                probe: self.probe.unwrap_or(6.0),
                 contrast_density: self.contrast_density,
             },
         };
@@ -241,14 +246,8 @@ pub fn do_main() -> Result<()> {
                 nq,
                 l_max,
             } => {
-                let model = pripps.multipole_model(
-                    &args.input,
-                    0.0,
-                    exp.q_max(),
-                    nq.max(500),
-                    l_max,
-                    &solvent,
-                )?;
+                let model =
+                    pripps.multipole_model(&args.input, 0.0, exp.q_max(), nq, l_max, &solvent)?;
                 let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
                 let out = model.intensity(result.volume_scale, result.contrast_density);
                 crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;

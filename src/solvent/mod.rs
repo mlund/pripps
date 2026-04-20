@@ -41,6 +41,9 @@ use crate::{Error, Result, Structure, Vector3};
 
 pub(super) const WATER_KIND_NAME: &str = "H2O";
 
+/// Bulk water molecular volume in Å³ (ρ_water = 0.334 e/Å³ → ≈ 30 Å³/molecule).
+pub(super) const WATER_VOLUME: f64 = 30.0;
+
 /// Convert `(position, radius)` pairs to voronota-ltr `Ball`s.
 fn balls_from_radii(atoms: &[(Vector3, f64)]) -> Vec<voronota_ltr::Ball> {
     atoms

@@ -51,22 +51,30 @@ pub(super) fn dummies(
     let tessellation = compute_tessellation(&balls, 0.0, None, None, false);
     let volumes = tessellation.volumes();
 
-    let n_none = volumes.iter().filter(|v| v.is_none()).count();
-    if n_none > 0 {
-        log::warn!(
-            "Voronoi excluded volume: {n_none}/{n} atoms have no Voronoi cell \
-             (lonely atoms); using sphere volume fallback"
-        );
-    }
-
+    // Fall back to the sphere volume for lonely atoms (None) and for
+    // rare degenerate cells (non-positive or non-finite v). A negative
+    // `v` would otherwise produce NaN via `powf(2/3)` in the Fraser
+    // Gaussian and poison every q.
+    let sphere_volume = |r: f64| 4.0 / 3.0 * PI * r.powi(3);
+    let mut n_fallback = 0usize;
     let per_atom_volumes: Vec<f64> = volumes
         .iter()
         .zip(&balls)
-        // None = lonely atom with no Voronoi neighbours (e.g. an
-        // isolated HETATM metal ion). Fall back to the bare sphere
-        // volume since there is no cell to measure.
-        .map(|(vol, ball)| vol.unwrap_or_else(|| 4.0 / 3.0 * PI * ball.r.powi(3)))
+        .map(|(vol, ball)| match vol {
+            Some(v) if v.is_finite() && *v > 0.0 => *v,
+            _ => {
+                n_fallback += 1;
+                sphere_volume(ball.r)
+            }
+        })
         .collect();
+
+    if n_fallback > 0 {
+        log::warn!(
+            "Voronoi excluded volume: {n_fallback}/{n} atoms have no usable \
+             Voronoi cell (missing or non-finite); using sphere volume fallback"
+        );
+    }
 
     let total_volume: f64 = per_atom_volumes.iter().sum();
 
@@ -76,9 +84,6 @@ pub(super) fn dummies(
         total_volume / n as f64
     );
 
-    // Per-atom Fraser Gaussian sized by each atom's Voronoi cell
-    // volume — same formula as Fraser but with geometry-derived
-    // volumes instead of tabulated displaced_volume values.
     let form_factors: Vec<_> = per_atom_volumes
         .iter()
         .map(|&v| fraser_form_factor(v, bulk_electron_density, PEPSI_DENOMINATOR))
