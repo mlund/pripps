@@ -17,6 +17,7 @@
 use crate::error::IoResultExt;
 use crate::{
     ExcludedVolume, Hydration, Intensity, IntensityScheme, Pripps, Result, SolventConfig, cli,
+    read_formfactors,
 };
 use clap::{Parser, Subcommand, ValueEnum, builder::styling::AnsiColor};
 
@@ -24,6 +25,8 @@ use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
 use std::env::set_var;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+
+const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_atev.yaml";
 
 /// Commands
 #[derive(Debug, Subcommand)]
@@ -87,6 +90,9 @@ pub struct SolventArgs {
     /// Grid spacing (Å) for `--excluded grid`
     #[clap(long, default_value = "1.0")]
     excluded_spacing: f64,
+    /// Form-factor YAML for `--excluded polynomial`
+    #[clap(long)]
+    excluded_atomfile: Option<PathBuf>,
     /// Bulk solvent electron density (e/Å³)
     #[clap(long, default_value = "0.334")]
     bulk_electron_density: f64,
@@ -113,7 +119,7 @@ pub struct SolventArgs {
 impl SolventArgs {
     /// Build a [`SolventConfig`], returning `None` when neither
     /// excluded volume nor hydration is active.
-    fn to_config(&self) -> Option<SolventConfig> {
+    fn to_config(&self) -> Result<Option<SolventConfig>> {
         let excluded = match self.excluded {
             ExcludedKind::Disabled => ExcludedVolume::Disabled,
             ExcludedKind::Fraser => ExcludedVolume::Fraser {
@@ -129,6 +135,16 @@ impl SolventArgs {
             ExcludedKind::Voronoi => ExcludedVolume::Voronoi {
                 volume_scale: self.volume_scale,
             },
+            ExcludedKind::Polynomial => {
+                let path = self
+                    .excluded_atomfile
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new(DEFAULT_POLY_EXCLUDED_ATOMFILE));
+                ExcludedVolume::Polynomial {
+                    volume_scale: self.volume_scale,
+                    formfactors: read_formfactors(path)?,
+                }
+            }
         };
         let hydration = match self.hydration {
             HydrationKind::Disabled => Hydration::Disabled,
@@ -152,7 +168,7 @@ impl SolventArgs {
             hydration,
             bulk_electron_density: self.bulk_electron_density,
         };
-        cfg.is_active().then_some(cfg)
+        Ok(cfg.is_active().then_some(cfg))
     }
 }
 
@@ -165,6 +181,7 @@ pub enum ExcludedKind {
     Foxs,
     Grid,
     Voronoi,
+    Polynomial,
 }
 
 /// Which hydration-shell generator to use.
@@ -232,7 +249,7 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
-    let (scheme, box_override, solvent) = command_to_scheme(args.command);
+    let (scheme, box_override, solvent) = command_to_scheme(args.command)?;
 
     if let Some(fit_path) = &args.fit {
         // Fit mode: optimise (c1, c2) against experimental data
@@ -280,27 +297,27 @@ pub fn do_main() -> Result<()> {
 /// hydration model is selected).
 fn command_to_scheme(
     command: Commands,
-) -> (IntensityScheme, Option<[f64; 3]>, Option<SolventConfig>) {
+) -> Result<(IntensityScheme, Option<[f64; 3]>, Option<SolventConfig>)> {
     match command {
         Commands::Debye { qmin, qmax, nq } => {
-            (IntensityScheme::Debye { qmin, qmax, nq }, None, None)
+            Ok((IntensityScheme::Debye { qmin, qmax, nq }, None, None))
         }
         Commands::Direct {
             pmax,
             side_length,
             solvent,
-        } => (
+        } => Ok((
             IntensityScheme::Direct { pmax },
             Some([side_length; 3]),
-            solvent.to_config(),
-        ),
+            solvent.to_config()?,
+        )),
         Commands::Multipole {
             qmin,
             qmax,
             nq,
             lmax,
             solvent,
-        } => (
+        } => Ok((
             IntensityScheme::Multipole {
                 qmin,
                 qmax,
@@ -308,8 +325,8 @@ fn command_to_scheme(
                 l_max: lmax,
             },
             None,
-            solvent.to_config(),
-        ),
+            solvent.to_config()?,
+        )),
     }
 }
 

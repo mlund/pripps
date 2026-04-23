@@ -32,6 +32,7 @@
 mod fraser;
 mod grid;
 mod grid_excluded;
+mod polynomial_excluded;
 mod sasa;
 mod voronoi_excluded;
 mod voronoi_hydration;
@@ -131,7 +132,8 @@ impl ExcludedVolume {
             Self::Fraser { volume_scale }
             | Self::FraserFoxs { volume_scale }
             | Self::Grid { volume_scale, .. }
-            | Self::Voronoi { volume_scale } => *volume_scale,
+            | Self::Voronoi { volume_scale }
+            | Self::Polynomial { volume_scale, .. } => *volume_scale,
         }
     }
 }
@@ -201,6 +203,14 @@ pub enum ExcludedVolume {
     /// only atomic radii, not tabulated displaced volumes.
     Voronoi {
         volume_scale: f64,
+    },
+    /// Per-kind excluded-volume form factors from a dedicated YAML
+    /// table, evaluated directly (typically polynomial fits from
+    /// `poly_atev.yaml`). The table is matched by kind name against
+    /// the structure's atom/residue kinds.
+    Polynomial {
+        volume_scale: f64,
+        formfactors: FormFactorMap,
     },
 }
 
@@ -378,6 +388,10 @@ impl ExcludedVolume {
             Self::Voronoi { .. } => {
                 voronoi_excluded::dummies(structure, formfactors, bulk_electron_density)
             }
+            Self::Polynomial {
+                formfactors: excluded_formfactors,
+                ..
+            } => polynomial_excluded::dummies(structure, formfactors, excluded_formfactors),
         }
     }
 }

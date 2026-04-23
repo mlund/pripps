@@ -3,7 +3,11 @@ use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use ::pripps::{ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig};
+use ::pripps::{
+    ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig, read_formfactors,
+};
+
+const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_atev.yaml";
 
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);
@@ -30,6 +34,7 @@ impl PyPripps {
         nq = 100,
         l_max = None,
         excluded = "none",
+        excluded_atomfile = None,
         volume_scale = 1.0,
         excluded_spacing = 1.0,
         hydration = "none",
@@ -47,6 +52,7 @@ impl PyPripps {
         nq: usize,
         l_max: Option<usize>,
         excluded: &str,
+        excluded_atomfile: Option<&str>,
         volume_scale: f64,
         excluded_spacing: f64,
         hydration: &str,
@@ -58,6 +64,7 @@ impl PyPripps {
     ) -> PyResult<PyMultipoleModel> {
         let cfg = solvent_from_kwargs(
             excluded,
+            excluded_atomfile,
             volume_scale,
             excluded_spacing,
             hydration,
@@ -101,6 +108,7 @@ impl PyMultipoleModel {
 #[allow(clippy::too_many_arguments)]
 fn solvent_from_kwargs(
     excluded: &str,
+    excluded_atomfile: Option<&str>,
     volume_scale: f64,
     excluded_spacing: f64,
     hydration: &str,
@@ -119,9 +127,16 @@ fn solvent_from_kwargs(
             volume_scale,
         },
         "voronoi" => ExcludedVolume::Voronoi { volume_scale },
+        "polynomial" => {
+            let path = excluded_atomfile.unwrap_or(DEFAULT_POLY_EXCLUDED_ATOMFILE);
+            ExcludedVolume::Polynomial {
+                volume_scale,
+                formfactors: read_formfactors(path.as_ref()).map_err(into_py_err)?,
+            }
+        }
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, or `voronoi`)"
+                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, `voronoi`, or `polynomial`)"
             )));
         }
     };
