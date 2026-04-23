@@ -29,11 +29,12 @@ model = pr.multipole_model(
     qmin=0.0,
     qmax=0.5,
     nq=500,
-    excluded="foxs",         # FoXS-style excluded volume (16π Fraser)
-    volume_scale=1.0,        # fit knob c₁ (scales excluded volume)
-    hydration="sasa",        # FoXS-style SASA-weighted hydration shell
-    probe=1.8,               # SASA probe radius (Å)
-    contrast_density=0.03,   # fit knob c₂ (scales hydration)
+    excluded="foxs",         			   # FoXS-style excluded volume (16π Fraser)
+    #excluded_atomfile="assets/poly_excl.yaml",      # When using polynomial for excluded add the file path 
+    volume_scale=1.0,        			   # fit knob c₁ (scales excluded volume)
+    hydration="sasa",        			   # FoXS-style SASA-weighted hydration shell
+    probe=1.8,               			   # SASA probe radius (Å)
+    contrast_density=0.03,   			   # fit knob c₂ (scales hydration)
     bulk_electron_density=0.334,  # e/Å³, pure water
 )
 
@@ -103,7 +104,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
-| `excluded_atomfile` | path (default `assets/poly_atev.yaml`) | Excluded-volume form-factor YAML for `excluded="polynomial"` |
+| `excluded_atomfile` | path (default `assets/poly_excl.yaml`) | Excluded-volume form-factor YAML for `excluded="polynomial"` |
 | `contrast_density` | float (default 0.03) | Fractional hydration-layer excess density (c₂ in `A − c₁·C + c₂·B`) — pepsi's `d_rho / ρ_water`, ~0.1 for a 10 % excess layer |
 | `probe` | float (default: 1.8 for SASA/grid, 6.0 for voronoi) | Water probe radius in Å |
 | `spacing` | float (default 1.5) | Grid spacing (Å) for `hydration="grid"` |

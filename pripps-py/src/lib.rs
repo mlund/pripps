@@ -7,7 +7,7 @@ use ::pripps::{
     ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig, read_formfactors,
 };
 
-const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_atev.yaml";
+const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_excl.yaml";
 
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);

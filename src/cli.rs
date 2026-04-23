@@ -26,7 +26,7 @@ use std::env::set_var;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_atev.yaml";
+const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_excl.yaml";
 
 /// Commands
 #[derive(Debug, Subcommand)]

@@ -206,7 +206,7 @@ pub enum ExcludedVolume {
     },
     /// Per-kind excluded-volume form factors from a dedicated YAML
     /// table, evaluated directly (typically polynomial fits from
-    /// `poly_atev.yaml`). The table is matched by kind name against
+    /// `poly_excl.yaml`). The table is matched by kind name against
     /// the structure's atom/residue kinds.
     Polynomial {
         volume_scale: f64,

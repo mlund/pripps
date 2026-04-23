@@ -7,7 +7,7 @@
 //!
 //! For each structure atom/residue, this generator copies a polynomial
 //! excluded-volume form factor from a dedicated YAML table (typically
-//! `assets/poly_atev.yaml`) by matching on kind name.
+//! `assets/poly_excl.yaml`) by matching on kind name.
 
 use crate::formfactor::FormFactorMap;
 use crate::solvent::DummySet;
