@@ -212,6 +212,8 @@ impl Pripps {
                 ));
             }
             structure.box_sides = Some(Vector3::from(box_sides));
+        } else if xtcfile.is_none() {
+            structure.box_sides = Some(Vector3::from([200.0; 3]));
         }
 
         let active_solvent = solvent.filter(|cfg| cfg.is_active());
