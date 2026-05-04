@@ -47,8 +47,8 @@ pub enum Commands {
         #[clap(short = 'p', long, default_value = "6")]
         pmax: usize,
         /// Cubic box side length (Å)
-        #[clap(short = 'b', long = "box", default_value = "200.0")]
-        side_length: f64,
+        #[clap(short = 'b', long = "box")]
+        side_length: Option<f64>,
         #[clap(flatten)]
         solvent: SolventArgs,
     },
@@ -291,7 +291,7 @@ fn command_to_scheme(
             solvent,
         } => (
             IntensityScheme::Direct { pmax },
-            Some([side_length; 3]),
+            side_length.map(|s| [s; 3]),
             solvent.to_config(),
         ),
         Commands::Multipole {

@@ -824,6 +824,7 @@ HLYS: { ff: !Alias LYS }
 HTYR: { ff: !Alias TYR }
 HCYS: { ff: !Alias CYS }
 CYX: { ff: !Alias CYS }
+CSS: { radius: 3.6, formfactor: !Alias CYS }
 
 # PDB atom name aliases — map multi-character PDB names to their
 # element form factors so atomic-resolution structures work with
