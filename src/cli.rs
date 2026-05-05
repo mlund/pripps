@@ -327,14 +327,20 @@ fn write_csv(path: &Path, curve: &Intensity) -> Result<()> {
     let mut out = BufWriter::new(file);
     log::info!("Writing {}", path.display());
 
-    match &curve.contributions {
-        None => {
+    match (&curve.contributions, &curve.beta) {
+        (None, None) => {
             writeln!(out, "q,total")?;
             for (q, total) in curve.q.iter().zip(&curve.total) {
                 writeln!(out, "{q:.6},{total:.6}")?;
             }
         }
-        Some(c) => {
+        (None, Some(beta)) => {
+            writeln!(out, "q,total,beta")?;
+            for ((q, total), beta) in curve.q.iter().zip(&curve.total).zip(beta) {
+                writeln!(out, "{q:.6},{total:.6},{beta:.6}")?;
+            }
+        }
+        (Some(c), None) => {
             writeln!(out, "q,total,atoms,excluded,hydration")?;
             for ((((q, total), atoms), excluded), hydration) in curve
                 .q
@@ -344,9 +350,23 @@ fn write_csv(path: &Path, curve: &Intensity) -> Result<()> {
                 .zip(&c.excluded)
                 .zip(&c.hydration)
             {
+                writeln!(out, "{q:.6},{total:.6},{atoms:.6},{excluded:.6},{hydration:.6}")?;
+            }
+        }
+        (Some(c), Some(beta)) => {
+            writeln!(out, "q,total,atoms,excluded,hydration,beta")?;
+            for (((((q, total), atoms), excluded), hydration), beta) in curve
+                .q
+                .iter()
+                .zip(&curve.total)
+                .zip(&c.atoms)
+                .zip(&c.excluded)
+                .zip(&c.hydration)
+                .zip(beta)
+            {
                 writeln!(
                     out,
-                    "{q:.6},{total:.6},{atoms:.6},{excluded:.6},{hydration:.6}"
+                    "{q:.6},{total:.6},{atoms:.6},{excluded:.6},{hydration:.6},{beta:.6}"
                 )?;
             }
         }

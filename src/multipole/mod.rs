@@ -340,16 +340,22 @@ fn vacuum_intensity(
         l_max_per_q,
     )?;
 
-    let total: Vec<f64> = coeffs_per_q
+    let (total, beta): (Vec<f64>, Vec<f64>) = coeffs_per_q
         .par_iter()
         .zip(l_max_per_q)
-        .map(|(c, &l_q)| intensity_from_multipoles(c, l_q))
-        .collect();
+        .map(|(c, &l_q)| {
+            let p = intensity_from_multipoles(c, l_q);
+            let mean_amp_sq = 4.0 * std::f64::consts::PI * c[(0, 0)].norm_sqr();
+            let beta = if p > 0.0 { mean_amp_sq / p } else { 1.0 };
+            (p, beta)
+        })
+        .unzip();
 
     Ok(Intensity {
         q: sampler.q_values.clone(),
         total,
         contributions: None,
+        beta: Some(beta),
     })
 }
 
@@ -467,7 +473,7 @@ impl MultipoleModel {
     // overhead would dominate. The expensive O(N·Q·L²) coefficient
     // build in `build_model` correctly uses `par_iter`.
     pub fn intensity(&self, volume_scale: f64, contrast_density: f64) -> Intensity {
-        let per_q: Vec<(f64, f64, f64, f64)> = izip!(
+        let per_q: Vec<(f64, f64, f64, f64, f64)> = izip!(
             &self.atoms_coeffs,
             &self.excluded_coeffs,
             &self.hydration_coeffs,
@@ -475,16 +481,20 @@ impl MultipoleModel {
         )
         .map(|(a, e, h, &l_q)| {
             let total = combine_contributions(a, e, h, l_q, volume_scale, contrast_density);
+            let mono = a[(0, 0)] - volume_scale * e[(0, 0)] + contrast_density * h[(0, 0)];
+            let mean_amp_sq = 4.0 * std::f64::consts::PI * mono.norm_sqr();
+            let beta = if total > 0.0 { mean_amp_sq / total } else { 1.0 };
             (
                 total,
                 intensity_from_multipoles(a, l_q),
                 intensity_from_multipoles(e, l_q),
                 intensity_from_multipoles(h, l_q),
+                beta,
             )
         })
         .collect();
 
-        let (total, atoms, excluded, hydration): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+        let (total, atoms, excluded, hydration, beta): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
             per_q.into_iter().multiunzip();
 
         Intensity {
@@ -495,6 +505,7 @@ impl MultipoleModel {
                 excluded,
                 hydration,
             }),
+            beta: Some(beta),
         }
     }
 

@@ -194,6 +194,7 @@ impl DirectTransform {
                 excluded,
                 hydration,
             }),
+            beta: None,
         })
     }
 }
