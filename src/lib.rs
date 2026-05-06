@@ -49,10 +49,11 @@ pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 /// [`SolventConfig`], carrying the per-contribution diagnostic
 /// columns. It is `None` for vacuum Multipole, Debye, and Direct.
 ///
-/// `beta` is populated for all Multipole paths (vacuum and solvent).
-/// It is the decoupling parameter β(q) = ⟨F⟩²/P(q) = 4π|A₀⁰|²/P(q),
+/// `beta` is populated for all Multipole and Direct paths (vacuum and solvent).
+/// It is the decoupling parameter β(q) = ⟨F⟩²/P(q),
 /// needed to convert a true S(q) into the experimentally measured
 /// effective structure factor: S_eff(q) = 1 + β(q)·(S(q) − 1).
+/// For Multipole, ⟨F⟩ = √(4π)|A₀⁰|. For Direct, ⟨F⟩ = Σ_i f_i sinc(q|r_i|).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Intensity {
     pub q: Vec<f64>,

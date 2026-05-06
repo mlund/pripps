@@ -44,6 +44,33 @@ const MILLER_INDEX: [Vector3; 13] = [
     Vector3::new(1.0, 1.0, -1.0),
 ];
 
+/// Orientationally averaged amplitude ⟨F(q)⟩_Ω = Σ_i f_i · sin(q|r_i − center|)/(q|r_i − center|).
+///
+/// `center` must be the particle centroid so that |r_i − center| are
+/// distances from the scattering centre. This is the isotropic component,
+/// equivalent to the l=0 multipole coefficient: 4π|A₀⁰|² = mean_sinc_amplitude².
+/// Used to compute β(q) = ⟨F⟩²_Ω / P(q) for the decoupling approximation.
+fn mean_sinc_amplitude(
+    q_norm: f64,
+    positions: &[Vector3],
+    form_factors: &[f64],
+    center: &Vector3,
+) -> f64 {
+    positions.iter().zip(form_factors).map(|(r, &f)| {
+        let qr = q_norm * (r - center).norm();
+        let sinc = if qr < 1e-10 { 1.0 } else { qr.sin() / qr };
+        f * sinc
+    }).sum()
+}
+
+/// Geometric centroid of a set of positions.
+fn centroid(positions: &[Vector3]) -> Vector3 {
+    if positions.is_empty() {
+        return Vector3::zeros();
+    }
+    positions.iter().sum::<Vector3>() / positions.len() as f64
+}
+
 /// Calculate I(q) using discrete q vectors
 ///
 /// References:
@@ -123,9 +150,22 @@ impl DirectTransform {
             .collect::<Result<Vec<(f64, f64)>>>()?;
 
         let (q, total): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
+
+        let center = centroid(&structure.pos);
+        let beta = q
+            .iter()
+            .zip(&total)
+            .map(|(&qi, &p)| {
+                let ff = eval_atom_form_factors(qi, &structure.ids, &self.formfactors)?;
+                let mean_amp = mean_sinc_amplitude(qi, &structure.pos, &ff, &center);
+                Ok(if p > 0.0 { mean_amp * mean_amp / p } else { 1.0 })
+            })
+            .collect::<Result<Vec<f64>>>()?;
+
         Ok(Intensity {
             q,
             total,
+            beta: Some(beta),
             ..Default::default()
         })
     }
@@ -178,12 +218,34 @@ impl DirectTransform {
         let mut atoms = Vec::with_capacity(grouped.len());
         let mut excluded = Vec::with_capacity(grouped.len());
         let mut hydration = Vec::with_capacity(grouped.len());
-        for (qi, t, a, e, h) in grouped {
-            q.push(qi);
-            total.push(t);
-            atoms.push(a);
-            excluded.push(e);
-            hydration.push(h);
+        let mut beta = Vec::with_capacity(grouped.len());
+
+        for (qi, t, a, e, h) in &grouped {
+            q.push(*qi);
+            total.push(*t);
+            atoms.push(*a);
+            excluded.push(*e);
+            hydration.push(*h);
+        }
+
+        // All three contributions are centered on the same protein centroid so
+        // that β(q) is frame-of-reference independent (P(q) is already invariant
+        // under translation because |A|² gains only a common phase factor).
+        let center = centroid(&structure.pos);
+        for (&qi, &p) in q.iter().zip(&total) {
+            let atom_ff = eval_atom_form_factors(qi, &structure.ids, &self.formfactors)?;
+            let mean_a = mean_sinc_amplitude(qi, &structure.pos, &atom_ff, &center);
+
+            let mut ev_ff = Vec::new();
+            excluded_dummies.form_factors_at(qi, &mut ev_ff)?;
+            let mean_c = mean_sinc_amplitude(qi, excluded_dummies.positions(), &ev_ff, &center);
+
+            let mut hyd_ff = Vec::new();
+            hydration_dummies.form_factors_at(qi, &mut hyd_ff)?;
+            let mean_b = mean_sinc_amplitude(qi, hydration_dummies.positions(), &hyd_ff, &center);
+
+            let mean_amp = mean_a - volume_scale * mean_c + contrast_density * mean_b;
+            beta.push(if p > 0.0 { mean_amp * mean_amp / p } else { 1.0 });
         }
 
         Ok(Intensity {
@@ -194,7 +256,7 @@ impl DirectTransform {
                 excluded,
                 hydration,
             }),
-            beta: None,
+            beta: Some(beta),
         })
     }
 }
@@ -257,5 +319,29 @@ mod tests {
         let v = vec![(1.0, 1.0), (3.0, 0.1), (2.0, 3.0), (2.0, 4.0), (1.0, 2.0)];
         let result = average_duplicates(v);
         assert_eq!(result, vec![(1.0, 1.5), (2.0, 3.5), (3.0, 0.1)]);
+    }
+
+    #[test]
+    fn direct_beta_near_one_at_low_q_and_decays() {
+        // Two atoms offset from origin: centroid correction must be applied.
+        let positions = vec![
+            Vector3::new(10.0, 10.0, 10.0),
+            Vector3::new(10.0, 10.0, 14.0),
+        ];
+        let form_factors = vec![1.0, 1.0];
+        let center = centroid(&positions);
+
+        let beta_low = {
+            let amp = mean_sinc_amplitude(0.001, &positions, &form_factors, &center);
+            amp * amp / (2.0 * 2.0) // P(q→0) = (Σ f_i)²
+        };
+        let beta_high = {
+            let amp = mean_sinc_amplitude(5.0, &positions, &form_factors, &center);
+            let p = 4.0; // |f1|² + |f2|² (incoherent limit)
+            amp * amp / p
+        };
+
+        assert!((beta_low - 1.0).abs() < 1e-4, "β at q→0 should be ≈1, got {beta_low}");
+        assert!(beta_high < 0.5, "β should decrease at high q, got {beta_high}");
     }
 }
