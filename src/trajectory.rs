@@ -158,6 +158,7 @@ pub fn trajectory_average(
 
     let mut mean = Intensity::default();
     let mut structure = structure.clone();
+    let single_protein = structure.pos.len();
 
     for (frame, weight) in reader {
         structure.set_positions(&frame)?;
@@ -166,14 +167,33 @@ pub fn trajectory_average(
         if mean.q.is_empty() {
             mean.q = curve.q.clone();
             mean.total = vec![0.0; curve.total.len()];
+            // β(q) is only meaningful for a single-protein box
+            if frame.natoms() == single_protein && curve.beta.is_some() {
+                mean.beta = Some(vec![0.0; curve.total.len()]);
+            }
         }
 
         for (acc, v) in zip(&mut mean.total, &curve.total) {
             *acc += weight * v;
         }
 
+        // Accumulate mean sinc amplitude (= sqrt(β·P)) rather than β itself.
+        // After the loop, β = (Σ w·<F>)² / (Σ w·P) is computed from these.
+        if let (Some(acc), Some(src_beta)) = (mean.beta.as_mut(), curve.beta.as_ref()) {
+            for ((a, &beta_t), &p_t) in acc.iter_mut().zip(src_beta).zip(&curve.total) {
+                *a += weight * (beta_t * p_t).sqrt();
+            }
+        }
+
         #[cfg(feature = "cli")]
         progress.inc(1);
+    }
+
+    // Convert accumulated mean amplitudes to β = <F>² / <P>
+    if let Some(mean_amps) = mean.beta.as_mut() {
+        for (amp, &p) in mean_amps.iter_mut().zip(&mean.total) {
+            *amp = if p > 0.0 { (*amp * *amp) / p } else { 1.0 };
+        }
     }
 
     Ok(mean)

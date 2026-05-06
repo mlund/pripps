@@ -44,19 +44,50 @@ const MILLER_INDEX: [Vector3; 13] = [
     Vector3::new(1.0, 1.0, -1.0),
 ];
 
+/// Apply minimum-image convention to a displacement vector given orthorhombic box sides.
+fn minimum_image(delta: &Vector3, box_sides: &Vector3) -> Vector3 {
+    delta.zip_map(box_sides, |d, l| d - l * (d / l).round())
+}
+
+/// Unwrap PBC-wrapped positions so the whole molecule lies in one image.
+///
+/// Anchors on the first atom and folds each subsequent atom to the nearest
+/// image of the previous one. Returns the atom positions with intra-molecular
+/// distances preserved.
+fn unwrap_positions(positions: &[Vector3], box_sides: &Vector3) -> Vec<Vector3> {
+    if positions.is_empty() {
+        return vec![];
+    }
+    let mut out = Vec::with_capacity(positions.len());
+    out.push(positions[0]);
+    for r in &positions[1..] {
+        let prev = *out.last().unwrap();
+        let delta = minimum_image(&(r - prev), box_sides);
+        out.push(prev + delta);
+    }
+    out
+}
+
 /// Orientationally averaged amplitude ⟨F(q)⟩_Ω = Σ_i f_i · sin(q|r_i − center|)/(q|r_i − center|).
 ///
-/// `center` must be the particle centroid so that |r_i − center| are
-/// distances from the scattering centre. This is the isotropic component,
-/// equivalent to the l=0 multipole coefficient: 4π|A₀⁰|² = mean_sinc_amplitude².
-/// Used to compute β(q) = ⟨F⟩²_Ω / P(q) for the decoupling approximation.
+/// When `box_sides` is provided positions are first unwrapped so distances
+/// from the centroid are physically correct even if the molecule straddles
+/// a periodic boundary.
 fn mean_sinc_amplitude(
     q_norm: f64,
     positions: &[Vector3],
     form_factors: &[f64],
-    center: &Vector3,
+    box_sides: Option<&Vector3>,
 ) -> f64 {
-    positions.iter().zip(form_factors).map(|(r, &f)| {
+    let (pos, center) = match box_sides {
+        Some(b) => {
+            let unwrapped = unwrap_positions(positions, b);
+            let c = centroid(&unwrapped);
+            (unwrapped, c)
+        }
+        None => (positions.to_vec(), centroid(positions)),
+    };
+    pos.iter().zip(form_factors).map(|(r, &f)| {
         let qr = q_norm * (r - center).norm();
         let sinc = if qr < 1e-10 { 1.0 } else { qr.sin() / qr };
         f * sinc
@@ -151,13 +182,12 @@ impl DirectTransform {
 
         let (q, total): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
 
-        let center = centroid(&structure.pos);
         let beta = q
             .iter()
             .zip(&total)
             .map(|(&qi, &p)| {
                 let ff = eval_atom_form_factors(qi, &structure.ids, &self.formfactors)?;
-                let mean_amp = mean_sinc_amplitude(qi, &structure.pos, &ff, &center);
+                let mean_amp = mean_sinc_amplitude(qi, &structure.pos, &ff, Some(box_sides));
                 Ok(if p > 0.0 { mean_amp * mean_amp / p } else { 1.0 })
             })
             .collect::<Result<Vec<f64>>>()?;
@@ -228,21 +258,17 @@ impl DirectTransform {
             hydration.push(*h);
         }
 
-        // All three contributions are centered on the same protein centroid so
-        // that β(q) is frame-of-reference independent (P(q) is already invariant
-        // under translation because |A|² gains only a common phase factor).
-        let center = centroid(&structure.pos);
         for (&qi, &p) in q.iter().zip(&total) {
             let atom_ff = eval_atom_form_factors(qi, &structure.ids, &self.formfactors)?;
-            let mean_a = mean_sinc_amplitude(qi, &structure.pos, &atom_ff, &center);
+            let mean_a = mean_sinc_amplitude(qi, &structure.pos, &atom_ff, Some(box_sides));
 
             let mut ev_ff = Vec::new();
             excluded_dummies.form_factors_at(qi, &mut ev_ff)?;
-            let mean_c = mean_sinc_amplitude(qi, excluded_dummies.positions(), &ev_ff, &center);
+            let mean_c = mean_sinc_amplitude(qi, excluded_dummies.positions(), &ev_ff, Some(box_sides));
 
             let mut hyd_ff = Vec::new();
             hydration_dummies.form_factors_at(qi, &mut hyd_ff)?;
-            let mean_b = mean_sinc_amplitude(qi, hydration_dummies.positions(), &hyd_ff, &center);
+            let mean_b = mean_sinc_amplitude(qi, hydration_dummies.positions(), &hyd_ff, Some(box_sides));
 
             let mean_amp = mean_a - volume_scale * mean_c + contrast_density * mean_b;
             beta.push(if p > 0.0 { mean_amp * mean_amp / p } else { 1.0 });
@@ -332,11 +358,11 @@ mod tests {
         let center = centroid(&positions);
 
         let beta_low = {
-            let amp = mean_sinc_amplitude(0.001, &positions, &form_factors, &center);
+            let amp = mean_sinc_amplitude(0.001, &positions, &form_factors, None);
             amp * amp / (2.0 * 2.0) // P(q→0) = (Σ f_i)²
         };
         let beta_high = {
-            let amp = mean_sinc_amplitude(5.0, &positions, &form_factors, &center);
+            let amp = mean_sinc_amplitude(5.0, &positions, &form_factors, None);
             let p = 4.0; // |f1|² + |f2|² (incoherent limit)
             amp * amp / p
         };
