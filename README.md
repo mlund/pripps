@@ -32,9 +32,9 @@ model = pr.multipole_model(
     excluded="foxs",         			   # FoXS-style excluded volume (16π Fraser)
     #excluded_atomfile="assets/poly_excl.yaml",      # When using polynomial for excluded add the file path 
     volume_scale=1.0,        			   # fit knob c₁ (scales excluded volume)
-    hydration="sasa",        			   # FoXS-style SASA-weighted hydration shell
-    probe=1.8,               			   # SASA probe radius (Å)
-    contrast_density=0.03,   			   # fit knob c₂ (scales hydration)
+    hydration="sasa",  # FoXS-style SASA-weighted hydration shell
+    probe=1.8,  # SASA probe radius (Å)
+    contrast_density=0.03,  # fit knob c₂ (scales hydration)
     bulk_electron_density=0.334,  # e/Å³, pure water
 )
 
