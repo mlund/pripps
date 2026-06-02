@@ -146,11 +146,11 @@ pub fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
 pub fn trajectory_average(
     calc: &dyn IntensityCalculator,
     structure: &Structure,
-    xtc_path: &path::Path,
-    weights: Option<&path::Path>,
+    xtc_opts: crate::TrajectoryOptions,
 ) -> Result<Intensity> {
-    let reader = XtcIterator::open(xtc_path, weights)?;
-    let num_frames = reader.num_frames;
+    let reader = XtcIterator::open(xtc_opts.xtcfile, xtc_opts.weights)?;
+    let stride = xtc_opts.stride.get();
+    let num_frames = reader.num_frames.div_ceil(stride);
     #[cfg(feature = "cli")]
     let progress = ProgressBar::new(num_frames as u64);
 
@@ -158,8 +158,10 @@ pub fn trajectory_average(
 
     let mut mean = Intensity::default();
     let mut structure = structure.clone();
+    let mut weight_sum = 0.0;
 
-    for (frame, weight) in reader {
+    for (frame, weight) in reader.step_by(stride) {
+        weight_sum += weight;
         structure.set_positions(&frame)?;
         let curve = calc.calc_intensities(&structure)?;
 
@@ -174,6 +176,11 @@ pub fn trajectory_average(
 
         #[cfg(feature = "cli")]
         progress.inc(1);
+    }
+
+    // Normalize the accumulated sum by the total weight to get the weighted average
+    for acc in &mut mean.total {
+        *acc /= weight_sum;
     }
 
     Ok(mean)

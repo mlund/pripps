@@ -164,11 +164,7 @@ fn bench_intensity(c: &mut Criterion) {
                 // unused. Without this the optimizer could realize
                 // that each iteration is idempotent and skip most of
                 // the work.
-                black_box(
-                    pripps
-                        .intensity(scheme, pdb, None, None, None, None)
-                        .unwrap(),
-                );
+                black_box(pripps.intensity(scheme, pdb, None, None, None).unwrap());
             });
         });
 
@@ -182,11 +178,7 @@ fn bench_intensity(c: &mut Criterion) {
                     // matching the default CLI behaviour.
                     l_max: None,
                 };
-                black_box(
-                    pripps
-                        .intensity(scheme, pdb, None, None, None, None)
-                        .unwrap(),
-                );
+                black_box(pripps.intensity(scheme, pdb, None, None, None).unwrap());
             });
         });
     }

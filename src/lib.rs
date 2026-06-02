@@ -19,7 +19,10 @@ mod solvent;
 mod structure;
 mod trajectory;
 
-use std::path::{self, Path};
+use std::{
+    num::NonZeroUsize,
+    path::{self, Path},
+};
 
 use debye::DebyeIntensity;
 use explicit::DirectTransform;
@@ -134,6 +137,12 @@ pub struct Pripps {
     formfactors: FormFactorMap,
 }
 
+pub struct TrajectoryOptions<'a> {
+    pub xtcfile: &'a path::Path,
+    pub stride: NonZeroUsize,
+    pub weights: Option<&'a path::Path>,
+}
+
 impl Pripps {
     pub fn formfactors(&self) -> &FormFactorMap {
         &self.formfactors
@@ -199,14 +208,13 @@ impl Pripps {
         &self,
         scheme: IntensityScheme,
         structure_file: &path::Path,
-        xtcfile: Option<&path::Path>,
-        weights: Option<&path::Path>,
+        xtc_opts: Option<TrajectoryOptions>,
         box_sides: Option<[f64; 3]>,
         solvent: Option<&SolventConfig>,
     ) -> Result<Intensity> {
         let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
-            if xtcfile.is_some() {
+            if xtc_opts.is_some() {
                 return Err(Error::usage(
                     "manual box length cannot be used with trajectories",
                 ));
@@ -258,8 +266,8 @@ impl Pripps {
             }
         };
 
-        if let Some(xtc) = xtcfile {
-            trajectory_average(calc.as_ref(), &structure, xtc, weights)
+        if let Some(xtc_opts) = xtc_opts {
+            trajectory_average(calc.as_ref(), &structure, xtc_opts)
         } else {
             calc.calc_intensities(&structure)
         }
@@ -300,7 +308,6 @@ mod tests {
                 &pdb,
                 None,
                 None,
-                None,
                 Some(&solvent),
             )
             .unwrap_err();
@@ -333,7 +340,6 @@ mod tests {
                     l_max: None,
                 },
                 &xyz,
-                None,
                 None,
                 None,
                 Some(&solvent),
@@ -430,7 +436,6 @@ mod tests {
                 &pdb,
                 None,
                 None,
-                None,
                 Some(&solvent),
             )
             .unwrap();
@@ -468,7 +473,6 @@ mod tests {
                 &pdb,
                 None,
                 None,
-                None,
                 Some(&solvent),
             )
             .unwrap();
@@ -480,6 +484,117 @@ mod tests {
         assert!(
             chi2 < 10.0,
             "PepsiSAXS pipeline χ²/N = {chi2:.2} is too high"
+        );
+    }
+
+    /// Write a synthetic two-frame XTC whose frames differ (the second is
+    /// the first scaled by 1.2, so its Debye profile is distinct). The
+    /// atom count matches `4lzt.xyz` (129), which is all `set_positions`
+    /// checks — the coordinates here override the template's per frame.
+    fn write_two_frame_xtc(path: &Path) {
+        const NATOMS: usize = 129;
+        let make_frame = |scale: f32, step: u32| {
+            let mut positions = Vec::with_capacity(NATOMS * 3);
+            for i in 0..NATOMS {
+                positions.push(scale * 0.10 * i as f32); // x (nm)
+                positions.push(scale * 0.15 * (i % 7) as f32); // y
+                positions.push(scale * 0.20 * (i % 5) as f32); // z
+            }
+            let mut boxvec = [0.0f32; 9];
+            boxvec[0] = 15.0;
+            boxvec[4] = 15.0;
+            boxvec[8] = 15.0;
+            molly::Frame {
+                step,
+                time: step as f32,
+                boxvec,
+                precision: 1000.0,
+                positions,
+            }
+        };
+        let mut writer = molly::XTCWriter::create(path).unwrap();
+        writer.write_frame(&make_frame(1.0, 0)).unwrap();
+        writer.write_frame(&make_frame(1.2, 1)).unwrap();
+    }
+
+    /// Exercise XTC striding together with per-frame weights.
+    ///
+    /// Over a two-frame trajectory the Debye average (box-free, so no
+    /// per-frame box is needed) is linear in the per-frame curves, which
+    /// lets us pin down three properties at once:
+    ///
+    /// 1. a weight file selecting a single frame yields that frame alone,
+    /// 2. uniform weighting equals the mean of the two single-frame curves,
+    /// 3. `stride = 2` keeps only frame 0 and the weight renormalisation
+    ///    rescales it back to a full average (not frame 0 × 1/N_frames).
+    #[test]
+    fn trajectory_stride_and_weights() {
+        let pripps = Pripps::from_yaml(Path::new("assets/single_bead.yaml")).unwrap();
+        let template = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
+        let xtc = std::env::temp_dir().join("pripps_stride_test.xtc");
+        write_two_frame_xtc(&xtc);
+
+        let nz = |n| NonZeroUsize::new(n).unwrap();
+        let write_weights = |name: &str, w: [f64; 2]| {
+            let p = std::env::temp_dir().join(name);
+            std::fs::write(&p, format!("{}\n{}\n", w[0], w[1])).unwrap();
+            p
+        };
+        let run = |weights: Option<&Path>, stride: usize| {
+            let opts = TrajectoryOptions {
+                xtcfile: &xtc,
+                stride: nz(stride),
+                weights,
+            };
+            pripps
+                .intensity(
+                    IntensityScheme::Debye {
+                        qmin: 0.05,
+                        qmax: 0.3,
+                        nq: 8,
+                    },
+                    &template,
+                    Some(opts),
+                    None,
+                    None,
+                )
+                .unwrap()
+                .total
+        };
+
+        let w_first = write_weights("pripps_w_first.txt", [1.0, 0.0]);
+        let w_second = write_weights("pripps_w_second.txt", [0.0, 1.0]);
+
+        let i_f0 = run(Some(&w_first), 1); // all weight on frame 0
+        let i_f1 = run(Some(&w_second), 1); // all weight on frame 1
+        let i_avg = run(None, 1); // uniform over both frames
+        let i_stride2 = run(None, 2); // stride skips frame 1 → frame 0 only
+
+        let close = |a: &[f64], b: &[f64]| {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|(x, y)| (x - y).abs() <= 1e-9 * x.abs().max(1.0))
+        };
+
+        // The two frames differ, so single-frame curves must not coincide.
+        assert!(
+            !close(&i_f0, &i_f1),
+            "frames 0 and 1 should give different I(q)"
+        );
+
+        // Uniform weighting is the mean of the two single-frame curves.
+        let mean: Vec<f64> = i_f0.iter().zip(&i_f1).map(|(a, b)| 0.5 * (a + b)).collect();
+        assert!(
+            close(&i_avg, &mean),
+            "uniform weights must equal the per-frame mean"
+        );
+
+        // stride = 2 keeps only frame 0; renormalisation by the consumed
+        // weight must recover frame 0 exactly, not frame 0 scaled by 1/N.
+        assert!(
+            close(&i_stride2, &i_f0),
+            "stride=2 must select and renormalise to frame 0"
         );
     }
 }
