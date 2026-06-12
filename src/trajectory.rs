@@ -15,6 +15,7 @@
 use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
 use std::iter::zip;
+use std::num::NonZeroUsize;
 use std::{f64, path};
 
 #[cfg(feature = "cli")]
@@ -24,51 +25,65 @@ use crate::error::IoResultExt;
 use crate::structure::Structure;
 use crate::{Error, Intensity, IntensityCalculator, Result, Vector3};
 
-/// Iterator over (weighted) frames in an XTC file
+/// Iterator over (weighted) frames in an XTC file.
+///
+/// Frames are reached by seeking to precomputed per-frame byte offsets,
+/// so a `stride > 1` decodes only the frames it yields — the skipped
+/// frames cost a cheap seek rather than a full decompression. The frame
+/// count is likewise derived from the offset table (headers + seeks),
+/// without decompressing any coordinates.
 pub struct XtcIterator {
     reader: XTCReader<std::fs::File>,
-    weights: Option<Vec<f64>>,
-    cnt: usize,
-    /// Total number of frames in the trajectory
-    pub num_frames: usize,
+    /// One weight per frame, indexed by the original frame number; all
+    /// ones when no weights file was given. Left unnormalized — the
+    /// averager divides by the weight it actually consumes, so any global
+    /// scaling cancels.
+    weights: Vec<f64>,
+    /// Start byte offset of every frame in the trajectory.
+    offsets: Box<[u64]>,
+    /// Stride between yielded frames (≥ 1).
+    stride: usize,
+    /// Index into `offsets` of the next frame to yield.
+    next_idx: usize,
 }
 
 impl XtcIterator {
-    /// Open an XTC file for iteration with an optional file with weights for each frame
-    pub fn open(path: &path::Path, weights: Option<&path::Path>) -> Result<Self> {
-        let reader = XTCReader::open(path).with_path(path)?;
-        let weights = weights.map(read_weights).transpose()?;
-        let mut xtc = Self {
+    /// Open an XTC file for iteration, yielding every `stride`-th frame.
+    ///
+    /// `weights` is an optional file of per-frame weights (one per line),
+    /// indexed by the original frame number rather than the strided
+    /// position, so the weight stays attached to its frame regardless of
+    /// stride.
+    pub fn open(
+        path: &path::Path,
+        weights: Option<&path::Path>,
+        stride: NonZeroUsize,
+    ) -> Result<Self> {
+        let mut reader = XTCReader::open(path).with_path(path)?;
+        // Header-and-seek scan: counts frames and records their byte
+        // offsets without decompressing any coordinates.
+        let offsets = reader.determine_offsets(None).with_path(path)?;
+        let weights = match weights {
+            Some(path) => {
+                let w = read_weights(path)?;
+                if w.len() != offsets.len() {
+                    return Err(Error::validation(format!(
+                        "number of weights ({}) does not match number of frames in trajectory ({})",
+                        w.len(),
+                        offsets.len(),
+                    )));
+                }
+                w
+            }
+            None => vec![1.0; offsets.len()],
+        };
+        Ok(Self {
             reader,
             weights,
-            cnt: 0,
-            num_frames: 0,
-        };
-        xtc.num_frames = xtc.num_frames()?;
-        if let Some(w) = xtc.weights.as_ref()
-            && w.len() != xtc.num_frames
-        {
-            return Err(Error::validation(format!(
-                "number of weights ({}) does not match number of frames in trajectory ({})",
-                w.len(),
-                xtc.num_frames,
-            )));
-        }
-        Ok(xtc)
-    }
-
-    /// Get the number of frames in the trajectory
-    fn num_frames(&mut self) -> Result<usize> {
-        let mut num_frames = 0;
-        while self
-            .reader
-            .read_frame_with_selection(&mut Frame::default(), &AtomSelection::Until(0))
-            .is_ok()
-        {
-            num_frames += 1;
-        }
-        self.reader.home()?;
-        Ok(num_frames)
+            offsets,
+            stride: stride.get(),
+            next_idx: 0,
+        })
     }
 }
 
@@ -76,27 +91,37 @@ impl Iterator for XtcIterator {
     type Item = (Frame, f64);
 
     fn next(&mut self) -> Option<Self::Item> {
+        let idx = self.next_idx;
+        let &offset = self.offsets.get(idx)?;
+        self.next_idx += self.stride;
+
         let mut frame = Frame::default();
         self.reader
-            .read_frame(&mut frame)
-            .map(|_| {
-                // When no explicit weights file was given, each frame
-                // gets a uniform 1/N weight so the accumulation loop
-                // can always do `Σ wᵢ·vᵢ` without a separate `/N`.
-                let weight = self
-                    .weights
-                    .as_ref()
-                    .map(|w| w[self.cnt])
-                    .unwrap_or(1.0 / self.num_frames as f64);
-                self.cnt += 1;
-                (frame, weight)
-            })
-            .ok()
+            .read_frame_at_offset::<false>(&mut frame, offset, &AtomSelection::All)
+            .ok()?;
+
+        Some((frame, self.weights[idx]))
+    }
+
+    /// Exact: every remaining strided index yields exactly one frame.
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self
+            .offsets
+            .len()
+            .saturating_sub(self.next_idx)
+            .div_ceil(self.stride);
+        (remaining, Some(remaining))
     }
 }
 
+impl ExactSizeIterator for XtcIterator {}
+
+/// Read per-frame weights, one per line. Weights are returned as-is (not
+/// normalized): the trajectory averager divides by the weight it consumes,
+/// so only the relative magnitudes matter. The total is validated to be
+/// finite and non-zero so the eventual division is well-defined.
 fn read_weights(path: &path::Path) -> Result<Vec<f64>> {
-    let mut weights: Vec<f64> = std::fs::read_to_string(path)
+    let weights: Vec<f64> = std::fs::read_to_string(path)
         .with_path(path)?
         .lines()
         .map(|w| w.parse())
@@ -105,22 +130,13 @@ fn read_weights(path: &path::Path) -> Result<Vec<f64>> {
             Error::validation(format!("weight parse error: {e}"))
         })?;
 
-    normalize_vector(weights.as_mut_slice())?;
-
-    log::info!("Read {} weights from {}", weights.len(), path.display());
-    Ok(weights)
-}
-
-/// Normalize a vector so that the sum of its elements is 1
-fn normalize_vector(v: &mut [f64]) -> Result<()> {
-    let sum: f64 = v.iter().sum();
+    let sum: f64 = weights.iter().sum();
     if !sum.abs().is_normal() {
         return Err(Error::validation("sum of weights is zero or infinite"));
     }
-    for w in v.iter_mut() {
-        *w /= sum;
-    }
-    Ok(())
+
+    log::info!("Read {} weights from {}", weights.len(), path.display());
+    Ok(weights)
 }
 
 /// Get side lengths from a frame (Å)
@@ -148,9 +164,8 @@ pub fn trajectory_average(
     structure: &Structure,
     xtc_opts: crate::TrajectoryOptions,
 ) -> Result<Intensity> {
-    let reader = XtcIterator::open(xtc_opts.xtcfile, xtc_opts.weights)?;
-    let stride = xtc_opts.stride.get();
-    let num_frames = reader.num_frames.div_ceil(stride);
+    let reader = XtcIterator::open(xtc_opts.xtcfile, xtc_opts.weights, xtc_opts.stride)?;
+    let num_frames = reader.len();
     #[cfg(feature = "cli")]
     let progress = ProgressBar::new(num_frames as u64);
 
@@ -160,7 +175,7 @@ pub fn trajectory_average(
     let mut structure = structure.clone();
     let mut weight_sum = 0.0;
 
-    for (frame, weight) in reader.step_by(stride) {
+    for (frame, weight) in reader {
         weight_sum += weight;
         structure.set_positions(&frame)?;
         let curve = calc.calc_intensities(&structure)?;
