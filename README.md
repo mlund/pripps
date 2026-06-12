@@ -32,9 +32,9 @@ model = pr.multipole_model(
     excluded="foxs",         			   # FoXS-style excluded volume (16π Fraser)
     #excluded_atomfile="assets/poly_excl.yaml",      # When using polynomial for excluded add the file path 
     volume_scale=1.0,        			   # fit knob c₁ (scales excluded volume)
-    hydration="sasa",        			   # FoXS-style SASA-weighted hydration shell
-    probe=1.8,               			   # SASA probe radius (Å)
-    contrast_density=0.03,   			   # fit knob c₂ (scales hydration)
+    hydration="sasa",  # FoXS-style SASA-weighted hydration shell
+    probe=1.8,  # SASA probe radius (Å)
+    contrast_density=0.03,  # fit knob c₂ (scales hydration)
     bulk_electron_density=0.334,  # e/Å³, pure water
 )
 
@@ -124,7 +124,7 @@ subtracted from the atomic scattering via
 | `foxs` | Same formula as `fraser` but with the FoXS 16π denominator: dummy form factor decays more slowly with q → larger excluded-volume subtraction at high q. Matches FoXS. | `displaced_volume` per atom kind |
 | `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian sized by cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
 | `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes. Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
-| `polynomial` | Uses per-kind excluded-volume form factors from a dedicated YAML table (e.g. `assets/poly_atev.yaml`), matched by kind name to the input structure. | matching entries in `excluded_atomfile` |
+| `polynomial` | Uses per-kind excluded-volume form factors from a dedicated YAML table (e.g. `assets/poly_excl.yaml`), matched by kind name to the input structure. | matching entries in `excluded_atomfile` |
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when
