@@ -61,6 +61,15 @@ the fit knobs to the cached amplitudes — typically under a
 millisecond each — so wrapping them in `scipy.minimize` or a grid
 search is fluent.
 
+For small structures or exact reference checks, `debye_model` accepts
+the same solvent keyword arguments and exposes the same
+`model.intensity(volume_scale, contrast_density)` interface. It caches
+the exact Debye self and cross terms for atoms, excluded volume, and
+hydration before fitting.
+`direct_model` does the same for the explicit discrete-q transform,
+caching the complex amplitudes before recombining and averaging
+duplicate q magnitudes.
+
 A full working example is in `pripps-py/examples/fit_lysozyme.py`,
 which fits lysozyme against the shipped `tests/lysozyme/lyzexp.dat`
 experimental dataset and reproduces FoXS's χ²/N ≈ 0.20:
@@ -289,12 +298,20 @@ pripps -a atoms.yaml -i structure.pdb multipole --lmax 68  # fixed order
 # With solvent correction — CSV output with 5 columns
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
     multipole --excluded fraser --hydration sasa
+pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
+    debye --excluded fraser --hydration sasa
 
 # Fit against experimental data (box-constrained Nelder-Mead over
 # c₁ ∈ [0.5, 2.0] and c₂ ∈ [0.0, 0.1]; warns if the fit hits a bound)
 pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
     -f experimental.dat -o fit.csv \
     multipole --excluded foxs --hydration sasa
+pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
+    -f experimental.dat -o fit.csv \
+    debye --excluded foxs --hydration sasa
+pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
+    -f experimental.dat -o fit.csv \
+    direct --excluded foxs --hydration sasa
 
 # Trajectory averaging — use `direct` so each frame's periodic box
 # is honoured (multipole ignores PBC).
@@ -306,8 +323,8 @@ pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc direct
 | Scheme | Best for | Notes |
 |---|---|---|
 | `multipole` | Single structures, fitting loops | Fastest for large atomic PDBs; no periodic boundaries. |
-| `direct` | MD trajectories with periodic box | Evaluates I(q) on discrete Miller-index q-vectors; each frame's box is picked up from the XTC. |
-| `debye` | Small clusters, reference checks | Exact pair-distance sum; quadratic in atoms, fine under a few hundred. |
+| `direct` | MD trajectories with periodic box | Evaluates I(q) on discrete Miller-index q-vectors; supports the same solvent fit knobs for single-frame fits. |
+| `debye` | Small clusters, reference checks | Exact pair-distance sum with the same solvent and fit knobs as multipole; quadratic in atoms, fine under a few hundred. |
 
 Output is CSV: `q,total` for vacuum, or
 `q,total,atoms,excluded,hydration` when solvent is active.

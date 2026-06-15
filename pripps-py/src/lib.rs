@@ -3,7 +3,10 @@ use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use ::pripps::{ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig};
+use ::pripps::{
+    DebyeModel, DirectModel, ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps,
+    SolventConfig,
+};
 
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);
@@ -75,6 +78,116 @@ impl PyPripps {
             .map(PyMultipoleModel)
             .map_err(into_py_err)
     }
+
+    /// Prepare a stateful Debye fit. Caches exact per-q Debye terms
+    /// so `DebyeModel.intensity` is cheap to call repeatedly with
+    /// different `(volume_scale, contrast_density)`.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        structure_file,
+        *,
+        qmin = 0.0,
+        qmax = 0.5,
+        nq = 100,
+        excluded = "none",
+        excluded_atomfile = None,
+        volume_scale = 1.0,
+        excluded_spacing = 1.0,
+        hydration = "none",
+        probe = 1.8,
+        spacing = 1.5,
+        thickness = 3.0,
+        contrast_density = 0.03,
+        bulk_electron_density = 0.334,
+    ))]
+    fn debye_model(
+        &self,
+        structure_file: &str,
+        qmin: f64,
+        qmax: f64,
+        nq: usize,
+        excluded: &str,
+        excluded_atomfile: Option<&str>,
+        volume_scale: f64,
+        excluded_spacing: f64,
+        hydration: &str,
+        probe: f64,
+        spacing: f64,
+        thickness: f64,
+        contrast_density: f64,
+        bulk_electron_density: f64,
+    ) -> PyResult<PyDebyeModel> {
+        let cfg = solvent_from_kwargs(
+            excluded,
+            excluded_atomfile,
+            volume_scale,
+            excluded_spacing,
+            hydration,
+            probe,
+            spacing,
+            thickness,
+            contrast_density,
+            bulk_electron_density,
+        )?;
+        self.0
+            .debye_model(structure_file.as_ref(), qmin, qmax, nq, &cfg)
+            .map(PyDebyeModel)
+            .map_err(into_py_err)
+    }
+
+    /// Prepare a stateful direct/explicit fit. Caches per-q-vector
+    /// amplitudes so `DirectModel.intensity` is cheap to call
+    /// repeatedly with different `(volume_scale, contrast_density)`.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        structure_file,
+        *,
+        pmax = 6,
+        side_length = 200.0,
+        excluded = "none",
+        excluded_atomfile = None,
+        volume_scale = 1.0,
+        excluded_spacing = 1.0,
+        hydration = "none",
+        probe = 1.8,
+        spacing = 1.5,
+        thickness = 3.0,
+        contrast_density = 0.03,
+        bulk_electron_density = 0.334,
+    ))]
+    fn direct_model(
+        &self,
+        structure_file: &str,
+        pmax: usize,
+        side_length: f64,
+        excluded: &str,
+        excluded_atomfile: Option<&str>,
+        volume_scale: f64,
+        excluded_spacing: f64,
+        hydration: &str,
+        probe: f64,
+        spacing: f64,
+        thickness: f64,
+        contrast_density: f64,
+        bulk_electron_density: f64,
+    ) -> PyResult<PyDirectModel> {
+        let cfg = solvent_from_kwargs(
+            excluded,
+            excluded_atomfile,
+            volume_scale,
+            excluded_spacing,
+            hydration,
+            probe,
+            spacing,
+            thickness,
+            contrast_density,
+            bulk_electron_density,
+        )?;
+        self.0
+            .direct_model(structure_file.as_ref(), pmax, [side_length; 3], &cfg)
+            .map(PyDirectModel)
+            .map_err(into_py_err)
+    }
 }
 
 #[pyclass(name = "MultipoleModel", module = "pripps")]
@@ -95,6 +208,54 @@ impl PyMultipoleModel {
     }
 
     /// The q grid the fit was prepared over.
+    #[getter]
+    fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
+        self.0.q_values().to_vec().into_pyarray(py)
+    }
+}
+
+#[pyclass(name = "DebyeModel", module = "pripps")]
+struct PyDebyeModel(DebyeModel);
+
+#[pymethods]
+impl PyDebyeModel {
+    /// Compute I(q) for the given fit parameters. Returns a dict of
+    /// numpy arrays: `q`, `total`, `atoms`, `excluded`, `hydration`.
+    fn intensity<'py>(
+        &self,
+        py: Python<'py>,
+        volume_scale: f64,
+        contrast_density: f64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let out = self.0.intensity(volume_scale, contrast_density);
+        intensity_to_dict(py, out)
+    }
+
+    /// The q grid the fit was prepared over.
+    #[getter]
+    fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
+        self.0.q_values().to_vec().into_pyarray(py)
+    }
+}
+
+#[pyclass(name = "DirectModel", module = "pripps")]
+struct PyDirectModel(DirectModel);
+
+#[pymethods]
+impl PyDirectModel {
+    /// Compute I(q) for the given fit parameters. Returns a dict of
+    /// numpy arrays: `q`, `total`, `atoms`, `excluded`, `hydration`.
+    fn intensity<'py>(
+        &self,
+        py: Python<'py>,
+        volume_scale: f64,
+        contrast_density: f64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let out = self.0.intensity(volume_scale, contrast_density);
+        intensity_to_dict(py, out)
+    }
+
+    /// The duplicate-averaged q grid the fit was prepared over.
     #[getter]
     fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
         self.0.q_values().to_vec().into_pyarray(py)
@@ -197,5 +358,7 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPripps>()?;
     m.add_class::<PyMultipoleModel>()?;
+    m.add_class::<PyDebyeModel>()?;
+    m.add_class::<PyDirectModel>()?;
     Ok(())
 }
