@@ -17,7 +17,6 @@
 use crate::error::IoResultExt;
 use crate::{
     ExcludedVolume, Hydration, Intensity, IntensityScheme, Pripps, Result, SolventConfig, cli,
-    read_formfactors,
 };
 use clap::{Parser, Subcommand, ValueEnum, builder::styling::AnsiColor};
 
@@ -25,8 +24,6 @@ use pretty_env_logger::env_logger::DEFAULT_FILTER_ENV;
 use std::env::set_var;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-
-const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_excl.yaml";
 
 /// Commands
 #[derive(Debug, Subcommand)]
@@ -90,8 +87,8 @@ pub struct SolventArgs {
     /// Grid spacing (Å) for `--excluded grid`
     #[clap(long, default_value = "1.0")]
     excluded_spacing: f64,
-    /// Form-factor YAML for `--excluded polynomial`
-    #[clap(long)]
+    /// Deprecated: `--excluded polynomial` reads `excluded_solvent` from `--atomfile`.
+    #[clap(long, hide = true)]
     excluded_atomfile: Option<PathBuf>,
     /// Bulk solvent electron density (e/Å³)
     #[clap(long, default_value = "0.334")]
@@ -136,13 +133,13 @@ impl SolventArgs {
                 volume_scale: self.volume_scale,
             },
             ExcludedKind::Polynomial => {
-                let path = self
-                    .excluded_atomfile
-                    .as_deref()
-                    .unwrap_or_else(|| Path::new(DEFAULT_POLY_EXCLUDED_ATOMFILE));
+                if self.excluded_atomfile.is_some() {
+                    log::warn!(
+                        "`--excluded-atomfile` is ignored; polynomial excluded volume is read from `excluded_solvent` entries in `--atomfile`"
+                    );
+                }
                 ExcludedVolume::Polynomial {
                     volume_scale: self.volume_scale,
-                    formfactors: read_formfactors(path)?,
                 }
             }
         };

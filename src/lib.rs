@@ -308,7 +308,7 @@ mod tests {
     }
 
     fn yaml_and_xyz() -> (Pripps, std::path::PathBuf) {
-        let yaml = std::path::Path::new("assets/single_bead.yaml");
+        let yaml = std::path::Path::new("assets/poly_amino_acid.yaml");
         let xyz = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         (Pripps::from_yaml(yaml).unwrap(), xyz)
     }
@@ -451,7 +451,7 @@ mod tests {
         // produce a physically reasonable profile. Not as good as
         // the FoXS pipeline (different coefficients, different
         // denominator) but the shape should be plausible.
-        let pripps = Pripps::from_yaml(std::path::Path::new("assets/single_bead.yaml")).unwrap();
+        let pripps = Pripps::from_yaml(std::path::Path::new("assets/gaussian_atoms.yaml")).unwrap();
         let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },

@@ -3,31 +3,27 @@
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
 
-//! Polynomial excluded-volume dummies from a separate form-factor table.
+//! Polynomial excluded-volume dummies from the atom form-factor table.
 //!
 //! For each structure atom/residue, this generator copies a polynomial
-//! excluded-volume form factor from a dedicated YAML table (typically
-//! `assets/poly_excl.yaml`) by matching on kind name.
+//! excluded-solvent form factor from the same YAML entry as the atomistic
+//! form factor.
 
 use crate::formfactor::FormFactorMap;
 use crate::solvent::DummySet;
 use crate::{Error, Result, Structure};
 
-pub(super) fn dummies(
-    structure: &Structure,
-    atom_formfactors: &FormFactorMap,
-    excluded_formfactors: &FormFactorMap,
-) -> Result<DummySet> {
+pub(super) fn dummies(structure: &Structure, formfactors: &FormFactorMap) -> Result<DummySet> {
     let mut positions = Vec::with_capacity(structure.pos.len());
     let mut form_factors = Vec::with_capacity(structure.pos.len());
 
     for (&id, &pos) in structure.ids.iter().zip(&structure.pos) {
-        let kind_name = atom_formfactors.kind(id).name();
-        let ff = excluded_formfactors
-            .form_factor_by_name(kind_name)
+        let kind_name = formfactors.kind(id).name();
+        let ff = formfactors
+            .excluded_solvent(id)
             .ok_or_else(|| {
                 Error::validation(format!(
-                    "atom kind {kind_name} is missing from the polynomial excluded-volume table"
+                    "atom kind {kind_name} has no `excluded_solvent`; required by ExcludedVolume::Polynomial"
                 ))
             })?
             .clone();
@@ -36,7 +32,7 @@ pub(super) fn dummies(
     }
 
     log::info!(
-        "Polynomial excluded volume: {} dummies from separate table",
+        "Polynomial excluded volume: {} dummies from form-factor table",
         positions.len()
     );
     DummySet::per_dummy(positions, form_factors)
@@ -48,42 +44,47 @@ mod tests {
     use crate::formfactor::FormFactor;
     use crate::{AtomKind, Vector3};
 
-    fn map_with(name: &str, coeff0: f64) -> FormFactorMap {
-        let kind = AtomKind::new(name);
-        let ff = FormFactor::Polynomial {
+    fn polynomial(coeff0: f64) -> FormFactor {
+        FormFactor::Polynomial {
             qrange: (0.0, 1.0),
             coeff: vec![coeff0],
-        };
-        FormFactorMap::from_entries(vec![(kind, ff)])
+        }
+    }
+
+    fn map_with(name: &str, atom_coeff0: f64, excluded_coeff0: Option<f64>) -> FormFactorMap {
+        let kind = AtomKind::new(name);
+        FormFactorMap::from_entries_with_excluded(vec![(
+            kind,
+            polynomial(atom_coeff0),
+            excluded_coeff0.map(polynomial),
+        )])
     }
 
     #[test]
-    fn copies_form_factors_by_kind_name() {
-        let atom_map = map_with("ALA", 10.0);
-        let excluded_map = map_with("ALA", 3.5);
+    fn copies_excluded_solvent_from_atom_map() {
+        let atom_map = map_with("ALA", 10.0, Some(3.5));
         let structure = Structure {
             pos: vec![Vector3::new(0.0, 0.0, 0.0)],
             ids: vec![0],
             box_sides: None,
         };
 
-        let d = dummies(&structure, &atom_map, &excluded_map).unwrap();
+        let d = dummies(&structure, &atom_map).unwrap();
         let mut f = Vec::new();
         d.form_factors_at(0.2, &mut f).unwrap();
         assert_eq!(f, vec![3.5]);
     }
 
     #[test]
-    fn missing_kind_in_excluded_table_errors() {
-        let atom_map = map_with("ALA", 10.0);
-        let excluded_map = map_with("GLY", 3.5);
+    fn missing_excluded_solvent_errors() {
+        let atom_map = map_with("ALA", 10.0, None);
         let structure = Structure {
             pos: vec![Vector3::new(0.0, 0.0, 0.0)],
             ids: vec![0],
             box_sides: None,
         };
 
-        let err = dummies(&structure, &atom_map, &excluded_map).unwrap_err();
-        assert!(format!("{err}").contains("ALA"));
+        let err = dummies(&structure, &atom_map).unwrap_err();
+        assert!(format!("{err}").contains("excluded_solvent"));
     }
 }

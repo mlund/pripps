@@ -30,7 +30,6 @@ model = pr.multipole_model(
     qmax=0.5,
     nq=500,
     excluded="foxs",         			   # FoXS-style excluded volume (16π Fraser)
-    #excluded_atomfile="assets/poly_excl.yaml",      # When using polynomial for excluded add the file path 
     volume_scale=1.0,        			   # fit knob c₁ (scales excluded volume)
     hydration="sasa",  # FoXS-style SASA-weighted hydration shell
     probe=1.8,  # SASA probe radius (Å)
@@ -104,7 +103,6 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
-| `excluded_atomfile` | path (default `assets/poly_excl.yaml`) | Excluded-volume form-factor YAML for `excluded="polynomial"` |
 | `contrast_density` | float (default 0.03) | Fractional hydration-layer excess density (c₂ in `A − c₁·C + c₂·B`) — pepsi's `d_rho / ρ_water`, ~0.1 for a 10 % excess layer |
 | `probe` | float (default: 1.8 for SASA/grid, 6.0 for voronoi) | Water probe radius in Å |
 | `spacing` | float (default 1.5) | Grid spacing (Å) for `hydration="grid"` |
@@ -124,7 +122,7 @@ subtracted from the atomic scattering via
 | `foxs` | Same formula as `fraser` but with the FoXS 16π denominator: dummy form factor decays more slowly with q → larger excluded-volume subtraction at high q. Matches FoXS. | `displaced_volume` per atom kind |
 | `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian sized by cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
 | `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes. Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
-| `polynomial` | Uses per-kind excluded-volume form factors from a dedicated YAML table (e.g. `assets/poly_excl.yaml`), matched by kind name to the input structure. | matching entries in `excluded_atomfile` |
+| `polynomial` | Uses per-kind excluded-solvent form factors stored as `excluded_solvent` beside each atom/residue `formfactor` in the same YAML file. | `excluded_solvent` for referenced atom kinds |
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when
@@ -163,7 +161,8 @@ C: { ff: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0]], c: 0.4 },
 NH: { radius: 1.009, displaced_volume: 7.606,
       ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
 CA: { ff: !Alias C }
-ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0, 5.8, ...]} }
+ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0, 5.8, ...]},
+       excluded_solvent: !Polynomial { qrange: [0.0, 0.75], coeff: [7.1, 0.0, 4.2, ...]} }
 ```
 
 Supported form factor models:
@@ -193,18 +192,19 @@ hydrogens that the effective radius does not account for.
 
 | File | Description | Best for |
 |------|-------------|----------|
-| `assets/single_bead.yaml` | PepsiSAXS coefficients + coarse-grained residues; also covers united-atom kinds (CH/CH₂/NH/…) used by atomic PDBs | Cα / single-bead models; atomic PDBs with `--excluded voronoi` |
+| `assets/poly_amino_acid.yaml` | Amino-acid bead polynomial form factors with matching `excluded_solvent` polynomials | Cα / single-bead models with `--excluded polynomial` |
+| `assets/gaussian_atoms.yaml` | Stovgaard-style atomic/residue form factors; also covers united-atom kinds (CH/CH₂/NH/…) used by atomic PDBs | Atomic PDBs with PepsiSAXS-style solvent models |
 | `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files with `--excluded foxs` |
 
-Both files use Gaussian b values in the standard s² = (q/4π)²
-convention (International Tables / Cromer-Mann). The atomic
-coefficients differ (Cromer-Mann vs Stovgaard-2010) and the
-volume/radius tables match their respective tools.
+Gaussian files use b values in the standard s² = (q/4π)² convention
+(International Tables / Cromer-Mann). The atomic coefficients differ
+(Cromer-Mann vs Stovgaard-2010) and the volume/radius tables match
+their respective tools.
 
 **Don't mix files with non-matching `--excluded` flags.** Each
 YAML + excluded-volume convention is a self-consistent bundle:
 `foxs_formfactors.yaml` was calibrated jointly with FoXS's
-`K = 16π` Gaussian, while `single_bead.yaml` was calibrated with
+`K = 16π` Gaussian, while `gaussian_atoms.yaml` was calibrated with
 PepsiSAXS's `K = 4π`. Swapping the denominator gives atomic and
 excluded contributions that were never fit together and yields
 subtly biased intensities.

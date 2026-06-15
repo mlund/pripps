@@ -3,11 +3,7 @@ use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use ::pripps::{
-    ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig, read_formfactors,
-};
-
-const DEFAULT_POLY_EXCLUDED_ATOMFILE: &str = "assets/poly_excl.yaml";
+use ::pripps::{ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig};
 
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);
@@ -128,11 +124,12 @@ fn solvent_from_kwargs(
         },
         "voronoi" => ExcludedVolume::Voronoi { volume_scale },
         "polynomial" => {
-            let path = excluded_atomfile.unwrap_or(DEFAULT_POLY_EXCLUDED_ATOMFILE);
-            ExcludedVolume::Polynomial {
-                volume_scale,
-                formfactors: read_formfactors(path.as_ref()).map_err(into_py_err)?,
+            if excluded_atomfile.is_some() {
+                log::warn!(
+                    "`excluded_atomfile` is ignored; polynomial excluded volume is read from `excluded_solvent` entries in `atomfile`"
+                );
             }
+            ExcludedVolume::Polynomial { volume_scale }
         }
         other => {
             return Err(PyValueError::new_err(format!(

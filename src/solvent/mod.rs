@@ -204,13 +204,10 @@ pub enum ExcludedVolume {
     Voronoi {
         volume_scale: f64,
     },
-    /// Per-kind excluded-volume form factors from a dedicated YAML
-    /// table, evaluated directly (typically polynomial fits from
-    /// `poly_excl.yaml`). The table is matched by kind name against
-    /// the structure's atom/residue kinds.
+    /// Per-kind excluded-solvent form factors stored alongside the
+    /// atom/residue form factors in the same YAML file.
     Polynomial {
         volume_scale: f64,
-        formfactors: FormFactorMap,
     },
 }
 
@@ -388,10 +385,7 @@ impl ExcludedVolume {
             Self::Voronoi { .. } => {
                 voronoi_excluded::dummies(structure, formfactors, bulk_electron_density)
             }
-            Self::Polynomial {
-                formfactors: excluded_formfactors,
-                ..
-            } => polynomial_excluded::dummies(structure, formfactors, excluded_formfactors),
+            Self::Polynomial { .. } => polynomial_excluded::dummies(structure, formfactors),
         }
     }
 }

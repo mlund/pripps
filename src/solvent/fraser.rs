@@ -72,7 +72,7 @@ pub(super) fn dummies(
     let mut form_factors = Vec::with_capacity(structure.pos.len());
 
     // Validate per atom rather than up front over all kinds in the
-    // map: coarse-grained YAML files (e.g. `single_bead.yaml`) may
+    // map: coarse-grained YAML files (e.g. `poly_amino_acid.yaml`) may
     // legally leave some residue entries without a `displaced_volume`,
     // and only kinds the loaded structure references need one.
     for (&id, &pos) in structure.ids.iter().zip(&structure.pos) {

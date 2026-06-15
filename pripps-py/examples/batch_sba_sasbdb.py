@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Run the testing_sba.ipynb workflow over SASBDB cache entries.
+"""Run the testing_single-bead_approximation.ipynb workflow over SASBDB cache entries.
 
 For each cache directory containing both:
-  - raw_cleaned.xyz
+  - raw_cleaned.xyz or raw_cleaned_martini3_aa.pdb
   - exp.dat
 
 this script fits (volume_scale, contrast_density) with the same setup
-as testing_sba.ipynb:
-  - atomfile: assets/poly_atomic.yaml
-  - excluded: polynomial (assets/poly_excl.yaml)
+as testing_single-bead_approximation.ipynb:
+  - atomfile: assets/poly_amino_acid.yaml (or poly_martini.yaml for Martini3)
+  - excluded: polynomial using the atomfile's excluded_solvent entries
   - hydration: disabled
-  - optimizer: L-BFGS-B with bounds [(0.95, 1.12), (-2.0, 4.0)]
+  - optimizer: L-BFGS-B with bounds [(0.95, 1.12), (-2.0, 4.0)] or change 
 """
 
 from __future__ import annotations
@@ -60,7 +60,6 @@ def fit_single(
     pr: pripps.Pripps,
     xyz_path: Path,
     exp_path: Path,
-    excluded_atomfile: Path,
     qmax: float,
     nq: int,
 ) -> dict[str, float | np.ndarray]:
@@ -72,7 +71,6 @@ def fit_single(
         qmax=qmax,
         nq=nq,
         excluded="polynomial",
-        excluded_atomfile=str(excluded_atomfile),
         hydration="grid",
         volume_scale=1.0,
         probe=1.8,
@@ -90,7 +88,7 @@ def fit_single(
     result = minimize(
         chi2,
         x0=[1.0, 0.2],
-        bounds=[(-1.5, 2.0), (-2.0, 4.0)],
+        bounds=[(0.95, 1.12), (-2.0, 4.0)],
         method="L-BFGS-B",
     )
 
@@ -125,14 +123,8 @@ def main() -> None:
     parser.add_argument(
         "--atomfile",
         type=Path,
-        default=repo_root / "assets" / "poly_martini_atomic.yaml",
-        help="Form-factor YAML for Pripps(atomfile=...)",
-    )
-    parser.add_argument(
-        "--excluded-atomfile",
-        type=Path,
-        default=repo_root / "assets" / "poly_martini_excl.yaml",
-        help="Polynomial excluded-volume YAML",
+        default=repo_root / "assets" / "poly_martini.yaml",
+        help="Form-factor YAML with formfactor and excluded_solvent entries",
     )
     parser.add_argument(
         "--qmax",
@@ -184,7 +176,6 @@ def main() -> None:
                 pr=pr,
                 xyz_path=xyz_path,
                 exp_path=exp_path,
-                excluded_atomfile=args.excluded_atomfile,
                 qmax=float(args.qmax),
                 nq=int(args.nq),
             )
