@@ -39,11 +39,11 @@ model = pr.multipole_model(
     qmin=0.0,
     qmax=0.5,
     nq=500,
-    excluded="foxs",         # FoXS-style excluded volume (16π Fraser)
-    volume_scale=1.0,        # fit knob c₁ (scales excluded volume)
-    hydration="sasa",        # FoXS-style SASA-weighted hydration shell
-    probe=1.8,               # SASA probe radius (Å)
-    contrast_density=0.03,   # fit knob c₂ (scales hydration)
+    excluded="foxs",         			   # FoXS-style excluded volume (16π Fraser)
+    volume_scale=1.0,        			   # fit knob c₁ (scales excluded volume)
+    hydration="sasa",  # FoXS-style SASA-weighted hydration shell
+    probe=1.8,  # SASA probe radius (Å)
+    contrast_density=0.03,  # fit knob c₂ (scales hydration)
     bulk_electron_density=0.334,  # e/Å³, pure water
 )
 
@@ -70,6 +70,15 @@ caches the intermediate scattering amplitudes. Subsequent
 the fit knobs to the cached amplitudes — typically under a
 millisecond each — so wrapping them in `scipy.minimize` or a grid
 search is fluent.
+
+For small structures or exact reference checks, `debye_model` accepts
+the same solvent keyword arguments and exposes the same
+`model.intensity(volume_scale, contrast_density)` interface. It caches
+the exact Debye self and cross terms for atoms, excluded volume, and
+hydration before fitting.
+`direct_model` does the same for the explicit discrete-q transform,
+caching the complex amplitudes before recombining and averaging
+duplicate q magnitudes.
 
 A full working example is in `pripps-py/examples/fit_lysozyme.py`,
 which fits lysozyme against the shipped `tests/lysozyme/lyzexp.dat`
@@ -109,7 +118,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"` | Excluded-volume model |
+| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"`, `"per-kind"` | Excluded-volume model |
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
@@ -132,6 +141,7 @@ subtracted from the atomic scattering via
 | `foxs` | Same formula as `fraser` but with the FoXS 16π denominator: dummy form factor decays more slowly with q → larger excluded-volume subtraction at high q. Matches FoXS. | `displaced_volume` per atom kind |
 | `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian sized by cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
 | `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes. Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
+| `per-kind` | Uses per-kind excluded-solvent form factors stored as `excluded_solvent` beside each atom/residue `formfactor` in the same YAML file. | `excluded_solvent` for referenced atom kinds |
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when
@@ -170,7 +180,10 @@ C: { ff: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0]], c: 0.4 },
 NH: { radius: 1.009, displaced_volume: 7.606,
       ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
 CA: { ff: !Alias C }
-ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0, 5.8, ...]} }
+# Linear combination of other entries (no geometry), F(q) = Σ wᵢ Fᵢ(q):
+H2O: { ff: !Linear [[O, 1.0], [H, 2.0]] }
+ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0, 5.8, ...]},
+       excluded_solvent: !Polynomial { qrange: [0.0, 0.75], coeff: [7.1, 0.0, 4.2, ...]} }
 ```
 
 Supported form factor models:
@@ -189,6 +202,7 @@ Supported form factor models:
 |----------|------|---------|---------------|
 | `radius` | Å | SASA hydration, Fraser excluded volume | No — must be specified |
 | `displaced_volume` | ų | Fraser excluded volume | Yes — defaults to (4/3)πr³ from `radius` if omitted |
+| `excluded_solvent` | form factor | `per-kind` excluded volume | No — optional; required per species when using `--excluded per-kind` |
 
 When `radius` is present but `displaced_volume` is omitted, the
 displaced volume is automatically derived as the sphere volume
@@ -196,22 +210,36 @@ displaced volume is automatically derived as the sphere volume
 groups (e.g. NH, SH) where the displaced volume includes implicit
 hydrogens that the effective radius does not account for.
 
+The optional `excluded_solvent` field stores a *second* form factor
+(any of the models above) for the bulk solvent each species displaces,
+sitting beside its in-vacuo `formfactor` in the same entry. It is read
+only by the `per-kind` excluded-volume model (`--excluded per-kind`, or
+`excluded="per-kind"` from Python), which subtracts this form factor —
+scaled by `volume_scale` — instead of building a Gaussian dummy from
+`radius`/`displaced_volume`. Every species present in the structure
+must define it when `--excluded per-kind` is selected.
+
 ### Shipped form-factor files
 
 | File | Description | Best for |
 |------|-------------|----------|
-| `assets/single_bead.yaml` | PepsiSAXS coefficients + coarse-grained residues; also covers united-atom kinds (CH/CH₂/NH/…) used by atomic PDBs | Cα / single-bead models; atomic PDBs with `--excluded voronoi` |
-| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files with `--excluded foxs` |
+| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C) atomic form factors, FoXS-compatible volumes and SASA radii | Atomic PDBs with `--excluded foxs` |
+| `assets/gaussian_atoms.yaml` | Mixed table: residue single-bead polynomials plus atomic/united-atom Gaussians (CH/CH₂/NH/…) | Atomic PDBs with PepsiSAXS-style solvent models |
+| `assets/stovgaard2010.yaml` | Per-residue form-factor centroids (one-body model, q ∈ [0, 0.75] Å⁻¹) from Stovgaard et al. 2010, <https://doi.org/10.1186/1471-2105-11-429> | Residue / Cα single-bead models |
+| `assets/poly_amino_acid.yaml` | Amino-acid bead polynomials with a separate `excluded_solvent` polynomial per bead | Cα / single-bead with `--excluded per-kind` |
+| `assets/poly_amino_acid_combined.yaml` | Amino-acid bead polynomials with the excluded solvent already folded into the form factor | Cα / single-bead with `--excluded disabled` |
+| `assets/poly_martini.yaml` | Martini-3 bead polynomials with a separate `excluded_solvent` polynomial per bead | Martini-3 CG with `--excluded per-kind` |
+| `assets/poly_martini_combined.yaml` | Martini-3 bead polynomials with the excluded solvent already folded into the form factor | Martini-3 CG with `--excluded disabled` |
 
-Both files use Gaussian b values in the standard s² = (q/4π)²
-convention (International Tables / Cromer-Mann). The atomic
-coefficients differ (Cromer-Mann vs Stovgaard-2010) and the
-volume/radius tables match their respective tools.
+Gaussian files use b values in the standard s² = (q/4π)² convention
+(International Tables / Cromer-Mann). The atomic coefficients differ
+(Cromer-Mann vs Stovgaard-2010) and the volume/radius tables match
+their respective tools.
 
 **Don't mix files with non-matching `--excluded` flags.** Each
 YAML + excluded-volume convention is a self-consistent bundle:
 `foxs_formfactors.yaml` was calibrated jointly with FoXS's
-`K = 16π` Gaussian, while `single_bead.yaml` was calibrated with
+`K = 16π` Gaussian, while `gaussian_atoms.yaml` was calibrated with
 PepsiSAXS's `K = 4π`. Swapping the denominator gives atomic and
 excluded contributions that were never fit together and yields
 subtly biased intensities.
@@ -296,12 +324,20 @@ pripps -a atoms.yaml -i structure.pdb multipole --lmax 68  # fixed order
 # With solvent correction — CSV output with 5 columns
 pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
     multipole --excluded fraser --hydration sasa
+pripps -a atoms.yaml -i structure.pdb -o intensity.csv \
+    debye --excluded fraser --hydration sasa
 
 # Fit against experimental data (box-constrained Nelder-Mead over
 # c₁ ∈ [0.5, 2.0] and c₂ ∈ [0.0, 0.1]; warns if the fit hits a bound)
 pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
     -f experimental.dat -o fit.csv \
     multipole --excluded foxs --hydration sasa
+pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
+    -f experimental.dat -o fit.csv \
+    debye --excluded foxs --hydration sasa
+pripps -a assets/foxs_formfactors.yaml -i structure.pdb \
+    -f experimental.dat -o fit.csv \
+    direct --excluded foxs --hydration sasa
 
 # Trajectory averaging — use `direct` so each frame's periodic box
 # is honoured (multipole ignores PBC).
@@ -313,8 +349,8 @@ pripps -a atoms.yaml -i structure.pdb -x trajectory.xtc direct
 | Scheme | Best for | Notes |
 |---|---|---|
 | `multipole` | Single structures, fitting loops | Fastest for large atomic PDBs; no periodic boundaries. |
-| `direct` | MD trajectories with periodic box | Evaluates I(q) on discrete Miller-index q-vectors; each frame's box is picked up from the XTC. |
-| `debye` | Small clusters, reference checks | Exact pair-distance sum; quadratic in atoms, fine under a few hundred. |
+| `direct` | MD trajectories with periodic box | Evaluates I(q) on discrete Miller-index q-vectors; supports the same solvent fit knobs for single-frame fits. |
+| `debye` | Small clusters, reference checks | Exact pair-distance sum with the same solvent and fit knobs as multipole; quadratic in atoms, fine under a few hundred. |
 
 Output is CSV: `q,total` for vacuum, or
 `q,total,atoms,excluded,hydration` when solvent is active.

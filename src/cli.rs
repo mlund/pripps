@@ -40,6 +40,8 @@ pub enum Commands {
         /// Number of q values
         #[clap(long, default_value = "100")]
         nq: usize,
+        #[clap(flatten)]
+        solvent: SolventArgs,
     },
     /// Scattering intensity using discrete q vectors
     Direct {
@@ -76,7 +78,7 @@ pub enum Commands {
     },
 }
 
-/// Solvent correction parameters shared by Multipole and Direct.
+/// Solvent correction parameters shared by Debye, Multipole, and Direct.
 #[derive(Debug, Clone, clap::Args)]
 pub struct SolventArgs {
     /// Excluded-volume model
@@ -116,7 +118,7 @@ pub struct SolventArgs {
 impl SolventArgs {
     /// Build a [`SolventConfig`], returning `None` when neither
     /// excluded volume nor hydration is active.
-    fn to_config(&self) -> Option<SolventConfig> {
+    fn to_config(&self) -> Result<Option<SolventConfig>> {
         let excluded = match self.excluded {
             ExcludedKind::Disabled => ExcludedVolume::Disabled,
             ExcludedKind::Fraser => ExcludedVolume::Fraser {
@@ -130,6 +132,9 @@ impl SolventArgs {
                 volume_scale: self.volume_scale,
             },
             ExcludedKind::Voronoi => ExcludedVolume::Voronoi {
+                volume_scale: self.volume_scale,
+            },
+            ExcludedKind::PerKind => ExcludedVolume::PerKind {
                 volume_scale: self.volume_scale,
             },
         };
@@ -155,7 +160,7 @@ impl SolventArgs {
             hydration,
             bulk_electron_density: self.bulk_electron_density,
         };
-        cfg.is_active().then_some(cfg)
+        Ok(cfg.is_active().then_some(cfg))
     }
 }
 
@@ -168,6 +173,7 @@ pub enum ExcludedKind {
     Foxs,
     Grid,
     Voronoi,
+    PerKind,
 }
 
 /// Which hydration-shell generator to use.
@@ -239,7 +245,7 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml(&args.atomfile)?;
-    let (scheme, box_override, solvent) = command_to_scheme(args.command);
+    let (scheme, box_override, solvent) = command_to_scheme(args.command)?;
 
     if let Some(fit_path) = &args.fit {
         // Fit mode: optimise (c1, c2) against experimental data
@@ -247,6 +253,25 @@ pub fn do_main() -> Result<()> {
         let solvent = solvent.unwrap_or_default();
 
         match scheme {
+            IntensityScheme::Debye {
+                qmin: _,
+                qmax: _,
+                nq,
+            } => {
+                let model = pripps.debye_model(&args.input, 0.0, exp.q_max(), nq, &solvent)?;
+                let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                let out = model.intensity(result.volume_scale, result.contrast_density);
+                crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
+            }
+            IntensityScheme::Direct { pmax } => {
+                let box_sides = box_override.ok_or_else(|| {
+                    crate::Error::usage("direct fitting requires box side lengths")
+                })?;
+                let model = pripps.direct_model(&args.input, pmax, box_sides, &solvent)?;
+                let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                let out = model.intensity(result.volume_scale, result.contrast_density);
+                crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
+            }
             IntensityScheme::Multipole {
                 qmin: _,
                 qmax: _,
@@ -258,11 +283,6 @@ pub fn do_main() -> Result<()> {
                 let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
                 let out = model.intensity(result.volume_scale, result.contrast_density);
                 crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
-            }
-            _ => {
-                return Err(crate::Error::usage(
-                    "fitting is currently only supported by the Multipole scheme",
-                ));
             }
         };
     } else {
@@ -290,31 +310,37 @@ pub fn do_main() -> Result<()> {
 
 /// Translate parsed CLI arguments into an [`IntensityScheme`], an
 /// optional explicit box override (used by `Direct`), and an optional
-/// [`SolventConfig`] (only produced by `Multipole` when an excluded or
-/// hydration model is selected).
+/// [`SolventConfig`] when an excluded-volume or hydration model is selected.
 fn command_to_scheme(
     command: Commands,
-) -> (IntensityScheme, Option<[f64; 3]>, Option<SolventConfig>) {
+) -> Result<(IntensityScheme, Option<[f64; 3]>, Option<SolventConfig>)> {
     match command {
-        Commands::Debye { qmin, qmax, nq } => {
-            (IntensityScheme::Debye { qmin, qmax, nq }, None, None)
-        }
+        Commands::Debye {
+            qmin,
+            qmax,
+            nq,
+            solvent,
+        } => Ok((
+            IntensityScheme::Debye { qmin, qmax, nq },
+            None,
+            solvent.to_config()?,
+        )),
         Commands::Direct {
             pmax,
             side_length,
             solvent,
-        } => (
+        } => Ok((
             IntensityScheme::Direct { pmax },
             side_length.map(|s| [s; 3]),
-            solvent.to_config(),
-        ),
+            solvent.to_config()?,
+        )),
         Commands::Multipole {
             qmin,
             qmax,
             nq,
             lmax,
             solvent,
-        } => (
+        } => Ok((
             IntensityScheme::Multipole {
                 qmin,
                 qmax,
@@ -322,8 +348,8 @@ fn command_to_scheme(
                 l_max: lmax,
             },
             None,
-            solvent.to_config(),
-        ),
+            solvent.to_config()?,
+        )),
     }
 }
 

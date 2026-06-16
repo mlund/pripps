@@ -36,7 +36,7 @@ def chi2_per_point(q_theory, i_theory, exp):
 
 class TestMultipoleModel(unittest.TestCase):
     def test_prepare_and_call(self):
-        pr = pripps.Pripps("../assets/single_bead.yaml")
+        pr = pripps.Pripps("../assets/poly_amino_acid.yaml")
         fit = pr.multipole_model(
             "../tests/lysozyme/4lzt.xyz",
             qmin=0.0,
@@ -52,7 +52,7 @@ class TestMultipoleModel(unittest.TestCase):
         self.assertTrue(np.all(out["atoms"] > 0))
 
     def test_refit_produces_different_curves(self):
-        pr = pripps.Pripps("../assets/single_bead.yaml")
+        pr = pripps.Pripps("../assets/poly_amino_acid.yaml")
         fit = pr.multipole_model(
             "../tests/lysozyme/4lzt.xyz",
             qmin=0.0,
@@ -66,7 +66,7 @@ class TestMultipoleModel(unittest.TestCase):
         self.assertFalse(np.allclose(a["total"], b["total"]))
 
     def test_bad_excluded_raises(self):
-        pr = pripps.Pripps("../assets/single_bead.yaml")
+        pr = pripps.Pripps("../assets/poly_amino_acid.yaml")
         with self.assertRaises(ValueError) as ctx:
             pr.multipole_model(
                 "../tests/lysozyme/4lzt.xyz",
@@ -101,7 +101,7 @@ class TestPepsiFit(unittest.TestCase):
     def setUpClass(cls):
         cls.exp = load_lyzexp()
         q_max = float(cls.exp[-1, 0])
-        pr = pripps.Pripps("../assets/single_bead.yaml")
+        pr = pripps.Pripps("../assets/gaussian_atoms.yaml")
         cls.model = pr.multipole_model(
             "../tests/lysozyme/4lzt.pdb",
             qmin=0.0,
