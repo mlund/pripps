@@ -214,6 +214,11 @@ impl PyMultipoleModel {
     }
 }
 
+/// A prepared Debye fit returned by `Pripps.debye_model`.
+///
+/// Call `intensity(volume_scale, contrast_density)` to compute the I(q)
+/// curve, and read the `q_values` property for the q grid it was
+/// prepared over.
 #[pyclass(name = "DebyeModel", module = "pripps")]
 struct PyDebyeModel(DebyeModel);
 
@@ -238,6 +243,11 @@ impl PyDebyeModel {
     }
 }
 
+/// A prepared direct/explicit fit returned by `Pripps.direct_model`.
+///
+/// Call `intensity(volume_scale, contrast_density)` to compute the I(q)
+/// curve, and read the `q_values` property for the q grid it was
+/// prepared over.
 #[pyclass(name = "DirectModel", module = "pripps")]
 struct PyDirectModel(DirectModel);
 
