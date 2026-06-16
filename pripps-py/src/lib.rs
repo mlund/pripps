@@ -34,7 +34,7 @@ impl PyPripps {
         excluded_spacing = 1.0,
         hydration = "none",
         probe = 1.8,
-        spacing = 1.5,
+        spacing = 3.10516,
         thickness = 3.0,
         contrast_density = 0.03,
         bulk_electron_density = 0.334,

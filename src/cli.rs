@@ -99,8 +99,10 @@ pub struct SolventArgs {
     /// explicit-sphere shell into an envelope-like layer).
     #[clap(long)]
     probe: Option<f64>,
-    /// Grid spacing (Å) for `--hydration grid`
-    #[clap(long, default_value = "1.5")]
+    /// Grid spacing (Å) for `--hydration grid`. Default is the
+    /// bulk-water linear spacing (≈30 Å³/molecule), so each grid
+    /// cell holds exactly one water molecule (weight = 1.0).
+    #[clap(long, default_value = "3.10516")]
     spacing: f64,
     /// Shell thickness (Å) for `--hydration grid`
     #[clap(long, default_value = "3.0")]
