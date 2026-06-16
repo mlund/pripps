@@ -5,6 +5,10 @@ use pyo3::types::PyDict;
 
 use ::pripps::{ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps, SolventConfig};
 
+/// Scattering calculator loaded from a form-factor YAML file.
+///
+/// Construct with `Pripps(atomfile)`, then build a stateful model such
+/// as `multipole_model(...)` and evaluate I(q) from it.
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);
 
@@ -74,6 +78,11 @@ impl PyPripps {
     }
 }
 
+/// A prepared multipole fit returned by `Pripps.multipole_model`.
+///
+/// Call `intensity(volume_scale, contrast_density)` to compute the I(q)
+/// curve, and read the `q_values` property for the q grid it was
+/// prepared over.
 #[pyclass(name = "MultipoleModel", module = "pripps")]
 struct PyMultipoleModel(MultipoleModel);
 
@@ -181,6 +190,13 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
     }
 }
 
+/// Fast small-angle scattering (SAXS/SANS) intensities for atomic and
+/// coarse-grained structures.
+///
+/// Typical use: load a form-factor table with `Pripps(atomfile)`,
+/// prepare a model with `Pripps.multipole_model(structure_file, ...)`,
+/// then call `model.intensity(volume_scale, contrast_density)` to get
+/// the I(q) curve as a dict of NumPy arrays.
 #[pymodule]
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Bridge the core library's `log` records into Python's `logging`
