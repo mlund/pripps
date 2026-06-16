@@ -11,4 +11,5 @@ crate-type = ["cdylib"]
 [dependencies]
 pripps = { path = ".." }
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py39"] }
+pyo3-log = "0.12"
 numpy = "0.24"

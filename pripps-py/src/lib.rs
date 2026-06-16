@@ -183,6 +183,12 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
 
 #[pymodule]
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Bridge the core library's `log` records into Python's `logging`
+    // module so messages (e.g. the grid hydration shell summary)
+    // surface when callers configure `logging`. Without this no `log`
+    // backend is installed in the extension and every record is
+    // dropped silently.
+    pyo3_log::init();
     m.add_class::<PyPripps>()?;
     m.add_class::<PyMultipoleModel>()?;
     Ok(())
