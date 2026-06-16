@@ -376,7 +376,6 @@ mod tests {
                 IntensityScheme::Direct { pmax: 2 },
                 &xyz,
                 None,
-                None,
                 Some(box_sides),
                 Some(&solvent),
             )
@@ -414,7 +413,6 @@ mod tests {
                 &xyz,
                 None,
                 None,
-                None,
                 Some(&scaled_solvent),
             )
             .unwrap();
@@ -431,7 +429,6 @@ mod tests {
             .intensity(
                 IntensityScheme::Direct { pmax: 2 },
                 &xyz,
-                None,
                 None,
                 Some(direct_box),
                 Some(&scaled_solvent),
@@ -454,7 +451,6 @@ mod tests {
                     l_max: None,
                 },
                 &xyz,
-                None,
                 None,
                 None,
                 Some(&scaled_solvent),
@@ -615,7 +611,6 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
             )
             .unwrap();
 
@@ -704,7 +699,6 @@ mod tests {
                     l_max: None,
                 },
                 &pdb,
-                None,
                 None,
                 None,
                 Some(&solvent),
@@ -817,7 +811,7 @@ mod tests {
     ///    rescales it back to a full average (not frame 0 × 1/N_frames).
     #[test]
     fn trajectory_stride_and_weights() {
-        let pripps = Pripps::from_yaml(Path::new("assets/single_bead.yaml")).unwrap();
+        let pripps = Pripps::from_yaml(Path::new("assets/gaussian_atoms.yaml")).unwrap();
         let template = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         let xtc = std::env::temp_dir().join("pripps_stride_test.xtc");
         write_two_frame_xtc(&xtc);
