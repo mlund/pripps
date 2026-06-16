@@ -108,7 +108,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"`, `"polynomial"` | Excluded-volume model |
+| `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"`, `"per-kind"` | Excluded-volume model |
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
 | `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
@@ -131,7 +131,7 @@ subtracted from the atomic scattering via
 | `foxs` | Same formula as `fraser` but with the FoXS 16π denominator: dummy form factor decays more slowly with q → larger excluded-volume subtraction at high q. Matches FoXS. | `displaced_volume` per atom kind |
 | `grid` | Fills the molecular envelope with uniform grid cells, each carrying a Fraser Gaussian sized by cell volume (`spacing³`). Independent of per-atom displaced volumes. | `radius` per atom kind |
 | `voronoi` | Per-atom Fraser Gaussians sized by individual Voronoi cell volumes. Derives displaced volumes geometrically — no tabulated volumes needed. Achieves χ²≈0.20 on lysozyme, comparable to `fraser`. | `radius` per atom kind |
-| `polynomial` | Uses per-kind excluded-solvent form factors stored as `excluded_solvent` beside each atom/residue `formfactor` in the same YAML file. | `excluded_solvent` for referenced atom kinds |
+| `per-kind` | Uses per-kind excluded-solvent form factors stored as `excluded_solvent` beside each atom/residue `formfactor` in the same YAML file. | `excluded_solvent` for referenced atom kinds |
 
 The `fraser` and `foxs` models use per-atom displaced volumes from
 the form-factor YAML (derived from `radius` as `(4/3)πr³` when
@@ -201,7 +201,7 @@ hydrogens that the effective radius does not account for.
 
 | File | Description | Best for |
 |------|-------------|----------|
-| `assets/poly_amino_acid.yaml` | Amino-acid bead polynomial form factors with matching `excluded_solvent` polynomials | Cα / single-bead models with `--excluded polynomial` |
+| `assets/poly_amino_acid.yaml` | Amino-acid bead polynomial form factors with matching `excluded_solvent` polynomials | Cα / single-bead models with `--excluded per-kind` |
 | `assets/gaussian_atoms.yaml` | Stovgaard-style atomic/residue form factors; also covers united-atom kinds (CH/CH₂/NH/…) used by atomic PDBs | Atomic PDBs with PepsiSAXS-style solvent models |
 | `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files with `--excluded foxs` |
 

@@ -274,10 +274,10 @@ fn solvent_from_kwargs(
             volume_scale,
         },
         "voronoi" => ExcludedVolume::Voronoi { volume_scale },
-        "polynomial" => ExcludedVolume::Polynomial { volume_scale },
+        "per-kind" | "perkind" => ExcludedVolume::PerKind { volume_scale },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, `voronoi`, or `polynomial`)"
+                "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, `voronoi`, or `per-kind`)"
             )));
         }
     };

@@ -297,7 +297,7 @@ struct AtomSpec {
     #[serde(alias = "ff")]
     formfactor: FormFactorSpec,
     /// Optional excluded-solvent form factor used by
-    /// `ExcludedVolume::Polynomial`.
+    /// `ExcludedVolume::PerKind`.
     excluded_solvent: Option<FormFactorSpec>,
 }
 

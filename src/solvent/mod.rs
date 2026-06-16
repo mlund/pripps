@@ -32,7 +32,7 @@
 mod fraser;
 mod grid;
 mod grid_excluded;
-mod polynomial_excluded;
+mod per_kind_excluded;
 mod sasa;
 mod voronoi_excluded;
 mod voronoi_hydration;
@@ -133,7 +133,7 @@ impl ExcludedVolume {
             | Self::FraserFoxs { volume_scale }
             | Self::Grid { volume_scale, .. }
             | Self::Voronoi { volume_scale }
-            | Self::Polynomial { volume_scale, .. } => *volume_scale,
+            | Self::PerKind { volume_scale, .. } => *volume_scale,
         }
     }
 }
@@ -206,7 +206,7 @@ pub enum ExcludedVolume {
     },
     /// Per-kind excluded-solvent form factors stored alongside the
     /// atom/residue form factors in the same YAML file.
-    Polynomial {
+    PerKind {
         volume_scale: f64,
     },
 }
@@ -379,7 +379,7 @@ impl ExcludedVolume {
                 volume_scale: 1.0,
             },
             Self::Voronoi { .. } => Self::Voronoi { volume_scale: 1.0 },
-            Self::Polynomial { .. } => Self::Polynomial { volume_scale: 1.0 },
+            Self::PerKind { .. } => Self::PerKind { volume_scale: 1.0 },
         }
         .dummies(structure, formfactors, bulk_electron_density)
     }
@@ -412,7 +412,7 @@ impl ExcludedVolume {
             Self::Voronoi { .. } => {
                 voronoi_excluded::dummies(structure, formfactors, bulk_electron_density)
             }
-            Self::Polynomial { .. } => polynomial_excluded::dummies(structure, formfactors),
+            Self::PerKind { .. } => per_kind_excluded::dummies(structure, formfactors),
         }
     }
 }

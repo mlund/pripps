@@ -3,9 +3,9 @@
 // Licensed under the Apache license, version 2.0 (the "license");
 // you may not use this file except in compliance with the license.
 
-//! Polynomial excluded-volume dummies from the atom form-factor table.
+//! Per-kind excluded-volume dummies from the atom form-factor table.
 //!
-//! For each structure atom/residue, this generator copies a polynomial
+//! For each structure atom/residue, this generator copies the per-kind
 //! excluded-solvent form factor from the same YAML entry as the atomistic
 //! form factor.
 
@@ -22,7 +22,7 @@ pub(super) fn dummies(structure: &Structure, formfactors: &FormFactorMap) -> Res
             .excluded_solvent(id)
             .ok_or_else(|| {
                 Error::validation(format!(
-                    "atom kind {} has no `excluded_solvent`; required by ExcludedVolume::Polynomial",
+                    "atom kind {} has no `excluded_solvent`; required by ExcludedVolume::PerKind",
                     formfactors.kind(id).name()
                 ))
             })?
@@ -32,7 +32,7 @@ pub(super) fn dummies(structure: &Structure, formfactors: &FormFactorMap) -> Res
     }
 
     log::info!(
-        "Polynomial excluded volume: {} dummies from form-factor table",
+        "Per-kind excluded volume: {} dummies from form-factor table",
         positions.len()
     );
     DummySet::per_dummy(positions, form_factors)

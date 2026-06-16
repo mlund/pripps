@@ -134,7 +134,7 @@ impl SolventArgs {
             ExcludedKind::Voronoi => ExcludedVolume::Voronoi {
                 volume_scale: self.volume_scale,
             },
-            ExcludedKind::Polynomial => ExcludedVolume::Polynomial {
+            ExcludedKind::PerKind => ExcludedVolume::PerKind {
                 volume_scale: self.volume_scale,
             },
         };
@@ -173,7 +173,7 @@ pub enum ExcludedKind {
     Foxs,
     Grid,
     Voronoi,
-    Polynomial,
+    PerKind,
 }
 
 /// Which hydration-shell generator to use.

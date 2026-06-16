@@ -1,6 +1,15 @@
 #
-# Amino acid beads with polynomial form factors converted from poly_atev.csv
-# Coefficients preserve all significant digits from the CSV source.
+# Amino-acid beads with polynomial form factors that already have the
+# excluded solvent COMBINED in: each `formfactor` is the in-vacuo bead
+# scattering minus the displaced bulk solvent, so there is no separate
+# `excluded_solvent` term. Use with `--excluded disabled` — the solvent
+# contribution is baked in and not separately fittable via `volume_scale`.
+#
+# For the variant that keeps the excluded solvent as a separate,
+# fittable term, see poly_amino_acid.yaml.
+#
+# Converted from poly_amino_acid_combined.csv. Coefficients preserve all
+# significant digits from the CSV source.
 #
 
 ALA:

@@ -1,7 +1,15 @@
 #
-# Martini amino acid bead form factors converted from poly_martini_atomic.csv
-# Excluded-solvent polynomial coefficients are converted from poly_martini_excl.csv.
-# Coefficients preserve all significant digits from the CSV sources.
+# Martini amino-acid bead form factors, keeping the excluded solvent
+# SEPARATE from the form factor: `formfactor` is the in-vacuo bead
+# scattering and the displaced bulk solvent is stored next to it as
+# `excluded_solvent`. Use with `--excluded per-kind`, which subtracts the
+# excluded-solvent term (scaled by `volume_scale`) at recombination.
+#
+# For the variant with the excluded solvent already folded into a single
+# form factor, see poly_martini_combined.yaml.
+#
+# Converted from poly_martini.csv. Coefficients preserve all significant
+# digits from the CSV source.
 #
 
 ALA_BB:
