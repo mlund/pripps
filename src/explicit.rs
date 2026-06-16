@@ -25,9 +25,25 @@ use rayon::prelude::*;
 use std::ops::Mul;
 use std::{cmp::Ordering, f64::consts::PI};
 
-/// Sample directions (h,k,l)
+/// Reciprocal-space sampling directions (h, k, l).
 ///
-/// This is the thirteen permutations of the Miller index [100], [110], [101]
+/// The discrete method estimates the orientationally-averaged scattering
+/// intensity I(q) by evaluating it along a fixed set of directions. For a
+/// periodic box with side lengths L, only wavevectors commensurate with the
+/// box contribute, namely the reciprocal-lattice vectors
+///
+/// ```text
+///     q = 2π · p · (h, k, l) / L,    p = 1, 2, …, p_max
+/// ```
+///
+/// Each (h, k, l) below fixes a direction; the integer multiples p (applied in
+/// [`DirectTransform::new`]) step outward along it to span the |q| range.
+///
+/// These are the thirteen low-index directions of the [100], [110] and [111]
+/// families. The cube has 26 such directions, but because the scattering
+/// density is real, F(−q) = F(q)\* and hence I(q) = I(−q) (Friedel's law).
+/// Antipodal pairs are therefore redundant and only one representative of each
+/// is kept, leaving thirteen.
 const MILLER_INDEX: [Vector3; 13] = [
     Vector3::new(1.0, 0.0, 0.0),
     Vector3::new(0.0, 1.0, 0.0),
@@ -92,7 +108,14 @@ impl DirectTransform {
         p_max: usize,
         solvent: Option<SolventConfig>,
     ) -> Self {
-        let directions = directions(p_max);
+        // Expand each base direction into p_max reciprocal-lattice points,
+        // q·L = 2π·p·(h,k,l). Larger p reaches higher |q| (finer real-space
+        // detail) along the same direction; the division by the box sides is
+        // deferred to the per-structure calculation.
+        let directions: Vec<_> = MILLER_INDEX
+            .iter()
+            .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
+            .collect();
 
         log::info!(
             "Generated {} q-vectors with p_max = {}",
