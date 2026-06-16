@@ -343,7 +343,7 @@ fn command_to_scheme(
             IntensityScheme::Direct { pmax },
             side_length.map(|s| [s; 3]),
             solvent.to_config(),
-        ),
+        )),
         Commands::Multipole {
             qmin,
             qmax,
@@ -351,7 +351,7 @@ fn command_to_scheme(
             lmax,
             solvent,
         } => Ok((
-            IntensityScheme::Multipole {
+           IntensityScheme::Multipole {
                 qmin,
                 qmax,
                 nq,
