@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run the testing_single-bead_approximation.ipynb workflow over SASBDB cache entries.
+"""Batch single-bead-approximation (SBA) fits over SASBDB cache entries.
+
+Runs the testing_single-bead_approximation.ipynb workflow against a
+directory of cached SASBDB (Small Angle Scattering Biological Data Bank)
+entries.
 
 For each cache directory containing both:
   - raw_cleaned.xyz or raw_cleaned_martini3_aa.pdb
@@ -8,7 +12,7 @@ For each cache directory containing both:
 this script fits (volume_scale, contrast_density) with the same setup
 as testing_single-bead_approximation.ipynb:
   - atomfile: assets/poly_amino_acid.yaml (or poly_martini.yaml for Martini3)
-  - excluded: polynomial using the atomfile's excluded_solvent entries
+  - excluded: per-kind using the atomfile's excluded_solvent entries
   - hydration: disabled
   - optimizer: L-BFGS-B with bounds [(0.95, 1.12), (-2.0, 4.0)] or change them in the script
 """
@@ -70,7 +74,7 @@ def fit_single(
         qmin=0.0,
         qmax=qmax,
         nq=nq,
-        excluded="polynomial",
+        excluded="per-kind",
         hydration="grid",
         volume_scale=1.0,
         probe=1.8,
