@@ -212,12 +212,6 @@ impl PyMultipoleModel {
     fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
         self.0.q_values().to_vec().into_pyarray(py)
     }
-
-    /// Number of points in the grid hydration shell, or `None` for other hydration models.
-    #[getter]
-    fn grid_hydration_points(&self) -> Option<usize> {
-        self.0.grid_hydration_points()
-    }
 }
 
 #[pyclass(name = "DebyeModel", module = "pripps")]
@@ -242,12 +236,6 @@ impl PyDebyeModel {
     fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
         self.0.q_values().to_vec().into_pyarray(py)
     }
-
-    /// Number of points in the grid hydration shell, or `None` for other hydration models.
-    #[getter]
-    fn grid_hydration_points(&self) -> Option<usize> {
-        self.0.grid_hydration_points()
-    }
 }
 
 #[pyclass(name = "DirectModel", module = "pripps")]
@@ -271,12 +259,6 @@ impl PyDirectModel {
     #[getter]
     fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
         self.0.q_values().to_vec().into_pyarray(py)
-    }
-
-    /// Number of points in the grid hydration shell, or `None` for other hydration models.
-    #[getter]
-    fn grid_hydration_points(&self) -> Option<usize> {
-        self.0.grid_hydration_points()
     }
 }
 

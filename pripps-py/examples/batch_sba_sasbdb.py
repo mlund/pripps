@@ -78,7 +78,6 @@ def fit_single(
         bulk_electron_density=0.334,
         spacing = 3.8,
     )
-    print(model.grid_hydration_points)
 
     def chi2(params: np.ndarray) -> float:
         c1, c2 = float(params[0]), float(params[1])
