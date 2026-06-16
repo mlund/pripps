@@ -170,6 +170,8 @@ C: { ff: !Gaussian { qrange: [0.0, 1.0], ab: [[0.1, 2.0]], c: 0.4 },
 NH: { radius: 1.009, displaced_volume: 7.606,
       ff: !United { center: N, orbit: [[H, 1.009, 1]] } }
 CA: { ff: !Alias C }
+# Linear combination of other entries (no geometry), F(q) = Σ wᵢ Fᵢ(q):
+H2O: { ff: !Linear [[O, 1.0], [H, 2.0]] }
 ALA: { ff: !Polynomial { qrange: [0.0, 0.75], coeff: [8.9, 0.0, 5.8, ...]},
        excluded_solvent: !Polynomial { qrange: [0.0, 0.75], coeff: [7.1, 0.0, 4.2, ...]} }
 ```
@@ -190,12 +192,22 @@ Supported form factor models:
 |----------|------|---------|---------------|
 | `radius` | Å | SASA hydration, Fraser excluded volume | No — must be specified |
 | `displaced_volume` | ų | Fraser excluded volume | Yes — defaults to (4/3)πr³ from `radius` if omitted |
+| `excluded_solvent` | form factor | `per-kind` excluded volume | No — optional; required per species when using `--excluded per-kind` |
 
 When `radius` is present but `displaced_volume` is omitted, the
 displaced volume is automatically derived as the sphere volume
 (4/3)πr³. Specify `displaced_volume` explicitly only for united-atom
 groups (e.g. NH, SH) where the displaced volume includes implicit
 hydrogens that the effective radius does not account for.
+
+The optional `excluded_solvent` field stores a *second* form factor
+(any of the models above) for the bulk solvent each species displaces,
+sitting beside its in-vacuo `formfactor` in the same entry. It is read
+only by the `per-kind` excluded-volume model (`--excluded per-kind`, or
+`excluded="per-kind"` from Python), which subtracts this form factor —
+scaled by `volume_scale` — instead of building a Gaussian dummy from
+`radius`/`displaced_volume`. Every species present in the structure
+must define it when `--excluded per-kind` is selected.
 
 ### Shipped form-factor files
 
