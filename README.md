@@ -118,7 +118,7 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
 | `contrast_density` | float (default 0.03) | Fractional hydration-layer excess density (c₂ in `A − c₁·C + c₂·B`) — pepsi's `d_rho / ρ_water`, ~0.1 for a 10 % excess layer |
 | `probe` | float (default: 1.8 for SASA/grid, 6.0 for voronoi) | Water probe radius in Å |
-| `spacing` | float (default 1.5) | Grid spacing (Å) for `hydration="grid"` |
+| `spacing` | float (default 3.10516) | Grid spacing (Å) for `hydration="grid"`; the bulk-water linear spacing, so each cell holds ~1 water molecule |
 | `thickness` | float (default 3.0) | Shell thickness (Å) for `hydration="grid"` |
 | `bulk_electron_density` | float (default 0.334) | Bulk solvent density in e/Å³ |
 

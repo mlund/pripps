@@ -38,7 +38,7 @@ impl PyPripps {
         excluded_spacing = 1.0,
         hydration = "none",
         probe = 1.8,
-        spacing = 1.5,
+        spacing = 3.10516,
         thickness = 3.0,
         contrast_density = 0.03,
         bulk_electron_density = 0.334,
@@ -374,6 +374,12 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
 
 #[pymodule]
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Bridge the core library's `log` records into Python's `logging`
+    // module so messages (e.g. the grid hydration shell summary)
+    // surface when callers configure `logging`. Without this no `log`
+    // backend is installed in the extension and every record is
+    // dropped silently.
+    pyo3_log::init();
     m.add_class::<PyPripps>()?;
     m.add_class::<PyMultipoleModel>()?;
     m.add_class::<PyDebyeModel>()?;

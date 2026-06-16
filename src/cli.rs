@@ -48,9 +48,10 @@ pub enum Commands {
         /// Number of Miller index multiplications
         #[clap(short = 'p', long, default_value = "6")]
         pmax: usize,
-        /// Cubic box side length (Å)
-        #[clap(short = 'b', long = "box", default_value = "200.0")]
-        side_length: f64,
+        /// Cubic box side length (Å). Omit when using a trajectory
+        /// (the per-frame box from the XTC is used instead).
+        #[clap(short = 'b', long = "box")]
+        side_length: Option<f64>,
         #[clap(flatten)]
         solvent: SolventArgs,
     },
@@ -103,8 +104,10 @@ pub struct SolventArgs {
     /// explicit-sphere shell into an envelope-like layer).
     #[clap(long)]
     probe: Option<f64>,
-    /// Grid spacing (Å) for `--hydration grid`
-    #[clap(long, default_value = "1.5")]
+    /// Grid spacing (Å) for `--hydration grid`. Default is the
+    /// bulk-water linear spacing (≈30 Å³/molecule), so each grid
+    /// cell holds exactly one water molecule (weight = 1.0).
+    #[clap(long, default_value = "3.10516")]
     spacing: f64,
     /// Shell thickness (Å) for `--hydration grid`
     #[clap(long, default_value = "3.0")]
@@ -223,6 +226,10 @@ pub struct Args {
     #[clap(short = 'x', long)]
     xtcfile: Option<PathBuf>,
 
+    /// Optional stride for XTC frames (default: 1, i.e. use all frames)
+    #[clap(short = 's', long, default_value = "1", requires = "xtcfile")]
+    xtc_stride: std::num::NonZeroUsize,
+
     /// Optional file with weights for each frame in XTC file (one weight per line)
     #[clap(short = 'w', long, requires = "xtcfile")]
     weights: Option<PathBuf>,
@@ -289,12 +296,19 @@ pub fn do_main() -> Result<()> {
             }
         };
     } else {
+        let xtc_opts = args
+            .xtcfile
+            .as_deref()
+            .map(|xtcfile| crate::TrajectoryOptions {
+                xtcfile,
+                stride: args.xtc_stride,
+                weights: args.weights.as_deref(),
+            });
         // Normal mode: compute I(q) and write output
         let intensity = pripps.intensity(
             scheme,
             &args.input,
-            args.xtcfile.as_deref(),
-            args.weights.as_deref(),
+            xtc_opts,
             box_override,
             solvent.as_ref(),
         )?;
@@ -327,9 +341,9 @@ fn command_to_scheme(
             solvent,
         } => Ok((
             IntensityScheme::Direct { pmax },
-            Some([side_length; 3]),
-            solvent.to_config()?,
-        )),
+            side_length.map(|s| [s; 3]),
+            solvent.to_config(),
+        ),
         Commands::Multipole {
             qmin,
             qmax,
