@@ -52,6 +52,10 @@ The returned dict contains:
 | `excluded` | Excluded-volume contribution |
 | `hydration` | Hydration-shell contribution |
 
+Prepared Python models also expose `model.grid_hydration_points`.
+It is the number of Cartesian shell points used for `hydration="grid"`
+and `None` for the other hydration models.
+
 ### Fitting against experimental data
 
 `multipole_model` does the expensive per-structure setup once and

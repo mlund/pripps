@@ -14,7 +14,7 @@
 
 //! Explicit calculation using discrete q vectors
 
-use crate::solvent::SolventConfig;
+use crate::solvent::{Hydration, SolventConfig};
 use crate::{
     Contributions, Error, Intensity, IntensityCalculator, Result, Structure, Vector3,
     formfactor::FormFactorMap,
@@ -169,6 +169,8 @@ pub(crate) fn build_model(
         cfg.excluded
             .unit_scale_dummies(structure, formfactors, cfg.bulk_electron_density)?;
     let hydration_dummies = cfg.hydration.dummies(structure, formfactors)?;
+    let grid_hydration_points = matches!(cfg.hydration, Hydration::Grid { .. })
+        .then_some(hydration_dummies.positions().len());
 
     let rows = directions
         .par_iter()
@@ -197,13 +199,18 @@ pub(crate) fn build_model(
         .collect::<Result<Vec<_>>>()?;
 
     let q_values = unique_q_values(&rows);
-    Ok(DirectModel { q_values, rows })
+    Ok(DirectModel {
+        q_values,
+        rows,
+        grid_hydration_points,
+    })
 }
 
 /// Cached explicit-transform state for solvent fitting.
 pub struct DirectModel {
     q_values: Vec<f64>,
     rows: Vec<DirectTerms>,
+    grid_hydration_points: Option<usize>,
 }
 
 impl DirectModel {
@@ -232,6 +239,11 @@ impl DirectModel {
     /// The q grid the fit was prepared over after duplicate q-norms are averaged.
     pub fn q_values(&self) -> &[f64] {
         &self.q_values
+    }
+
+    /// Number of grid points in the hydration shell, if `Hydration::Grid` was used.
+    pub fn grid_hydration_points(&self) -> Option<usize> {
+        self.grid_hydration_points
     }
 }
 

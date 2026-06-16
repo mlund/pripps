@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the license.
 
 use crate::q_sampler::QSampler;
-use crate::solvent::SolventConfig;
+use crate::solvent::{Hydration, SolventConfig};
 use crate::{
     Contributions, Intensity, IntensityCalculator, Result, Structure, Vector3,
     formfactor::{self, FormFactorMap},
@@ -86,6 +86,8 @@ pub(crate) fn build_model(
         cfg.bulk_electron_density,
     )?;
     let hydration_dummies = cfg.hydration.dummies(structure, &sampler.formfactors)?;
+    let grid_hydration_points = matches!(cfg.hydration, Hydration::Grid { .. })
+        .then_some(hydration_dummies.positions().len());
 
     let terms = sampler
         .q_values
@@ -132,6 +134,7 @@ pub(crate) fn build_model(
     Ok(DebyeModel {
         q_values: sampler.q_values.clone(),
         terms,
+        grid_hydration_points,
     })
 }
 
@@ -139,6 +142,7 @@ pub(crate) fn build_model(
 pub struct DebyeModel {
     q_values: Vec<f64>,
     terms: Vec<DebyeTerms>,
+    grid_hydration_points: Option<usize>,
 }
 
 impl DebyeModel {
@@ -169,6 +173,11 @@ impl DebyeModel {
     /// The q grid the fit was prepared over.
     pub fn q_values(&self) -> &[f64] {
         &self.q_values
+    }
+
+    /// Number of grid points in the hydration shell, if `Hydration::Grid` was used.
+    pub fn grid_hydration_points(&self) -> Option<usize> {
+        self.grid_hydration_points
     }
 }
 

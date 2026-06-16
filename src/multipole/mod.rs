@@ -36,7 +36,7 @@
 mod math;
 
 use crate::q_sampler::QSampler;
-use crate::solvent::{DummySet, SolventConfig};
+use crate::solvent::{DummySet, Hydration, SolventConfig};
 use crate::{
     Contributions, Intensity, IntensityCalculator, Result, Structure, Vector3,
     formfactor::{self, FormFactorMap},
@@ -386,6 +386,8 @@ pub(crate) fn build_model(
         cfg.bulk_electron_density,
     )?;
     let hydration_dummies = cfg.hydration.dummies(structure, &sampler.formfactors)?;
+    let grid_hydration_points = matches!(cfg.hydration, Hydration::Grid { .. })
+        .then_some(hydration_dummies.positions().len());
 
     let excluded_basis = SphericalBasis::new(excluded_dummies.positions(), l_max);
     let hydration_basis = SphericalBasis::new(hydration_dummies.positions(), l_max);
@@ -435,6 +437,7 @@ pub(crate) fn build_model(
         atoms_coeffs,
         excluded_coeffs,
         hydration_coeffs,
+        grid_hydration_points,
     })
 }
 
@@ -455,6 +458,7 @@ pub struct MultipoleModel {
     atoms_coeffs: Vec<LowerTriangle<Complex<f64>>>,
     excluded_coeffs: Vec<LowerTriangle<Complex<f64>>>,
     hydration_coeffs: Vec<LowerTriangle<Complex<f64>>>,
+    grid_hydration_points: Option<usize>,
 }
 
 impl MultipoleModel {
@@ -503,6 +507,11 @@ impl MultipoleModel {
     /// The q grid the fit was prepared over.
     pub fn q_values(&self) -> &[f64] {
         &self.q_values
+    }
+
+    /// Number of grid points in the hydration shell, if `Hydration::Grid` was used.
+    pub fn grid_hydration_points(&self) -> Option<usize> {
+        self.grid_hydration_points
     }
 }
 

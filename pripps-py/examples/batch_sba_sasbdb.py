@@ -10,7 +10,7 @@ as testing_single-bead_approximation.ipynb:
   - atomfile: assets/poly_amino_acid.yaml (or poly_martini.yaml for Martini3)
   - excluded: polynomial using the atomfile's excluded_solvent entries
   - hydration: disabled
-  - optimizer: L-BFGS-B with bounds [(0.95, 1.12), (-2.0, 4.0)] or change 
+  - optimizer: L-BFGS-B with bounds [(0.95, 1.12), (-2.0, 4.0)] or change them in the script
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def fit_single(
 ) -> dict[str, float | np.ndarray]:
     q_exp, i_exp, sigma = load_exp_data(exp_path, qmax=qmax)
 
-    model = pr.multipole_model(
+    model = pr.debye_model(
         structure_file=str(xyz_path),
         qmin=0.0,
         qmax=qmax,
@@ -76,7 +76,9 @@ def fit_single(
         probe=1.8,
         contrast_density=0.03,
         bulk_electron_density=0.334,
+        spacing = 3.8,
     )
+    print(model.grid_hydration_points)
 
     def chi2(params: np.ndarray) -> float:
         c1, c2 = float(params[0]), float(params[1])
@@ -88,7 +90,7 @@ def fit_single(
     result = minimize(
         chi2,
         x0=[1.0, 0.2],
-        bounds=[(0.95, 1.12), (-2.0, 4.0)],
+        bounds=[(-2.0, 3.0), (-2.0, 4.0)],
         method="L-BFGS-B",
     )
 
@@ -136,7 +138,7 @@ def main() -> None:
         "--nq",
         type=int,
         default=500,
-        help="Number of q points in multipole model",
+        help="Number of q points in Debye model",
     )
     parser.add_argument(
         "--only",

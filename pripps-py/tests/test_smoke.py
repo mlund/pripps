@@ -50,6 +50,7 @@ class TestMultipoleModel(unittest.TestCase):
         self.assertEqual(out["total"].shape, (50,))
         self.assertTrue(np.all(np.isfinite(out["total"])))
         self.assertTrue(np.all(out["atoms"] > 0))
+        self.assertIsNone(fit.grid_hydration_points)
 
     def test_refit_produces_different_curves(self):
         pr = pripps.Pripps("../assets/poly_amino_acid.yaml")
@@ -141,6 +142,8 @@ class TestPepsiFit(unittest.TestCase):
         self.assertIn("excluded", out)
         self.assertIn("hydration", out)
         self.assertTrue(np.all(np.isfinite(out["total"])))
+        self.assertIsInstance(self.model.grid_hydration_points, int)
+        self.assertGreater(self.model.grid_hydration_points, 0)
 
 
 if __name__ == "__main__":
