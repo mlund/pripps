@@ -90,9 +90,6 @@ pub struct SolventArgs {
     /// Grid spacing (Å) for `--excluded grid`
     #[clap(long, default_value = "1.0")]
     excluded_spacing: f64,
-    /// Deprecated: `--excluded polynomial` reads `excluded_solvent` from `--atomfile`.
-    #[clap(long, hide = true)]
-    excluded_atomfile: Option<PathBuf>,
     /// Bulk solvent electron density (e/Å³)
     #[clap(long, default_value = "0.334")]
     bulk_electron_density: f64,
@@ -137,16 +134,9 @@ impl SolventArgs {
             ExcludedKind::Voronoi => ExcludedVolume::Voronoi {
                 volume_scale: self.volume_scale,
             },
-            ExcludedKind::Polynomial => {
-                if self.excluded_atomfile.is_some() {
-                    log::warn!(
-                        "`--excluded-atomfile` is ignored; polynomial excluded volume is read from `excluded_solvent` entries in `--atomfile`"
-                    );
-                }
-                ExcludedVolume::Polynomial {
-                    volume_scale: self.volume_scale,
-                }
-            }
+            ExcludedKind::Polynomial => ExcludedVolume::Polynomial {
+                volume_scale: self.volume_scale,
+            },
         };
         let hydration = match self.hydration {
             HydrationKind::Disabled => Hydration::Disabled,

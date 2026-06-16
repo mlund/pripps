@@ -147,10 +147,10 @@ fn resolve_atom_kind_id(
             return Ok(id);
         }
 
-        if let Some(united) = resolve_united_atom(residue, atom_name) {
-            if let Some(id) = atomkinds.find_name(united) {
-                return Ok(id);
-            }
+        if let Some(united) = resolve_united_atom(residue, atom_name)
+            && let Some(id) = atomkinds.find_name(united)
+        {
+            return Ok(id);
         }
     }
 

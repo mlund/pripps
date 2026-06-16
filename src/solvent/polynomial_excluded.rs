@@ -18,12 +18,12 @@ pub(super) fn dummies(structure: &Structure, formfactors: &FormFactorMap) -> Res
     let mut form_factors = Vec::with_capacity(structure.pos.len());
 
     for (&id, &pos) in structure.ids.iter().zip(&structure.pos) {
-        let kind_name = formfactors.kind(id).name();
         let ff = formfactors
             .excluded_solvent(id)
             .ok_or_else(|| {
                 Error::validation(format!(
-                    "atom kind {kind_name} has no `excluded_solvent`; required by ExcludedVolume::Polynomial"
+                    "atom kind {} has no `excluded_solvent`; required by ExcludedVolume::Polynomial",
+                    formfactors.kind(id).name()
                 ))
             })?
             .clone();

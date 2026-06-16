@@ -33,7 +33,6 @@ impl PyPripps {
         nq = 100,
         l_max = None,
         excluded = "none",
-        excluded_atomfile = None,
         volume_scale = 1.0,
         excluded_spacing = 1.0,
         hydration = "none",
@@ -51,7 +50,6 @@ impl PyPripps {
         nq: usize,
         l_max: Option<usize>,
         excluded: &str,
-        excluded_atomfile: Option<&str>,
         volume_scale: f64,
         excluded_spacing: f64,
         hydration: &str,
@@ -63,7 +61,6 @@ impl PyPripps {
     ) -> PyResult<PyMultipoleModel> {
         let cfg = solvent_from_kwargs(
             excluded,
-            excluded_atomfile,
             volume_scale,
             excluded_spacing,
             hydration,
@@ -90,7 +87,6 @@ impl PyPripps {
         qmax = 0.5,
         nq = 100,
         excluded = "none",
-        excluded_atomfile = None,
         volume_scale = 1.0,
         excluded_spacing = 1.0,
         hydration = "none",
@@ -107,7 +103,6 @@ impl PyPripps {
         qmax: f64,
         nq: usize,
         excluded: &str,
-        excluded_atomfile: Option<&str>,
         volume_scale: f64,
         excluded_spacing: f64,
         hydration: &str,
@@ -119,7 +114,6 @@ impl PyPripps {
     ) -> PyResult<PyDebyeModel> {
         let cfg = solvent_from_kwargs(
             excluded,
-            excluded_atomfile,
             volume_scale,
             excluded_spacing,
             hydration,
@@ -145,7 +139,6 @@ impl PyPripps {
         pmax = 6,
         side_length = 200.0,
         excluded = "none",
-        excluded_atomfile = None,
         volume_scale = 1.0,
         excluded_spacing = 1.0,
         hydration = "none",
@@ -161,7 +154,6 @@ impl PyPripps {
         pmax: usize,
         side_length: f64,
         excluded: &str,
-        excluded_atomfile: Option<&str>,
         volume_scale: f64,
         excluded_spacing: f64,
         hydration: &str,
@@ -173,7 +165,6 @@ impl PyPripps {
     ) -> PyResult<PyDirectModel> {
         let cfg = solvent_from_kwargs(
             excluded,
-            excluded_atomfile,
             volume_scale,
             excluded_spacing,
             hydration,
@@ -265,7 +256,6 @@ impl PyDirectModel {
 #[allow(clippy::too_many_arguments)]
 fn solvent_from_kwargs(
     excluded: &str,
-    excluded_atomfile: Option<&str>,
     volume_scale: f64,
     excluded_spacing: f64,
     hydration: &str,
@@ -284,14 +274,7 @@ fn solvent_from_kwargs(
             volume_scale,
         },
         "voronoi" => ExcludedVolume::Voronoi { volume_scale },
-        "polynomial" => {
-            if excluded_atomfile.is_some() {
-                log::warn!(
-                    "`excluded_atomfile` is ignored; polynomial excluded volume is read from `excluded_solvent` entries in `atomfile`"
-                );
-            }
-            ExcludedVolume::Polynomial { volume_scale }
-        }
+        "polynomial" => ExcludedVolume::Polynomial { volume_scale },
         other => {
             return Err(PyValueError::new_err(format!(
                 "unknown excluded-volume model: {other} (expected `none`, `fraser`, `foxs`, `grid`, `voronoi`, or `polynomial`)"
