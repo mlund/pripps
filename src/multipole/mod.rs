@@ -380,9 +380,11 @@ pub(crate) fn build_model(
     l_max_per_q: &[usize],
 ) -> Result<MultipoleModel> {
     let l_max = atoms_basis.l_max;
-    let excluded_dummies =
-        cfg.excluded
-            .dummies(structure, &sampler.formfactors, cfg.bulk_electron_density)?;
+    let excluded_dummies = cfg.excluded.unit_scale_dummies(
+        structure,
+        &sampler.formfactors,
+        cfg.bulk_electron_density,
+    )?;
     let hydration_dummies = cfg.hydration.dummies(structure, &sampler.formfactors)?;
 
     let excluded_basis = SphericalBasis::new(excluded_dummies.positions(), l_max);

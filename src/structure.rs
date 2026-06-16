@@ -136,14 +136,39 @@ pub(crate) fn resolve_united_atom(residue: &str, atom: &str) -> Option<&'static 
     })
 }
 
+fn resolve_atom_kind_id(
+    atomkinds: &[AtomKind],
+    atom_name: &str,
+    residue: Option<&str>,
+) -> Result<usize> {
+    if let Some(residue) = residue {
+        let residue_scoped = format!("{residue}_{atom_name}");
+        if let Some(id) = atomkinds.find_name(&residue_scoped) {
+            return Ok(id);
+        }
+
+        if let Some(united) = resolve_united_atom(residue, atom_name)
+            && let Some(id) = atomkinds.find_name(united)
+        {
+            return Ok(id);
+        }
+    }
+
+    atomkinds.find_name(atom_name).ok_or_else(|| {
+        Error::UnknownAtom(format!(
+            "{}; add an entry for this atom type to the form-factor YAML",
+            atom_name
+        ))
+    })
+}
+
 impl Structure {
     /// Construct a structure from a PDB or XYZ file. Each atom is
     /// looked up by name in `atomkinds`. For PDB files, the lookup
-    /// first tries [`resolve_united_atom`] with residue context to
-    /// map heavy atoms to their united-atom form-factor type (e.g.
-    /// LYS:CB → CH₂), falling back to atom-name-only lookup for
-    /// atoms not in the table or for XYZ files (which have no
-    /// residue context).
+    /// first tries a residue-scoped key (`RES_ATOM`, e.g. `MET_BB`)
+    /// for coarse-grained Martini inputs, then [`resolve_united_atom`]
+    /// for atomic protein PDBs (e.g. LYS:CB → CH₂), and finally
+    /// falls back to atom-name-only lookup.
     pub fn from_file(path: &Path, atomkinds: &[AtomKind]) -> Result<Self> {
         let atoms = read_structure(path)?;
 
@@ -151,18 +176,7 @@ impl Structure {
         let mut ids = Vec::with_capacity(atoms.len());
 
         for atom in atoms {
-            let resolved_name = atom
-                .residue
-                .as_deref()
-                .and_then(|res| resolve_united_atom(res, &atom.name))
-                .unwrap_or(&atom.name);
-
-            let id = atomkinds.find_name(resolved_name).ok_or_else(|| {
-                Error::UnknownAtom(format!(
-                    "{}; add an entry for this atom type to the form-factor YAML",
-                    atom.name
-                ))
-            })?;
+            let id = resolve_atom_kind_id(atomkinds, &atom.name, atom.residue.as_deref())?;
             pos.push(Vector3::new(
                 atom.position[0],
                 atom.position[1],
@@ -227,5 +241,26 @@ impl Structure {
 impl Display for Structure {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "𝑁={}", self.pos.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_residue_scoped_martini_names_before_atomic_fallbacks() {
+        let atomkinds = vec![AtomKind::new("MET_BB"), AtomKind::new("NH")];
+
+        let id = resolve_atom_kind_id(&atomkinds, "BB", Some("MET")).unwrap();
+        assert_eq!(atomkinds[id].name(), "MET_BB");
+    }
+
+    #[test]
+    fn resolves_united_atom_names_for_atomic_pdbs() {
+        let atomkinds = vec![AtomKind::new("MET_BB"), AtomKind::new("NH")];
+
+        let id = resolve_atom_kind_id(&atomkinds, "N", Some("MET")).unwrap();
+        assert_eq!(atomkinds[id].name(), "NH");
     }
 }

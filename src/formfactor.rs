@@ -30,7 +30,14 @@ use std::{cmp::Ordering, collections::BTreeMap, fs::File, ops::Add, path::Path};
 // without churning call sites.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FormFactorMap {
-    entries: Vec<(AtomKind, FormFactor)>,
+    entries: Vec<FormFactorEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct FormFactorEntry {
+    kind: AtomKind,
+    formfactor: FormFactor,
+    excluded_solvent: Option<FormFactor>,
 }
 
 impl FormFactorMap {
@@ -42,21 +49,23 @@ impl FormFactorMap {
         self.entries.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &(AtomKind, FormFactor)> {
-        self.entries.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&AtomKind, &FormFactor)> {
+        self.entries
+            .iter()
+            .map(|entry| (&entry.kind, &entry.formfactor))
     }
 
     /// Atom kind at id `id`. Panics on out-of-range id.
     pub(crate) fn kind(&self, id: usize) -> &AtomKind {
-        &self.entries[id].0
+        &self.entries[id].kind
     }
 
     pub(crate) fn kinds(&self) -> impl Iterator<Item = &AtomKind> {
-        self.entries.iter().map(|(k, _)| k)
+        self.entries.iter().map(|entry| &entry.kind)
     }
 
     pub(crate) fn form_factors(&self) -> impl Iterator<Item = &FormFactor> {
-        self.entries.iter().map(|(_, f)| f)
+        self.entries.iter().map(|entry| &entry.formfactor)
     }
 
     /// Linear-search the table for the kind named `name` and return
@@ -66,12 +75,37 @@ impl FormFactorMap {
     pub(crate) fn form_factor_by_name(&self, name: &str) -> Option<&FormFactor> {
         self.entries
             .iter()
-            .find(|(k, _)| k.name() == name)
-            .map(|(_, f)| f)
+            .find(|entry| entry.kind.name() == name)
+            .map(|entry| &entry.formfactor)
     }
 
-    pub(crate) const fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
-        Self { entries }
+    pub(crate) fn excluded_solvent(&self, id: usize) -> Option<&FormFactor> {
+        self.entries[id].excluded_solvent.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
+        Self::from_entries_with_excluded(
+            entries
+                .into_iter()
+                .map(|(kind, formfactor)| (kind, formfactor, None))
+                .collect(),
+        )
+    }
+
+    pub(crate) fn from_entries_with_excluded(
+        entries: Vec<(AtomKind, FormFactor, Option<FormFactor>)>,
+    ) -> Self {
+        Self {
+            entries: entries
+                .into_iter()
+                .map(|(kind, formfactor, excluded_solvent)| FormFactorEntry {
+                    kind,
+                    formfactor,
+                    excluded_solvent,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -262,6 +296,31 @@ struct AtomSpec {
     /// Form factor for the atom.
     #[serde(alias = "ff")]
     formfactor: FormFactorSpec,
+    /// Optional excluded-solvent form factor used by
+    /// `ExcludedVolume::PerKind`.
+    excluded_solvent: Option<FormFactorSpec>,
+}
+
+#[derive(Copy, Clone)]
+enum SpecRole {
+    FormFactor,
+    ExcludedSolvent,
+}
+
+impl AtomSpec {
+    fn spec(&self, role: SpecRole) -> Option<&FormFactorSpec> {
+        match role {
+            SpecRole::FormFactor => Some(&self.formfactor),
+            SpecRole::ExcludedSolvent => self.excluded_solvent.as_ref(),
+        }
+    }
+
+    fn spec_mut(&mut self, role: SpecRole) -> Option<&mut FormFactorSpec> {
+        match role {
+            SpecRole::FormFactor => Some(&mut self.formfactor),
+            SpecRole::ExcludedSolvent => self.excluded_solvent.as_mut(),
+        }
+    }
 }
 
 // If `displaced_volume` is absent but `radius` is present,
@@ -334,23 +393,26 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     let file = File::open(path).with_path(path)?;
     let mut specs: BTreeMap<String, AtomSpec> = yaml_serde::from_reader(file)?;
 
-    convert_alias(&mut specs)?;
-    convert_linear(&mut specs)?;
-    convert_united(&mut specs)?;
+    resolve_symbolic_specs(&mut specs, SpecRole::FormFactor)?;
+    resolve_symbolic_specs(&mut specs, SpecRole::ExcludedSolvent)?;
 
     // Spec → runtime: the three resolvers above guarantee every remaining
     // variant is one of the four concrete ones, so `try_from` only errors if
     // a resolver pass has a bug.
-    let entries: Vec<(AtomKind, FormFactor)> = specs
+    let entries: Vec<(AtomKind, FormFactor, Option<FormFactor>)> = specs
         .into_iter()
         .map(|(name, spec)| {
             let kind = AtomKind::from((&*name, &spec));
             let ff = FormFactor::try_from(spec.formfactor)?;
-            Ok((kind, ff))
+            let excluded_solvent = spec
+                .excluded_solvent
+                .map(FormFactor::try_from)
+                .transpose()?;
+            Ok((kind, ff, excluded_solvent))
         })
         .collect::<Result<_>>()?;
 
-    let formfactor = FormFactorMap::from_entries(entries);
+    let formfactor = FormFactorMap::from_entries_with_excluded(entries);
     log::info!(
         "Read form-factor definitions from {} for {} species",
         path.display(),
@@ -380,7 +442,7 @@ pub fn write_formfactors(formfactor: &FormFactorMap, path: &Path) -> Result<()> 
 //
 // Only evaluates kinds that are actually referenced by `atom_ids`,
 // not every kind in the map. Form-factor YAMLs can mix definitions
-// with different q-ranges — e.g. `single_bead.yaml` has atomic
+// with different q-ranges — e.g. `poly_amino_acid.yaml` has atomic
 // Gaussians out to q = 6 Å⁻¹ alongside residue-level Polynomials
 // limited to q ≤ 0.75 — and evaluating all of them at a common q
 // would error on unused entries with narrower ranges.
@@ -416,18 +478,26 @@ pub fn formfactor_product_by_id(formfactors: &FormFactorMap, q: f64) -> Result<D
     Ok(&f * f.transpose())
 }
 
-fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
+fn resolve_symbolic_specs(specs: &mut BTreeMap<String, AtomSpec>, role: SpecRole) -> Result<()> {
+    convert_alias(specs, role)?;
+    convert_linear(specs, role)?;
+    convert_united(specs, role)
+}
+
+fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>, role: SpecRole) -> Result<()> {
     const TABLE_LEN: usize = 100;
     const MAX_Q: f64 = 2.0; // Å⁻¹
 
-    let no_linear: BTreeMap<String, AtomSpec> = specs
+    let no_linear: BTreeMap<String, FormFactorSpec> = specs
         .iter()
-        .filter(|(_, spec)| !matches!(spec.formfactor, FormFactorSpec::Linear(_)))
-        .map(|(name, spec)| (name.clone(), spec.clone()))
+        .filter_map(|(name, spec)| {
+            let spec = spec.spec(role)?;
+            (!matches!(spec, FormFactorSpec::Linear(_))).then(|| (name.clone(), spec.clone()))
+        })
         .collect();
 
     for spec in specs.values_mut() {
-        let FormFactorSpec::Linear(components) = &spec.formfactor else {
+        let Some(FormFactorSpec::Linear(components)) = spec.spec(role) else {
             continue;
         };
         let components = components.clone();
@@ -435,7 +505,6 @@ fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         let get_ff = |name: &str| {
             no_linear
                 .get(name)
-                .map(|s| &s.formfactor)
                 .ok_or_else(|| Error::UndefinedFormFactor(name.to_string()))
         };
 
@@ -459,38 +528,48 @@ fn convert_linear(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         let qvalues = crate::q_sampler::linear_q_values(qmin, qmax, TABLE_LEN);
 
         let table = qvalues.iter().cloned().map(lin_combination).try_collect()?;
-        spec.formfactor = FormFactorSpec::Table(table);
+        *spec
+            .spec_mut(role)
+            .ok_or_else(|| Error::internal("missing linear form factor slot"))? =
+            FormFactorSpec::Table(table);
     }
     Ok(())
 }
 
-fn convert_alias(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
+fn convert_alias(specs: &mut BTreeMap<String, AtomSpec>, role: SpecRole) -> Result<()> {
     let no_alias: BTreeMap<String, FormFactorSpec> = specs
         .iter()
-        .filter(|(_, spec)| !matches!(spec.formfactor, FormFactorSpec::Alias(_)))
-        .map(|(name, spec)| (name.clone(), spec.formfactor.clone()))
+        .filter_map(|(name, spec)| {
+            let spec = spec.spec(role)?;
+            (!matches!(spec, FormFactorSpec::Alias(_))).then(|| (name.clone(), spec.clone()))
+        })
         .collect();
 
     for spec in specs.values_mut() {
-        let FormFactorSpec::Alias(name) = &spec.formfactor else {
+        let Some(FormFactorSpec::Alias(name)) = spec.spec(role) else {
             continue;
         };
-        spec.formfactor = no_alias
-            .get(name)
+        let name = name.clone();
+        *spec
+            .spec_mut(role)
+            .ok_or_else(|| Error::internal("missing alias form factor slot"))? = no_alias
+            .get(&name)
             .ok_or_else(|| Error::UndefinedFormFactor(name.to_string()))?
             .clone();
     }
     Ok(())
 }
 
-fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
+fn convert_united(specs: &mut BTreeMap<String, AtomSpec>, role: SpecRole) -> Result<()> {
     const TABLE_SIZE: usize = 100;
     const MAX_Q: f64 = 2.0; // Å⁻¹
 
-    let no_united: BTreeMap<String, AtomSpec> = specs
+    let no_united: BTreeMap<String, FormFactorSpec> = specs
         .iter()
-        .filter(|(_, spec)| !matches!(spec.formfactor, FormFactorSpec::United { .. }))
-        .map(|(name, spec)| (name.clone(), spec.clone()))
+        .filter_map(|(name, spec)| {
+            let spec = spec.spec(role)?;
+            (!matches!(spec, FormFactorSpec::United { .. })).then(|| (name.clone(), spec.clone()))
+        })
         .collect();
 
     // Evaluates single united form factor to a tabulated form factor
@@ -500,7 +579,6 @@ fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         };
         let center_ff = &no_united
             .get(center)
-            .map(|s| &s.formfactor)
             .ok_or_else(|| Error::UndefinedFormFactor(center.clone()))?;
 
         let (qmin, mut qmax) = center_ff.qrange();
@@ -517,7 +595,6 @@ fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
         for (name, offset, weight) in orbit {
             let orbit_ff = &no_united
                 .get(name)
-                .map(|s| &s.formfactor)
                 .ok_or_else(|| Error::UndefinedFormFactor(name.clone()))?;
             let weight = weight.unwrap_or(1.0);
             for (q, f) in table.iter_mut() {
@@ -528,8 +605,14 @@ fn convert_united(specs: &mut BTreeMap<String, AtomSpec>) -> Result<()> {
     };
 
     for spec in specs.values_mut() {
-        if matches!(spec.formfactor, FormFactorSpec::United { .. }) {
-            spec.formfactor = eval(&spec.formfactor)?;
+        if matches!(spec.spec(role), Some(FormFactorSpec::United { .. })) {
+            let resolved = eval(
+                spec.spec(role)
+                    .ok_or_else(|| Error::internal("missing united form factor slot"))?,
+            )?;
+            *spec
+                .spec_mut(role)
+                .ok_or_else(|| Error::internal("missing united form factor slot"))? = resolved;
         }
     }
     Ok(())
@@ -628,9 +711,9 @@ mod tests {
     /// Exercises the `Alias` / `United` / `Gaussian` / `Table` resolver paths
     /// end-to-end and pins the spec→runtime pipeline.
     #[test]
-    fn test_read_formfactors_single_bead() {
-        let path = Path::new("assets/single_bead.yaml");
-        let ff = read_formfactors(path).expect("parse single_bead.yaml");
+    fn test_read_formfactors_poly_amino_acid() {
+        let path = Path::new("assets/poly_amino_acid.yaml");
+        let ff = read_formfactors(path).expect("parse poly_amino_acid.yaml");
         assert!(!ff.is_empty(), "expected at least one species");
         for (kind, f) in ff.iter() {
             let v = f.eval(0.1).unwrap_or_else(|e| {
@@ -638,5 +721,53 @@ mod tests {
             });
             assert!(v.is_finite(), "non-finite F(0.1) for {}", kind.name());
         }
+    }
+
+    #[test]
+    fn read_formfactors_keeps_excluded_solvent() {
+        let yaml = r"
+ALA:
+  radius: 3.1
+  formfactor: !Polynomial { qrange: [0.0, 1.0], coeff: [10.0] }
+  excluded_solvent: !Polynomial { qrange: [0.0, 1.0], coeff: [3.5] }
+";
+        let path = std::env::temp_dir().join("pripps_excluded_solvent.yaml");
+        std::fs::write(&path, yaml).unwrap();
+        let ff = read_formfactors(&path).unwrap();
+        let excluded = ff.excluded_solvent(0).expect("excluded_solvent");
+        assert_relative_eq!(excluded.eval(0.2).unwrap(), 3.5);
+    }
+
+    #[test]
+    fn read_formfactors_resolves_symbolic_excluded_solvent() {
+        let yaml = r"
+H:
+  formfactor: !Constant 1.0
+  excluded_solvent: !Constant 0.2
+O:
+  formfactor: !Constant 8.0
+  excluded_solvent: !Constant 1.0
+ALIAS:
+  formfactor: !Constant 2.0
+  excluded_solvent: !Alias H
+LINEAR:
+  formfactor: !Constant 3.0
+  excluded_solvent: !Linear [[H, 2.0], [O, 3.0]]
+UNITED:
+  formfactor: !Constant 4.0
+  excluded_solvent: !United { center: O, orbit: [[H, 1.0, 2]] }
+";
+        let path = std::env::temp_dir().join("pripps_symbolic_excluded_solvent.yaml");
+        std::fs::write(&path, yaml).unwrap();
+        let ff = read_formfactors(&path).unwrap();
+
+        let excluded_at = |name: &str| {
+            let id = ff.kinds().position(|kind| kind.name() == name).unwrap();
+            ff.excluded_solvent(id).unwrap().eval(0.0).unwrap()
+        };
+
+        assert_relative_eq!(excluded_at("ALIAS"), 0.2);
+        assert_relative_eq!(excluded_at("LINEAR"), 3.4);
+        assert_relative_eq!(excluded_at("UNITED"), 1.4);
     }
 }

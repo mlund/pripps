@@ -31,7 +31,9 @@ use structure::Structure;
 use trajectory::trajectory_average;
 
 pub use atomkind::{AtomKind, FindByName};
+pub use debye::DebyeModel;
 pub use error::{Error, Result};
+pub use explicit::DirectModel;
 pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
 pub use multipole::MultipoleModel;
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
@@ -48,9 +50,9 @@ pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 /// zero-copy `ndarray` view. All pripps calculators return this type;
 /// callers typically iterate via `.q.iter().zip(&curve.total)`.
 ///
-/// `contributions` is populated when Multipole runs with an active
-/// [`SolventConfig`], carrying the per-contribution diagnostic
-/// columns. It is `None` for vacuum Multipole, Debye, and Direct.
+/// `contributions` is populated when Debye, Multipole, or Direct runs
+/// with an active [`SolventConfig`], carrying the per-contribution
+/// diagnostic columns. It is `None` for vacuum calculations.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Intensity {
     pub q: Vec<f64>,
@@ -194,6 +196,57 @@ impl Pripps {
         multipole::build_model(&sampler, &structure, &atoms_basis, solvent, &l_max_per_q)
     }
 
+    /// Prepare a stateful Debye fit. Caches the exact per-q Debye
+    /// self and cross terms for atoms, excluded volume, and hydration
+    /// so repeated calls to [`DebyeModel::intensity`] only recombine
+    /// the cached terms with different `(volume_scale, contrast_density)`.
+    pub fn debye_model(
+        &self,
+        structure_file: &path::Path,
+        qmin: f64,
+        qmax: f64,
+        nq: usize,
+        solvent: &SolventConfig,
+    ) -> Result<DebyeModel> {
+        let structure = Structure::from_file(structure_file, &self.atomkinds())?;
+        let sampler = q_sampler::QSampler::linear(self.formfactors.clone(), qmin, qmax, nq);
+        log::info!(
+            "Debye fit preparation over {} atoms, {} q-points",
+            structure.pos.len(),
+            sampler.q_values.len(),
+        );
+        debye::build_model(&sampler, &structure, solvent)
+    }
+
+    /// Prepare a stateful direct/explicit fit. Caches the complex
+    /// amplitudes for atoms, excluded volume, and hydration at every
+    /// sampled q-vector so repeated calls to [`DirectModel::intensity`]
+    /// only recombine the cached amplitudes with different
+    /// `(volume_scale, contrast_density)`.
+    pub fn direct_model(
+        &self,
+        structure_file: &path::Path,
+        pmax: usize,
+        box_sides: [f64; 3],
+        solvent: &SolventConfig,
+    ) -> Result<DirectModel> {
+        let structure = Structure::from_file(structure_file, &self.atomkinds())?;
+        let directions = explicit::directions(pmax);
+        let box_sides = Vector3::from(box_sides);
+        log::info!(
+            "Direct fit preparation over {} atoms, {} q-vectors",
+            structure.pos.len(),
+            directions.len(),
+        );
+        explicit::build_model(
+            &self.formfactors,
+            &directions,
+            &structure,
+            &box_sides,
+            solvent,
+        )
+    }
+
     /// Compute I(q) for a structure under the given [`IntensityScheme`].
     ///
     /// When `xtcfile` is `Some`, the structure is used as a template (for
@@ -223,19 +276,15 @@ impl Pripps {
         }
 
         let active_solvent = solvent.filter(|cfg| cfg.is_active());
-        if active_solvent.is_some() && matches!(scheme, IntensityScheme::Debye { .. }) {
-            return Err(Error::usage(
-                "solvent correction is not supported by the Debye scheme",
-            ));
-        }
 
         let calc: Box<dyn IntensityCalculator> = match scheme {
             IntensityScheme::Debye { qmin, qmax, nq } => {
                 log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
-                Box::new(DebyeIntensity::new(
+                Box::new(DebyeIntensity::new_with_solvent(
                     self.formfactors.clone(),
                     (qmin, qmax),
                     nq,
+                    active_solvent.cloned(),
                 )?)
             }
             IntensityScheme::Direct { pmax } => {
@@ -279,43 +328,145 @@ mod tests {
     use super::*;
 
     #[test]
-    fn debye_rejects_active_solvent() {
-        let yaml = r"C: { formfactor: !Constant 1.0 }";
-        let path = std::env::temp_dir().join("pripps_debye_reject.yaml");
-        std::fs::write(&path, yaml).unwrap();
-        let pripps = Pripps::from_yaml(&path).unwrap();
-
-        let pdb = std::env::temp_dir().join("pripps_debye_reject.pdb");
-        std::fs::write(
-            &pdb,
-            "HEADER test\n\
-             ATOM      1  C   ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n\
-             END\n",
-        )
-        .unwrap();
-
+    fn debye_solvent_matches_cached_model_for_matching_knobs() {
+        let (pripps, xyz) = yaml_and_xyz();
         let solvent = SolventConfig {
             excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: Hydration::Sasa {
+                probe: 1.8,
+                contrast_density: 0.03,
+            },
             ..Default::default()
         };
-        let err = pripps
+        let one_shot = pripps
             .intensity(
                 IntensityScheme::Debye {
                     qmin: 0.0,
-                    qmax: 0.1,
-                    nq: 3,
+                    qmax: 0.3,
+                    nq: 20,
                 },
-                &pdb,
+                &xyz,
                 None,
                 None,
                 Some(&solvent),
             )
-            .unwrap_err();
-        assert!(matches!(err, Error::Usage(_)));
+            .unwrap();
+
+        let fit = pripps.debye_model(&xyz, 0.0, 0.3, 20, &solvent).unwrap();
+        let from_fit = fit.intensity(1.0, 0.03);
+
+        assert_eq!(one_shot.total, from_fit.total);
+        assert_eq!(one_shot.contributions, from_fit.contributions);
+    }
+
+    #[test]
+    fn direct_solvent_matches_cached_model_for_matching_knobs() {
+        let (pripps, xyz) = yaml_and_xyz();
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: Hydration::Sasa {
+                probe: 1.8,
+                contrast_density: 0.03,
+            },
+            ..Default::default()
+        };
+        let box_sides = [200.0; 3];
+        let one_shot = pripps
+            .intensity(
+                IntensityScheme::Direct { pmax: 2 },
+                &xyz,
+                None,
+                Some(box_sides),
+                Some(&solvent),
+            )
+            .unwrap();
+
+        let fit = pripps.direct_model(&xyz, 2, box_sides, &solvent).unwrap();
+        let from_fit = fit.intensity(1.0, 0.03);
+
+        assert_eq!(one_shot.total, from_fit.total);
+        assert_eq!(one_shot.contributions, from_fit.contributions);
+    }
+
+    #[test]
+    fn fraser_volume_scale_is_not_applied_twice() {
+        let (pripps, xyz) = yaml_and_xyz();
+        let scale = 1.7;
+        let unit_solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let scaled_solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser {
+                volume_scale: scale,
+            },
+            ..Default::default()
+        };
+
+        let debye_one_shot = pripps
+            .intensity(
+                IntensityScheme::Debye {
+                    qmin: 0.0,
+                    qmax: 0.2,
+                    nq: 8,
+                },
+                &xyz,
+                None,
+                None,
+                Some(&scaled_solvent),
+            )
+            .unwrap();
+        let debye_model = pripps
+            .debye_model(&xyz, 0.0, 0.2, 8, &unit_solvent)
+            .unwrap();
+        assert_eq!(
+            debye_one_shot.total,
+            debye_model.intensity(scale, 0.0).total
+        );
+
+        let direct_box = [200.0; 3];
+        let direct_one_shot = pripps
+            .intensity(
+                IntensityScheme::Direct { pmax: 2 },
+                &xyz,
+                None,
+                Some(direct_box),
+                Some(&scaled_solvent),
+            )
+            .unwrap();
+        let direct_model = pripps
+            .direct_model(&xyz, 2, direct_box, &unit_solvent)
+            .unwrap();
+        assert_eq!(
+            direct_one_shot.total,
+            direct_model.intensity(scale, 0.0).total
+        );
+
+        let multipole_one_shot = pripps
+            .intensity(
+                IntensityScheme::Multipole {
+                    qmin: 0.0,
+                    qmax: 0.2,
+                    nq: Some(8),
+                    l_max: None,
+                },
+                &xyz,
+                None,
+                None,
+                Some(&scaled_solvent),
+            )
+            .unwrap();
+        let multipole_model = pripps
+            .multipole_model(&xyz, 0.0, 0.2, Some(8), None, &unit_solvent)
+            .unwrap();
+        assert_eq!(
+            multipole_one_shot.total,
+            multipole_model.intensity(scale, 0.0).total
+        );
     }
 
     fn yaml_and_xyz() -> (Pripps, std::path::PathBuf) {
-        let yaml = std::path::Path::new("assets/single_bead.yaml");
+        let yaml = std::path::Path::new("assets/poly_amino_acid.yaml");
         let xyz = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         (Pripps::from_yaml(yaml).unwrap(), xyz)
     }
@@ -412,15 +563,93 @@ mod tests {
         fit::ExpData::from_file(std::path::Path::new("tests/lysozyme/lyzexp.dat")).unwrap()
     }
 
+    fn pepsi_intensity_scale(path: &std::path::Path) -> f64 {
+        let contents = std::fs::read_to_string(path).unwrap();
+        contents
+            .lines()
+            .find(|line| line.contains("Intensity scaling"))
+            .and_then(|line| line.split_whitespace().last())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| panic!("missing intensity scaling in {}", path.display()))
+    }
+
+    fn pepsi_unscaled_iat_profile(path: &std::path::Path, scale: f64) -> Vec<(f64, f64)> {
+        let contents = std::fs::read_to_string(path).unwrap();
+        contents
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty() && !trimmed.starts_with('#')
+            })
+            .map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                assert!(
+                    fields.len() >= 3,
+                    "expected at least three PEPSI output columns in {line:?}"
+                );
+                let q = fields[0].parse::<f64>().unwrap();
+                let iat = fields[2].parse::<f64>().unwrap() / scale;
+                (q, iat)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn amino_acid_debye_matches_scaled_pepsi_iat_profile() {
+        let scale = pepsi_intensity_scale(std::path::Path::new("tests/lysozyme/pepsi.log"));
+        let reference =
+            pepsi_unscaled_iat_profile(std::path::Path::new("tests/lysozyme/pepsi.out"), scale);
+        let (pripps, xyz) = yaml_and_xyz();
+        let intensity = pripps
+            .intensity(
+                IntensityScheme::Debye {
+                    qmin: reference.first().unwrap().0,
+                    qmax: reference.last().unwrap().0,
+                    nq: reference.len(),
+                },
+                &xyz,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(intensity.q.len(), reference.len());
+
+        let mut max_rel = 0.0_f64;
+        let mut max_q = 0.0_f64;
+        for ((&q, &calc), &(q_ref, expected)) in intensity
+            .q
+            .iter()
+            .zip(&intensity.total)
+            .zip(reference.iter())
+        {
+            assert!(
+                (q - q_ref).abs() < 1.0e-12,
+                "q grid mismatch: calculated {q}, reference {q_ref}"
+            );
+            let rel = ((calc - expected) / expected).abs();
+            if rel > max_rel {
+                max_rel = rel;
+                max_q = q_ref;
+            }
+        }
+
+        assert!(
+            max_rel < 0.04,
+            "PEPSI Iat profile differs by {max_rel:.4} at q={max_q:.3}"
+        );
+    }
+
     #[test]
     fn foxs_chi2_against_experiment() {
-        // FoXS gets χ²/N ≈ 0.29 on 6lyz.pdb vs lyzexp.dat with
+        // FoXS gets χ²/N ≈ 0.29 on 4lzt.pdb vs lyzexp.dat with
         // excluded volume only (no hydration, c₁=1). With the
         // FoXS-compatible Cromer-Mann form factors and the 16π
         // Fraser formula, pripps should match.
         let pripps =
             Pripps::from_yaml(std::path::Path::new("assets/foxs_formfactors.yaml")).unwrap();
-        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
+        let pdb = std::path::PathBuf::from("tests/lysozyme/4lzt.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
             ..Default::default()
@@ -451,13 +680,66 @@ mod tests {
     }
 
     #[test]
+    fn foxs_profile_matches_reference_file() {
+        let reference =
+            fit::ExpData::from_file(std::path::Path::new("tests/lysozyme/6lyz_foxs.dat")).unwrap();
+        let pripps =
+            Pripps::from_yaml(std::path::Path::new("assets/foxs_formfactors.yaml")).unwrap();
+        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let intensity = pripps
+            .intensity(
+                IntensityScheme::Multipole {
+                    qmin: *reference.q.first().unwrap(),
+                    qmax: *reference.q.last().unwrap(),
+                    nq: Some(reference.q.len()),
+                    l_max: None,
+                },
+                &pdb,
+                None,
+                None,
+                Some(&solvent),
+            )
+            .unwrap();
+
+        assert_eq!(intensity.q.len(), reference.q.len());
+
+        let mut max_rel = 0.0_f64;
+        let mut max_q = 0.0_f64;
+        for ((&q, &calc), (&q_ref, &expected)) in intensity
+            .q
+            .iter()
+            .zip(&intensity.total)
+            .zip(reference.q.iter().zip(&reference.intensity))
+        {
+            assert!(
+                (q - q_ref).abs() < 1.0e-12,
+                "q grid mismatch: calculated {q}, reference {q_ref}"
+            );
+            let rel = ((calc - expected) / expected).abs();
+            if rel > max_rel {
+                max_rel = rel;
+                max_q = q_ref;
+            }
+        }
+
+        assert!(
+            max_rel < 0.05,
+            "FoXS reference profile differs by {max_rel:.4} at q={max_q:.3}"
+        );
+    }
+
+    #[test]
     fn pepsi_pipeline_reasonable_chi2() {
         // PepsiSAXS form factors + PepsiSAXS Fraser (4π) should
         // produce a physically reasonable profile. Not as good as
         // the FoXS pipeline (different coefficients, different
         // denominator) but the shape should be plausible.
-        let pripps = Pripps::from_yaml(std::path::Path::new("assets/single_bead.yaml")).unwrap();
-        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
+        let pripps = Pripps::from_yaml(std::path::Path::new("assets/gaussian_atoms.yaml")).unwrap();
+        let pdb = std::path::PathBuf::from("tests/lysozyme/4lzt.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
             ..Default::default()
@@ -529,7 +811,7 @@ mod tests {
     ///    rescales it back to a full average (not frame 0 × 1/N_frames).
     #[test]
     fn trajectory_stride_and_weights() {
-        let pripps = Pripps::from_yaml(Path::new("assets/single_bead.yaml")).unwrap();
+        let pripps = Pripps::from_yaml(Path::new("assets/gaussian_atoms.yaml")).unwrap();
         let template = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         let xtc = std::env::temp_dir().join("pripps_stride_test.xtc");
         write_two_frame_xtc(&xtc);

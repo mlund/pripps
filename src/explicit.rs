@@ -156,66 +156,114 @@ impl DirectTransform {
         box_sides: &Vector3,
         cfg: &SolventConfig,
     ) -> Result<Intensity> {
-        let excluded_dummies =
-            cfg.excluded
-                .dummies(structure, &self.formfactors, cfg.bulk_electron_density)?;
-        let hydration_dummies = cfg.hydration.dummies(structure, &self.formfactors)?;
+        let model = build_model(
+            &self.formfactors,
+            &self.directions,
+            structure,
+            box_sides,
+            cfg,
+        )?;
+        Ok(model.intensity(
+            cfg.excluded.volume_scale(),
+            cfg.hydration.contrast_density(),
+        ))
+    }
+}
 
-        let volume_scale = cfg.excluded.volume_scale();
-        let contrast_density = cfg.hydration.contrast_density();
+pub(crate) fn directions(p_max: usize) -> Vec<Vector3> {
+    MILLER_INDEX
+        .iter()
+        .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
+        .collect()
+}
 
-        // Per q-vector: compute three amplitudes A, C, B and combine
-        // as |A − c₁·C + c₂·B|²
-        let table = self
-            .directions
-            .par_iter()
-            .map(|dir| dir.component_div(box_sides))
-            .map(|q| {
-                let qnorm = q.norm();
+/// Precompute the atomic, excluded-volume, and hydration amplitudes
+/// for every explicit q-vector. The cached q-vector rows are combined
+/// and only then averaged by q magnitude, matching the one-shot
+/// [`DirectTransform`] path.
+pub(crate) fn build_model(
+    formfactors: &FormFactorMap,
+    directions: &[Vector3],
+    structure: &Structure,
+    box_sides: &Vector3,
+    cfg: &SolventConfig,
+) -> Result<DirectModel> {
+    let excluded_dummies =
+        cfg.excluded
+            .unit_scale_dummies(structure, formfactors, cfg.bulk_electron_density)?;
+    let hydration_dummies = cfg.hydration.dummies(structure, formfactors)?;
 
-                let atom_ff = eval_atom_form_factors(qnorm, &structure.ids, &self.formfactors)?;
-                let a = complex_amplitude(&q, &structure.pos, &atom_ff);
+    let rows = directions
+        .par_iter()
+        .map(|dir| dir.component_div(box_sides))
+        .map(|q| {
+            let qnorm = q.norm();
 
-                let mut ev_ff = Vec::new();
-                excluded_dummies.form_factors_at(qnorm, &mut ev_ff)?;
-                let c = complex_amplitude(&q, excluded_dummies.positions(), &ev_ff);
+            let atom_ff = eval_atom_form_factors(qnorm, &structure.ids, formfactors)?;
+            let atoms = complex_amplitude(&q, &structure.pos, &atom_ff);
 
-                let mut hyd_ff = Vec::new();
-                hydration_dummies.form_factors_at(qnorm, &mut hyd_ff)?;
-                let b = complex_amplitude(&q, hydration_dummies.positions(), &hyd_ff);
+            let mut excluded_ff = Vec::new();
+            excluded_dummies.form_factors_at(qnorm, &mut excluded_ff)?;
+            let excluded = complex_amplitude(&q, excluded_dummies.positions(), &excluded_ff);
 
-                let total = (a - volume_scale * c + contrast_density * b).norm_sqr();
-                Ok((qnorm, total, a.norm_sqr(), c.norm_sqr(), b.norm_sqr()))
-            })
-            .collect::<Result<Vec<_>>>()?;
+            let mut hydration_ff = Vec::new();
+            hydration_dummies.form_factors_at(qnorm, &mut hydration_ff)?;
+            let hydration = complex_amplitude(&q, hydration_dummies.positions(), &hydration_ff);
 
-        // Average duplicate q-norms (from different Miller directions)
-        let mut grouped = average_duplicates_5col(table);
-        grouped.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-
-        let mut q = Vec::with_capacity(grouped.len());
-        let mut total = Vec::with_capacity(grouped.len());
-        let mut atoms = Vec::with_capacity(grouped.len());
-        let mut excluded = Vec::with_capacity(grouped.len());
-        let mut hydration = Vec::with_capacity(grouped.len());
-        for (qi, t, a, e, h) in grouped {
-            q.push(qi);
-            total.push(t);
-            atoms.push(a);
-            excluded.push(e);
-            hydration.push(h);
-        }
-
-        Ok(Intensity {
-            q,
-            total,
-            contributions: Some(Contributions {
+            Ok(DirectTerms {
+                qnorm,
                 atoms,
                 excluded,
                 hydration,
-            }),
+            })
         })
+        .collect::<Result<Vec<_>>>()?;
+
+    let q_values = unique_q_values(&rows);
+    Ok(DirectModel { q_values, rows })
+}
+
+/// Cached explicit-transform state for solvent fitting.
+pub struct DirectModel {
+    q_values: Vec<f64>,
+    rows: Vec<DirectTerms>,
+}
+
+impl DirectModel {
+    /// Compute `I(q)` for the given solvent fit knobs.
+    pub fn intensity(&self, volume_scale: f64, contrast_density: f64) -> Intensity {
+        let table = self
+            .rows
+            .iter()
+            .map(|row| {
+                let total = (row.atoms - volume_scale * row.excluded
+                    + contrast_density * row.hydration)
+                    .norm_sqr();
+                (
+                    row.qnorm,
+                    total,
+                    row.atoms.norm_sqr(),
+                    row.excluded.norm_sqr(),
+                    row.hydration.norm_sqr(),
+                )
+            })
+            .collect();
+
+        intensity_from_5col(table)
     }
+
+    /// The q grid the fit was prepared over after duplicate q-norms are averaged.
+    pub fn q_values(&self) -> &[f64] {
+        &self.q_values
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DirectTerms {
+    qnorm: f64,
+    atoms: Complex<f64>,
+    excluded: Complex<f64>,
+    hydration: Complex<f64>,
 }
 
 /// Evaluate form factors for each atom at a given q.
@@ -264,6 +312,41 @@ fn average_duplicates_5col(data: Vec<(f64, f64, f64, f64, f64)>) -> Vec<(f64, f6
             let h = group.iter().map(|g| g.4).sum::<f64>() / n;
             (q, t, a, e, h)
         })
+        .collect()
+}
+
+fn intensity_from_5col(table: Vec<(f64, f64, f64, f64, f64)>) -> Intensity {
+    let mut grouped = average_duplicates_5col(table);
+    grouped.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+    let mut q = Vec::with_capacity(grouped.len());
+    let mut total = Vec::with_capacity(grouped.len());
+    let mut atoms = Vec::with_capacity(grouped.len());
+    let mut excluded = Vec::with_capacity(grouped.len());
+    let mut hydration = Vec::with_capacity(grouped.len());
+    for (qi, t, a, e, h) in grouped {
+        q.push(qi);
+        total.push(t);
+        atoms.push(a);
+        excluded.push(e);
+        hydration.push(h);
+    }
+
+    Intensity {
+        q,
+        total,
+        contributions: Some(Contributions {
+            atoms,
+            excluded,
+            hydration,
+        }),
+    }
+}
+
+fn unique_q_values(rows: &[DirectTerms]) -> Vec<f64> {
+    average_duplicates(rows.iter().map(|row| (row.qnorm, 0.0)).collect())
+        .into_iter()
+        .map(|(q, _)| q)
         .collect()
 }
 

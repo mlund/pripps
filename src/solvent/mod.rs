@@ -32,6 +32,7 @@
 mod fraser;
 mod grid;
 mod grid_excluded;
+mod per_kind_excluded;
 mod sasa;
 mod voronoi_excluded;
 mod voronoi_hydration;
@@ -131,7 +132,8 @@ impl ExcludedVolume {
             Self::Fraser { volume_scale }
             | Self::FraserFoxs { volume_scale }
             | Self::Grid { volume_scale, .. }
-            | Self::Voronoi { volume_scale } => *volume_scale,
+            | Self::Voronoi { volume_scale }
+            | Self::PerKind { volume_scale, .. } => *volume_scale,
         }
     }
 }
@@ -200,6 +202,11 @@ pub enum ExcludedVolume {
     /// (probe=0), used to build a Fraser-style Gaussian. Needs
     /// only atomic radii, not tabulated displaced volumes.
     Voronoi {
+        volume_scale: f64,
+    },
+    /// Per-kind excluded-solvent form factors stored alongside the
+    /// atom/residue form factors in the same YAML file.
+    PerKind {
         volume_scale: f64,
     },
 }
@@ -350,6 +357,33 @@ impl DummySet {
 }
 
 impl ExcludedVolume {
+    /// Generate excluded-volume dummies for cached solvent models.
+    ///
+    /// Cached Debye/Direct/Multipole models apply `volume_scale` during
+    /// the coherent recombination step. Fraser/FoXS dummy generation can
+    /// also bake that scale into the Gaussian form factors, so cached
+    /// builders must force the dummy basis to unit scale to avoid applying
+    /// the same fit knob twice.
+    pub(crate) fn unit_scale_dummies(
+        &self,
+        structure: &Structure,
+        formfactors: &FormFactorMap,
+        bulk_electron_density: f64,
+    ) -> Result<DummySet> {
+        match self {
+            Self::Disabled => Self::Disabled,
+            Self::Fraser { .. } => Self::Fraser { volume_scale: 1.0 },
+            Self::FraserFoxs { .. } => Self::FraserFoxs { volume_scale: 1.0 },
+            Self::Grid { spacing, .. } => Self::Grid {
+                spacing: *spacing,
+                volume_scale: 1.0,
+            },
+            Self::Voronoi { .. } => Self::Voronoi { volume_scale: 1.0 },
+            Self::PerKind { .. } => Self::PerKind { volume_scale: 1.0 },
+        }
+        .dummies(structure, formfactors, bulk_electron_density)
+    }
+
     pub(crate) fn dummies(
         &self,
         structure: &Structure,
@@ -378,6 +412,7 @@ impl ExcludedVolume {
             Self::Voronoi { .. } => {
                 voronoi_excluded::dummies(structure, formfactors, bulk_electron_density)
             }
+            Self::PerKind { .. } => per_kind_excluded::dummies(structure, formfactors),
         }
     }
 }
