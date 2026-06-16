@@ -561,15 +561,94 @@ mod tests {
         fit::ExpData::from_file(std::path::Path::new("tests/lysozyme/lyzexp.dat")).unwrap()
     }
 
+    fn pepsi_intensity_scale(path: &std::path::Path) -> f64 {
+        let contents = std::fs::read_to_string(path).unwrap();
+        contents
+            .lines()
+            .find(|line| line.contains("Intensity scaling"))
+            .and_then(|line| line.split_whitespace().last())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| panic!("missing intensity scaling in {}", path.display()))
+    }
+
+    fn pepsi_unscaled_iat_profile(path: &std::path::Path, scale: f64) -> Vec<(f64, f64)> {
+        let contents = std::fs::read_to_string(path).unwrap();
+        contents
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty() && !trimmed.starts_with('#')
+            })
+            .map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                assert!(
+                    fields.len() >= 3,
+                    "expected at least three PEPSI output columns in {line:?}"
+                );
+                let q = fields[0].parse::<f64>().unwrap();
+                let iat = fields[2].parse::<f64>().unwrap() / scale;
+                (q, iat)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn amino_acid_debye_matches_scaled_pepsi_iat_profile() {
+        let scale = pepsi_intensity_scale(std::path::Path::new("tests/lysozyme/pepsi.log"));
+        let reference =
+            pepsi_unscaled_iat_profile(std::path::Path::new("tests/lysozyme/pepsi.out"), scale);
+        let (pripps, xyz) = yaml_and_xyz();
+        let intensity = pripps
+            .intensity(
+                IntensityScheme::Debye {
+                    qmin: reference.first().unwrap().0,
+                    qmax: reference.last().unwrap().0,
+                    nq: reference.len(),
+                },
+                &xyz,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(intensity.q.len(), reference.len());
+
+        let mut max_rel = 0.0_f64;
+        let mut max_q = 0.0_f64;
+        for ((&q, &calc), &(q_ref, expected)) in intensity
+            .q
+            .iter()
+            .zip(&intensity.total)
+            .zip(reference.iter())
+        {
+            assert!(
+                (q - q_ref).abs() < 1.0e-12,
+                "q grid mismatch: calculated {q}, reference {q_ref}"
+            );
+            let rel = ((calc - expected) / expected).abs();
+            if rel > max_rel {
+                max_rel = rel;
+                max_q = q_ref;
+            }
+        }
+
+        assert!(
+            max_rel < 0.04,
+            "PEPSI Iat profile differs by {max_rel:.4} at q={max_q:.3}"
+        );
+    }
+
     #[test]
     fn foxs_chi2_against_experiment() {
-        // FoXS gets χ²/N ≈ 0.29 on 6lyz.pdb vs lyzexp.dat with
+        // FoXS gets χ²/N ≈ 0.29 on 4lzt.pdb vs lyzexp.dat with
         // excluded volume only (no hydration, c₁=1). With the
         // FoXS-compatible Cromer-Mann form factors and the 16π
         // Fraser formula, pripps should match.
         let pripps =
             Pripps::from_yaml(std::path::Path::new("assets/foxs_formfactors.yaml")).unwrap();
-        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
+        let pdb = std::path::PathBuf::from("tests/lysozyme/4lzt.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
             ..Default::default()
@@ -601,13 +680,67 @@ mod tests {
     }
 
     #[test]
+    fn foxs_profile_matches_reference_file() {
+        let reference =
+            fit::ExpData::from_file(std::path::Path::new("tests/lysozyme/6lyz_foxs.dat")).unwrap();
+        let pripps =
+            Pripps::from_yaml(std::path::Path::new("assets/foxs_formfactors.yaml")).unwrap();
+        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::FraserFoxs { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        let intensity = pripps
+            .intensity(
+                IntensityScheme::Multipole {
+                    qmin: *reference.q.first().unwrap(),
+                    qmax: *reference.q.last().unwrap(),
+                    nq: Some(reference.q.len()),
+                    l_max: None,
+                },
+                &pdb,
+                None,
+                None,
+                None,
+                Some(&solvent),
+            )
+            .unwrap();
+
+        assert_eq!(intensity.q.len(), reference.q.len());
+
+        let mut max_rel = 0.0_f64;
+        let mut max_q = 0.0_f64;
+        for ((&q, &calc), (&q_ref, &expected)) in intensity
+            .q
+            .iter()
+            .zip(&intensity.total)
+            .zip(reference.q.iter().zip(&reference.intensity))
+        {
+            assert!(
+                (q - q_ref).abs() < 1.0e-12,
+                "q grid mismatch: calculated {q}, reference {q_ref}"
+            );
+            let rel = ((calc - expected) / expected).abs();
+            if rel > max_rel {
+                max_rel = rel;
+                max_q = q_ref;
+            }
+        }
+
+        assert!(
+            max_rel < 0.05,
+            "FoXS reference profile differs by {max_rel:.4} at q={max_q:.3}"
+        );
+    }
+
+    #[test]
     fn pepsi_pipeline_reasonable_chi2() {
         // PepsiSAXS form factors + PepsiSAXS Fraser (4π) should
         // produce a physically reasonable profile. Not as good as
         // the FoXS pipeline (different coefficients, different
         // denominator) but the shape should be plausible.
         let pripps = Pripps::from_yaml(std::path::Path::new("assets/gaussian_atoms.yaml")).unwrap();
-        let pdb = std::path::PathBuf::from("tests/lysozyme/6lyz.pdb");
+        let pdb = std::path::PathBuf::from("tests/lysozyme/4lzt.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
             ..Default::default()
