@@ -9,7 +9,17 @@ for iterative fitting against experimental data.
 
 ### Installation
 
-Requires a Rust toolchain and Python ≥ 3.9.
+Install straight from GitHub with [uv](https://docs.astral.sh/uv/). The
+extension is built from source, so a
+[Rust toolchain](https://www.rust-lang.org/tools/install) and Python ≥ 3.9 are
+required:
+
+```sh
+uv pip install "git+https://github.com/mlund/pripps.git#subdirectory=pripps-py"
+```
+
+To also get the example structures and form-factor assets used below, clone the
+repo and install in editable mode instead:
 
 ```sh
 git clone https://github.com/mlund/pripps.git
