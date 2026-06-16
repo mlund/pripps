@@ -213,9 +213,13 @@ must define it when `--excluded per-kind` is selected.
 
 | File | Description | Best for |
 |------|-------------|----------|
-| `assets/poly_amino_acid.yaml` | Amino-acid bead polynomial form factors with matching `excluded_solvent` polynomials | Cα / single-bead models with `--excluded per-kind` |
-| `assets/gaussian_atoms.yaml` | Stovgaard-style atomic/residue form factors; also covers united-atom kinds (CH/CH₂/NH/…) used by atomic PDBs | Atomic PDBs with PepsiSAXS-style solvent models |
-| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C), FoXS-compatible volumes and SASA radii | Atomic PDB files with `--excluded foxs` |
+| `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C) atomic form factors, FoXS-compatible volumes and SASA radii | Atomic PDBs with `--excluded foxs` |
+| `assets/gaussian_atoms.yaml` | Mixed table: residue single-bead polynomials plus atomic/united-atom Gaussians (CH/CH₂/NH/…) | Atomic PDBs with PepsiSAXS-style solvent models |
+| `assets/stovgaard2010.yaml` | Per-residue form-factor centroids (one-body model, q ∈ [0, 0.75] Å⁻¹) from Stovgaard et al. 2010, <https://doi.org/10.1186/1471-2105-11-429> | Residue / Cα single-bead models |
+| `assets/poly_amino_acid.yaml` | Amino-acid bead polynomials with a separate `excluded_solvent` polynomial per bead | Cα / single-bead with `--excluded per-kind` |
+| `assets/poly_amino_acid_combined.yaml` | Amino-acid bead polynomials with the excluded solvent already folded into the form factor | Cα / single-bead with `--excluded disabled` |
+| `assets/poly_martini.yaml` | Martini-3 bead polynomials with a separate `excluded_solvent` polynomial per bead | Martini-3 CG with `--excluded per-kind` |
+| `assets/poly_martini_combined.yaml` | Martini-3 bead polynomials with the excluded solvent already folded into the form factor | Martini-3 CG with `--excluded disabled` |
 
 Gaussian files use b values in the standard s² = (q/4π)² convention
 (International Tables / Cromer-Mann). The atomic coefficients differ
