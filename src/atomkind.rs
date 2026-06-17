@@ -36,6 +36,9 @@ pub struct AtomKind {
 }
 
 impl AtomKind {
+    /// Create a kind with the given name and no physical parameters
+    /// (`sigma` and `displaced_volume` are both `None`). Test-only helper.
+    #[cfg(test)]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -44,12 +47,15 @@ impl AtomKind {
         }
     }
 
+    /// Human-readable name (e.g. "C", "ALA", "H2O").
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// 2 × radius (Å), or `None` if unset.
     pub const fn sigma(&self) -> Option<f64> {
         self.sigma
     }
+    /// Displaced solvent volume in Å³, or `None` if unset.
     pub const fn displaced_volume(&self) -> Option<f64> {
         self.displaced_volume
     }
@@ -63,6 +69,8 @@ impl AtomKind {
 // the per-atom id in the structure — skipping the borrow step
 // keeps the one useful bit of information and drops the rest.
 pub trait FindByName {
+    /// Return the positional index of the first kind whose name
+    /// matches `name`, or `None` if there is no match.
     fn find_name(&self, name: &str) -> Option<usize>;
 }
 

@@ -93,7 +93,9 @@ fn water_form_factor(formfactors: &FormFactorMap, caller: &str) -> Result<FormFa
 /// Top-level solvent model passed to [`crate::Pripps::intensity`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolventConfig {
+    /// How the displaced bulk solvent (excluded volume, `C`) is modelled.
     pub excluded: ExcludedVolume,
+    /// How the first hydration water layer (`B`) is modelled.
     pub hydration: Hydration,
     /// Bulk solvent electron density, in e/Å³. The `Default` value is
     /// 0.334, which is pure water at 4 °C and the standard reference
@@ -169,6 +171,7 @@ impl Hydration {
 /// [`ExcludedVolume::dummies`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExcludedVolume {
+    /// No excluded-volume contribution; the `C` term is omitted.
     Disabled,
     /// One Gaussian dummy atom at each protein atom center, with
     /// displaced volume taken from `AtomKind.dsv`. `volume_scale`
@@ -180,6 +183,7 @@ pub enum ExcludedVolume {
     /// Gaussian-dummy excluded-volume model that CRYSOL and PepsiSAXS
     /// both build on.
     Fraser {
+        /// Global multiplier on every dummy's displaced volume (PepsiSAXS `r0`).
         volume_scale: f64,
     },
     /// FoXS-style Fraser dummies: same per-atom Gaussians as
@@ -188,13 +192,16 @@ pub enum ExcludedVolume {
     /// excluded volume at high q, matching the FoXS/IMP-SAXS
     /// convention (`FormFactorTable.cpp:285`).
     FraserFoxs {
+        /// Global multiplier on every dummy's displaced volume (PepsiSAXS `r0`).
         volume_scale: f64,
     },
     /// Cartesian grid inside the molecular envelope. Alternative to
     /// Fraser for structures where the Gaussian-dummy approximation
     /// of the displaced volume is too coarse.
     Grid {
+        /// Grid point spacing in Å.
         spacing: f64,
+        /// Global multiplier on the total displaced volume (PepsiSAXS `r0`).
         volume_scale: f64,
     },
     /// Per-atom excluded volume from radical Voronoi tessellation.
@@ -202,11 +209,13 @@ pub enum ExcludedVolume {
     /// (probe=0), used to build a Fraser-style Gaussian. Needs
     /// only atomic radii, not tabulated displaced volumes.
     Voronoi {
+        /// Global multiplier on every cell's displaced volume (PepsiSAXS `r0`).
         volume_scale: f64,
     },
     /// Per-kind excluded-solvent form factors stored alongside the
     /// atom/residue form factors in the same YAML file.
     PerKind {
+        /// Global multiplier on every per-kind displaced volume (PepsiSAXS `r0`).
         volume_scale: f64,
     },
 }
@@ -214,20 +223,27 @@ pub enum ExcludedVolume {
 /// How the hydration shell is represented.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Hydration {
+    /// No hydration shell; the `B` term is omitted.
     Disabled,
     /// Grid points in a shell of `thickness` around the molecular
     /// envelope. `contrast_density` is the excess electron density
     /// of the hydration layer over bulk solvent, in e/Å³.
     Grid {
+        /// Grid point spacing in Å.
         spacing: f64,
+        /// Thickness of the hydration shell around the envelope, in Å.
         thickness: f64,
+        /// Solvent probe radius defining the molecular envelope, in Å.
         probe: f64,
+        /// Excess electron density of the shell over bulk solvent, in e/Å³.
         contrast_density: f64,
     },
     /// FoXS-style SASA-weighted hydration shell — see
     /// [`crate::solvent::sasa`] for the physics writeup.
     Sasa {
+        /// Solvent probe radius used for the accessible-surface calculation, in Å.
         probe: f64,
+        /// Scale of the shared water form factor (FoXS `c₂`).
         contrast_density: f64,
     },
     /// Explicit solvent spheres on the molecular surface, placed
@@ -235,7 +251,9 @@ pub enum Hydration {
     /// `compute_solvent_spheres`. More physical than SASA: water
     /// dummies sit at actual surface positions, not at atom centers.
     Voronoi {
+        /// Solvent probe radius used by the Voronoi tessellation, in Å.
         probe: f64,
+        /// Excess electron density of the shell over bulk solvent, in e/Å³.
         contrast_density: f64,
     },
 }

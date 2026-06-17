@@ -40,6 +40,7 @@ pub enum Commands {
         /// Number of q values
         #[clap(long, default_value = "100")]
         nq: usize,
+        /// Solvent correction parameters (excluded volume and hydration)
         #[clap(flatten)]
         solvent: SolventArgs,
     },
@@ -52,6 +53,7 @@ pub enum Commands {
         /// (the per-frame box from the XTC is used instead).
         #[clap(short = 'b', long = "box")]
         side_length: Option<f64>,
+        /// Solvent correction parameters (excluded volume and hydration)
         #[clap(flatten)]
         solvent: SolventArgs,
     },
@@ -73,6 +75,7 @@ pub enum Commands {
         /// auto-computed from the structure's extent and qmax.
         #[clap(long)]
         lmax: Option<usize>,
+        /// Solvent correction parameters (excluded volume and hydration)
         #[clap(flatten)]
         solvent: SolventArgs,
     },
@@ -167,22 +170,32 @@ impl SolventArgs {
 /// Which excluded-volume generator to use.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum ExcludedKind {
+    /// No excluded-volume correction
     #[value(alias = "none")]
     Disabled,
+    /// Fraser-style per-atom Gaussian displaced solvent
     Fraser,
+    /// Fraser displaced solvent with FoXS volume parameters
     Foxs,
+    /// Grid-based displaced-solvent volume
     Grid,
+    /// Voronoi-tessellation displaced-solvent volume
     Voronoi,
+    /// Per-species (per-kind) displaced solvent volumes
     PerKind,
 }
 
 /// Which hydration-shell generator to use.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum HydrationKind {
+    /// No hydration-shell correction
     #[value(alias = "none")]
     Disabled,
+    /// Solvent-accessible-surface-area (SASA) hydration shell
     Sasa,
+    /// Grid-based hydration shell
     Grid,
+    /// Voronoi-tessellation hydration shell
     Voronoi,
 }
 #[derive(Parser)]
@@ -192,7 +205,9 @@ pub enum HydrationKind {
     .usage(AnsiColor::Green.on_default().bold())
     .literal(AnsiColor::Cyan.on_default().bold())
     .placeholder(AnsiColor::Cyan.on_default()))]
+/// Top-level command line arguments.
 pub struct Args {
+    /// Scattering-intensity scheme to run
     #[clap(subcommand)]
     pub command: Commands,
 
@@ -229,7 +244,9 @@ pub struct Args {
     pub verbose: bool,
 }
 
-// Wrapper for main function to handle errors
+/// Parse CLI arguments, run the requested intensity computation (or
+/// fit), and write the output. Wraps the real `main` so errors can be
+/// reported uniformly.
 pub fn do_main() -> Result<()> {
     let args = cli::Args::parse();
     // SAFETY: `set_var` is unsafe because it is not thread-safe.
@@ -260,6 +277,12 @@ pub fn do_main() -> Result<()> {
             } => {
                 let model = pripps.debye_model(&args.input, 0.0, exp.q_max(), nq, &solvent)?;
                 let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                log::info!(
+                    "Fitted volume_scale={:.4}, contrast_density={:.4} (χ²/N = {:.4})",
+                    result.volume_scale,
+                    result.contrast_density,
+                    result.chi2
+                );
                 let out = model.intensity(result.volume_scale, result.contrast_density);
                 crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
             }
@@ -269,6 +292,12 @@ pub fn do_main() -> Result<()> {
                 })?;
                 let model = pripps.direct_model(&args.input, pmax, box_sides, &solvent)?;
                 let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                log::info!(
+                    "Fitted volume_scale={:.4}, contrast_density={:.4} (χ²/N = {:.4})",
+                    result.volume_scale,
+                    result.contrast_density,
+                    result.chi2
+                );
                 let out = model.intensity(result.volume_scale, result.contrast_density);
                 crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
             }
@@ -281,6 +310,12 @@ pub fn do_main() -> Result<()> {
                 let model =
                     pripps.multipole_model(&args.input, 0.0, exp.q_max(), nq, l_max, &solvent)?;
                 let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                log::info!(
+                    "Fitted volume_scale={:.4}, contrast_density={:.4} (χ²/N = {:.4})",
+                    result.volume_scale,
+                    result.contrast_density,
+                    result.chi2
+                );
                 let out = model.intensity(result.volume_scale, result.contrast_density);
                 crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
             }

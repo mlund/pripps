@@ -18,7 +18,9 @@ pub enum Error {
     /// at every site that reads or writes a user-supplied file.
     #[error("{}: {source}", .path.display())]
     File {
+        /// Path of the file being read or written when the error occurred.
         path: PathBuf,
+        /// Underlying I/O error.
         #[source]
         source: std::io::Error,
     },
@@ -44,7 +46,14 @@ pub enum Error {
 
     /// q value outside a form factor's declared valid range.
     #[error("q value {q} outside form factor range [{lo}, {hi}]")]
-    QOutOfRange { q: f64, lo: f64, hi: f64 },
+    QOutOfRange {
+        /// Offending q value.
+        q: f64,
+        /// Lower bound of the form factor's valid q range.
+        lo: f64,
+        /// Upper bound of the form factor's valid q range.
+        hi: f64,
+    },
 
     /// Data-shape / invariant failures on user input: frame↔structure
     /// atom-count mismatch, weight/frame count mismatch, empty input

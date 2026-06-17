@@ -18,8 +18,11 @@ use std::path::Path;
 /// Experimental SAXS data: q, I(q), σ(q).
 #[derive(Debug, Clone)]
 pub struct ExpData {
+    /// Scattering vector magnitudes q (Å⁻¹).
     pub q: Vec<f64>,
+    /// Measured scattering intensity I(q) at each q.
     pub intensity: Vec<f64>,
+    /// Experimental uncertainty σ(q) on each intensity (σ=1 if absent).
     pub sigma: Vec<f64>,
 }
 
@@ -202,9 +205,13 @@ pub fn chi2_per_point(theory: &Intensity, exp: &ExpData) -> f64 {
 /// Result of a fit against experimental data.
 #[derive(Debug, Clone)]
 pub struct FitResult {
+    /// Fitted excluded-volume scaling factor c₁.
     pub volume_scale: f64,
+    /// Fitted hydration-shell contrast density c₂.
     pub contrast_density: f64,
+    /// Minimised χ²/N at the fitted parameters.
     pub chi2: f64,
+    /// Optimal linear scale factor between theory and experiment.
     pub scale: f64,
 }
 
