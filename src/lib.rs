@@ -51,8 +51,7 @@ pub use multipole::MultipoleModel;
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
 
 // Crate-internal: the form-factor table and atom-kind types are part of
-// no public signature (see `Pripps::formfactors`, also crate-internal),
-// so they stay off the public API surface.
+// no public signature, so they stay off the public API surface.
 pub(crate) use atomkind::{AtomKind, FindByName};
 pub(crate) use formfactor::{FormFactorMap, read_formfactors, write_formfactors};
 

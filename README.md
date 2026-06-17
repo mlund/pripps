@@ -56,9 +56,14 @@ print(res.q[:3], res.total[:3])
 |-----------|-------------|
 | `.q` | Scattering vector magnitudes (Å⁻¹) |
 | `.total` | Total intensity I(q) |
-| `.atoms` | Protein-only (vacuum) contribution (`None` if no solvent) |
-| `.excluded` | Excluded-volume contribution (`None` if no solvent) |
-| `.hydration` | Hydration-shell contribution (`None` if no solvent) |
+| `.atoms` | Protein-only (vacuum) contribution |
+| `.excluded` | Excluded-volume contribution |
+| `.hydration` | Hydration-shell contribution |
+
+Cached models always populate `.atoms` / `.excluded` / `.hydration` (zero
+where a contribution is disabled). They are `None` only when there is no
+per-contribution breakdown — currently trajectory averages (the one-shot
+`Pripps.intensity(..., xtc=...)`).
 
 ### Fitting against experimental data
 

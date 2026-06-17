@@ -127,60 +127,84 @@ fn scheme_from(obj: Option<&Bound<'_, PyAny>>) -> PyResult<PyScheme> {
 /// Result of an intensity calculation: parallel NumPy arrays.
 ///
 /// `q` and `total` are always present. `atoms`, `excluded` and
-/// `hydration` are the per-contribution curves; they are `None` for
-/// vacuum calculations and for trajectory averages (which average only
-/// the total).
+/// `hydration` are the per-contribution curves. Cached models always
+/// populate them (zero where a contribution is disabled); they are
+/// `None` only when the calculation produced no per-contribution
+/// breakdown — currently trajectory averages.
+///
+/// The NumPy arrays are built once and shared on every attribute access
+/// (a cheap reference clone), so repeated `.q` / `.total` reads in e.g.
+/// plotting loops don't re-allocate.
 #[pyclass(name = "Intensity", module = "pripps")]
 struct PyIntensity {
-    inner: Intensity,
+    q: Py<PyArray1<f64>>,
+    total: Py<PyArray1<f64>>,
+    atoms: Option<Py<PyArray1<f64>>>,
+    excluded: Option<Py<PyArray1<f64>>>,
+    hydration: Option<Py<PyArray1<f64>>>,
+    n_points: usize,
+}
+
+impl PyIntensity {
+    fn new(py: Python<'_>, inner: Intensity) -> Self {
+        let arr = |v: Vec<f64>| v.into_pyarray(py).unbind();
+        let n_points = inner.q.len();
+        let (atoms, excluded, hydration) = match inner.contributions {
+            Some(c) => (
+                Some(arr(c.atoms)),
+                Some(arr(c.excluded)),
+                Some(arr(c.hydration)),
+            ),
+            None => (None, None, None),
+        };
+        Self {
+            q: arr(inner.q),
+            total: arr(inner.total),
+            atoms,
+            excluded,
+            hydration,
+            n_points,
+        }
+    }
 }
 
 #[pymethods]
 impl PyIntensity {
     /// Scattering vector magnitudes q (Å⁻¹).
     #[getter]
-    fn q<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.q.clone().into_pyarray(py)
+    fn q(&self, py: Python<'_>) -> Py<PyArray1<f64>> {
+        self.q.clone_ref(py)
     }
 
     /// Total intensity I(q).
     #[getter]
-    fn total<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.total.clone().into_pyarray(py)
+    fn total(&self, py: Python<'_>) -> Py<PyArray1<f64>> {
+        self.total.clone_ref(py)
     }
 
     /// Atoms-only (in-vacuo) contribution, or `None` if unavailable.
     #[getter]
-    fn atoms<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
-        self.inner
-            .contributions
-            .as_ref()
-            .map(|c| c.atoms.clone().into_pyarray(py))
+    fn atoms(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.atoms.as_ref().map(|a| a.clone_ref(py))
     }
 
     /// Excluded-volume contribution, or `None` if unavailable.
     #[getter]
-    fn excluded<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
-        self.inner
-            .contributions
-            .as_ref()
-            .map(|c| c.excluded.clone().into_pyarray(py))
+    fn excluded(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.excluded.as_ref().map(|a| a.clone_ref(py))
     }
 
     /// Hydration-shell contribution, or `None` if unavailable.
     #[getter]
-    fn hydration<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
-        self.inner
-            .contributions
-            .as_ref()
-            .map(|c| c.hydration.clone().into_pyarray(py))
+    fn hydration(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.hydration.as_ref().map(|a| a.clone_ref(py))
     }
 
     fn __repr__(&self) -> String {
         format!(
             "Intensity(points={}, contributions={})",
-            self.inner.q.len(),
-            if self.inner.contributions.is_some() {
+            self.n_points,
+            if self.atoms.is_some() {
                 "present"
             } else {
                 "none"
@@ -423,10 +447,11 @@ impl PyPripps {
         excluded_spacing = 1.0,
         bulk_electron_density = 0.334,
         volume_scale = 1.0,
-        contrast_density = 0.0,
+        contrast_density = 0.03,
     ))]
     fn intensity(
         &self,
+        py: Python<'_>,
         structure_file: &str,
         model: Option<Bound<'_, PyAny>>,
         xtc: Option<String>,
@@ -494,7 +519,7 @@ impl PyPripps {
                 box_sides,
                 Some(&cfg),
             )
-            .map(|inner| PyIntensity { inner })
+            .map(|inner| PyIntensity::new(py, inner))
             .map_err(into_py_err)
     }
 }
@@ -511,11 +536,14 @@ macro_rules! cached_model {
         impl $Py {
             /// Compute I(q) for the given fit knobs, returning an
             /// `Intensity` (numpy `.q` / `.total` / `.atoms` / ...).
-            #[pyo3(signature = (volume_scale = 1.0, contrast_density = 0.0))]
-            fn intensity(&self, volume_scale: f64, contrast_density: f64) -> PyIntensity {
-                PyIntensity {
-                    inner: self.0.intensity(volume_scale, contrast_density),
-                }
+            #[pyo3(signature = (volume_scale = 1.0, contrast_density = 0.03))]
+            fn intensity(
+                &self,
+                py: Python<'_>,
+                volume_scale: f64,
+                contrast_density: f64,
+            ) -> PyIntensity {
+                PyIntensity::new(py, self.0.intensity(volume_scale, contrast_density))
             }
 
             /// Fit `(volume_scale, contrast_density)` to experimental
