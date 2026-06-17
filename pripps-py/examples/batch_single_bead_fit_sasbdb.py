@@ -13,8 +13,8 @@ this script fits (volume_scale, contrast_density) with the same setup
 as testing_single-bead_approximation.ipynb:
   - atomfile: assets/poly_amino_acid.yaml (or poly_martini.yaml for Martini3)
   - excluded: per-kind using the atomfile's excluded_solvent entries
-  - hydration: disabled
-  - optimizer: L-BFGS-B with bounds [(0.95, 1.12), (-2.0, 4.0)] or change them in the script
+  - hydration: grid
+  - fit: built-in `model.fit(q, I, sigma)` (pripps' library optimizer)
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from pathlib import Path
 
 import numpy as np
 import pripps
-from scipy.optimize import minimize
 
 
 def load_exp_data(path: Path, qmax: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -54,12 +53,6 @@ def load_exp_data(path: Path, qmax: float) -> tuple[np.ndarray, np.ndarray, np.n
     return data[:, 0], data[:, 1], data[:, 2]
 
 
-def weighted_scale(theory: np.ndarray, i_exp: np.ndarray, sigma: np.ndarray) -> float:
-    num = np.sum(theory * i_exp / sigma**2)
-    den = np.sum((theory / sigma) ** 2)
-    return float(num / den)
-
-
 def fit_single(
     pr: pripps.Pripps,
     xyz_path: Path,
@@ -76,38 +69,25 @@ def fit_single(
         nq=nq,
         excluded="per-kind",
         hydration="grid",
-        volume_scale=1.0,
         probe=1.8,
-        contrast_density=0.03,
         bulk_electron_density=0.334,
-        spacing = 3.8,
+        spacing=3.8,
     )
 
-    def chi2(params: np.ndarray) -> float:
-        c1, c2 = float(params[0]), float(params[1])
-        out = model.intensity(volume_scale=c1, contrast_density=c2)
-        theory = np.interp(q_exp, out["q"], out["total"])
-        scale = weighted_scale(theory, i_exp, sigma)
-        return float(np.sum(((scale * theory - i_exp) / sigma) ** 2) / len(q_exp))
+    # Built-in fit of (volume_scale, contrast_density) against the data.
+    fit = model.fit(q_exp, i_exp, sigma)
 
-    result = minimize(
-        chi2,
-        x0=[1.0, 0.2],
-        bounds=[(-2.0, 3.0), (-2.0, 4.0)],
-        method="L-BFGS-B",
+    out = model.intensity(
+        volume_scale=fit.volume_scale, contrast_density=fit.contrast_density
     )
-
-    c1_opt, c2_opt = float(result.x[0]), float(result.x[1])
-    out = model.intensity(volume_scale=c1_opt, contrast_density=c2_opt)
-    theory_interp = np.interp(q_exp, out["q"], out["total"])
-    scale = weighted_scale(theory_interp, i_exp, sigma)
-    i_fit = scale * theory_interp
+    theory_interp = np.interp(q_exp, out.q, out.total)
+    i_fit = fit.scale * theory_interp
 
     return {
-        "c1": c1_opt,
-        "c2": c2_opt,
-        "chi2": float(result.fun),
-        "scale": scale,
+        "c1": fit.volume_scale,
+        "c2": fit.contrast_density,
+        "chi2": fit.chi2,
+        "scale": fit.scale,
         "q_exp": q_exp,
         "i_exp": i_exp,
         "sigma": sigma,

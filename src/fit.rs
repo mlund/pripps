@@ -100,6 +100,38 @@ impl ExpData {
         })
     }
 
+    /// Build from in-memory arrays. `q` and `intensity` must be the
+    /// same non-zero length; `sigma` is either empty (→ σ=1, unweighted
+    /// χ²) or the same length as `q`.
+    pub fn from_arrays(q: Vec<f64>, intensity: Vec<f64>, sigma: Vec<f64>) -> Result<Self> {
+        if q.is_empty() {
+            return Err(crate::Error::validation("experimental data is empty"));
+        }
+        if intensity.len() != q.len() {
+            return Err(crate::Error::validation(format!(
+                "q ({}) and intensity ({}) length mismatch",
+                q.len(),
+                intensity.len()
+            )));
+        }
+        let sigma = if sigma.is_empty() {
+            vec![1.0; q.len()]
+        } else if sigma.len() == q.len() {
+            sigma
+        } else {
+            return Err(crate::Error::validation(format!(
+                "q ({}) and sigma ({}) length mismatch",
+                q.len(),
+                sigma.len()
+            )));
+        };
+        Ok(Self {
+            q,
+            intensity,
+            sigma,
+        })
+    }
+
     /// Maximum q value in the experimental data.
     pub fn q_max(&self) -> f64 {
         self.q.iter().copied().fold(0.0_f64, f64::max)

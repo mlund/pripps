@@ -46,6 +46,7 @@ use trajectory::trajectory_average;
 pub use debye::DebyeModel;
 pub use error::{Error, Result};
 pub use explicit::DirectModel;
+pub use fit::{ExpData, FitResult, fit_parameters};
 pub use multipole::MultipoleModel;
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
 

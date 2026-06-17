@@ -10,6 +10,6 @@ for residue in df.columns.to_list():
     if residue == "q" or residue == "Unnamed: 0":
         continue
     print(f"{residue}: {{ formfactor: !Table [", end="")
-    for q, I in zip(df["q"], df[residue]):
-        print(f"[{q}, {I}], ", end="")
+    for q, intensity in zip(df["q"], df[residue]):
+        print(f"[{q}, {intensity}], ", end="")
     print("]}\n")

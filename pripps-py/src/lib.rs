@@ -1,17 +1,244 @@
-use numpy::IntoPyArray;
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
+use numpy::{IntoPyArray, PyArray1};
+use pyo3::exceptions::{PyIOError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+
+use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 use ::pripps::{
-    DebyeModel, DirectModel, ExcludedVolume, Hydration, Intensity, MultipoleModel, Pripps,
-    SolventConfig,
+    DebyeModel, DirectModel, ExcludedVolume, ExpData, FitResult, Hydration, Intensity,
+    IntensityScheme, MultipoleModel, Pripps, SolventConfig, TrajectoryOptions, fit_parameters,
 };
+
+// ----------------------------------------------------------------------------
+// Model / solvent selection enums (also accepted as plain strings everywhere)
+// ----------------------------------------------------------------------------
+
+/// Excluded-volume model. Pass this enum or the equivalent lowercase
+/// string (e.g. `pripps.Excluded.Foxs` or `"foxs"`).
+#[pyclass(name = "Excluded", module = "pripps", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+enum PyExcluded {
+    Disabled,
+    Fraser,
+    Foxs,
+    Grid,
+    Voronoi,
+    PerKind,
+}
+
+/// Hydration-shell model. Pass this enum or the equivalent lowercase
+/// string (e.g. `pripps.Hydration.Sasa` or `"sasa"`).
+#[pyclass(name = "Hydration", module = "pripps", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+enum PyHydration {
+    Disabled,
+    Sasa,
+    Grid,
+    Voronoi,
+}
+
+/// Scattering-intensity calculator. Pass this enum or the equivalent
+/// lowercase string (e.g. `pripps.Scheme.Multipole` or `"multipole"`).
+#[pyclass(name = "Scheme", module = "pripps", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+enum PyScheme {
+    Multipole,
+    Debye,
+    Direct,
+}
+
+/// Canonical lowercase name for an `excluded` argument that is either a
+/// string, a `pripps.Excluded`, or omitted (`None` → no excluded volume).
+fn excluded_name(obj: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+    let Some(o) = obj else {
+        return Ok("none".to_string());
+    };
+    if let Ok(e) = o.extract::<PyExcluded>() {
+        return Ok(match e {
+            PyExcluded::Disabled => "none",
+            PyExcluded::Fraser => "fraser",
+            PyExcluded::Foxs => "foxs",
+            PyExcluded::Grid => "grid",
+            PyExcluded::Voronoi => "voronoi",
+            PyExcluded::PerKind => "per-kind",
+        }
+        .to_string());
+    }
+    if let Ok(s) = o.extract::<String>() {
+        return Ok(s.to_lowercase());
+    }
+    Err(PyTypeError::new_err(
+        "`excluded` must be a str or pripps.Excluded",
+    ))
+}
+
+/// Canonical lowercase name for a `hydration` argument that is either a
+/// string, a `pripps.Hydration`, or omitted (`None` → no hydration).
+fn hydration_name(obj: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+    let Some(o) = obj else {
+        return Ok("none".to_string());
+    };
+    if let Ok(e) = o.extract::<PyHydration>() {
+        return Ok(match e {
+            PyHydration::Disabled => "none",
+            PyHydration::Sasa => "sasa",
+            PyHydration::Grid => "grid",
+            PyHydration::Voronoi => "voronoi",
+        }
+        .to_string());
+    }
+    if let Ok(s) = o.extract::<String>() {
+        return Ok(s.to_lowercase());
+    }
+    Err(PyTypeError::new_err(
+        "`hydration` must be a str or pripps.Hydration",
+    ))
+}
+
+/// Resolve a `model` argument (string, `pripps.Scheme`, or omitted →
+/// Multipole) to a [`PyScheme`].
+fn scheme_from(obj: Option<&Bound<'_, PyAny>>) -> PyResult<PyScheme> {
+    let Some(o) = obj else {
+        return Ok(PyScheme::Multipole);
+    };
+    if let Ok(e) = o.extract::<PyScheme>() {
+        return Ok(e);
+    }
+    if let Ok(s) = o.extract::<String>() {
+        return match s.to_lowercase().as_str() {
+            "multipole" => Ok(PyScheme::Multipole),
+            "debye" => Ok(PyScheme::Debye),
+            "direct" => Ok(PyScheme::Direct),
+            other => Err(PyValueError::new_err(format!(
+                "unknown model: {other} (expected `multipole`, `debye`, or `direct`)"
+            ))),
+        };
+    }
+    Err(PyTypeError::new_err(
+        "`model` must be a str or pripps.Scheme",
+    ))
+}
+
+// ----------------------------------------------------------------------------
+// Result types
+// ----------------------------------------------------------------------------
+
+/// Result of an intensity calculation: parallel NumPy arrays.
+///
+/// `q` and `total` are always present. `atoms`, `excluded` and
+/// `hydration` are the per-contribution curves; they are `None` for
+/// vacuum calculations and for trajectory averages (which average only
+/// the total).
+#[pyclass(name = "Intensity", module = "pripps")]
+struct PyIntensity {
+    inner: Intensity,
+}
+
+#[pymethods]
+impl PyIntensity {
+    /// Scattering vector magnitudes q (Å⁻¹).
+    #[getter]
+    fn q<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.q.clone().into_pyarray(py)
+    }
+
+    /// Total intensity I(q).
+    #[getter]
+    fn total<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.total.clone().into_pyarray(py)
+    }
+
+    /// Atoms-only (in-vacuo) contribution, or `None` if unavailable.
+    #[getter]
+    fn atoms<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
+        self.inner
+            .contributions
+            .as_ref()
+            .map(|c| c.atoms.clone().into_pyarray(py))
+    }
+
+    /// Excluded-volume contribution, or `None` if unavailable.
+    #[getter]
+    fn excluded<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
+        self.inner
+            .contributions
+            .as_ref()
+            .map(|c| c.excluded.clone().into_pyarray(py))
+    }
+
+    /// Hydration-shell contribution, or `None` if unavailable.
+    #[getter]
+    fn hydration<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
+        self.inner
+            .contributions
+            .as_ref()
+            .map(|c| c.hydration.clone().into_pyarray(py))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Intensity(points={}, contributions={})",
+            self.inner.q.len(),
+            if self.inner.contributions.is_some() {
+                "present"
+            } else {
+                "none"
+            }
+        )
+    }
+}
+
+/// Best-fit parameters from [`MultipoleModel.fit`] and friends.
+#[pyclass(name = "FitResult", module = "pripps")]
+struct PyFitResult {
+    inner: FitResult,
+}
+
+#[pymethods]
+impl PyFitResult {
+    /// Fitted excluded-volume scale (PepsiSAXS `r₀` / `c₁`).
+    #[getter]
+    fn volume_scale(&self) -> f64 {
+        self.inner.volume_scale
+    }
+
+    /// Fitted hydration contrast density (`c₂`).
+    #[getter]
+    fn contrast_density(&self) -> f64 {
+        self.inner.contrast_density
+    }
+
+    /// Minimised χ²/N at the best fit.
+    #[getter]
+    fn chi2(&self) -> f64 {
+        self.inner.chi2
+    }
+
+    /// Optimal linear scale between theory and experiment.
+    #[getter]
+    fn scale(&self) -> f64 {
+        self.inner.scale
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FitResult(volume_scale={:.4}, contrast_density={:.4}, chi2={:.4}, scale={:.4e})",
+            self.inner.volume_scale, self.inner.contrast_density, self.inner.chi2, self.inner.scale
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Pripps + cached models
+// ----------------------------------------------------------------------------
 
 /// Scattering calculator loaded from a form-factor YAML file.
 ///
-/// Construct with `Pripps(atomfile)`, then build a stateful model such
-/// as `multipole_model(...)` and evaluate I(q) from it.
+/// Construct with `Pripps(atomfile)`, then either build a cached model
+/// (`multipole_model(...)` / `debye_model(...)` / `direct_model(...)`)
+/// for repeated/fitting use, or call `intensity(...)` for a one-shot
+/// calculation (the only path that averages over an XTC trajectory).
 #[pyclass(name = "Pripps", module = "pripps")]
 struct PyPripps(Pripps);
 
@@ -25,9 +252,11 @@ impl PyPripps {
             .map_err(into_py_err)
     }
 
-    /// Prepare a stateful Multipole fit. Caches per-q coefficient
-    /// triangles so `MultipoleModel.intensity` is cheap to call
-    /// repeatedly with different `(volume_scale, contrast_density)`.
+    /// Prepare a cached Multipole model. The expensive per-structure
+    /// setup runs once; `MultipoleModel.intensity(volume_scale,
+    /// contrast_density)` and `MultipoleModel.fit(...)` are then cheap.
+    /// `excluded` / `hydration` accept a string or a `pripps.Excluded` /
+    /// `pripps.Hydration` enum (omit for none).
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         structure_file,
@@ -36,14 +265,12 @@ impl PyPripps {
         qmax = 0.5,
         nq = 100,
         l_max = None,
-        excluded = "none",
-        volume_scale = 1.0,
-        excluded_spacing = 1.0,
-        hydration = "none",
+        excluded = None,
+        hydration = None,
         probe = 1.8,
         spacing = 3.10516,
         thickness = 3.0,
-        contrast_density = 0.03,
+        excluded_spacing = 1.0,
         bulk_electron_density = 0.334,
     ))]
     fn multipole_model(
@@ -53,25 +280,21 @@ impl PyPripps {
         qmax: f64,
         nq: usize,
         l_max: Option<usize>,
-        excluded: &str,
-        volume_scale: f64,
-        excluded_spacing: f64,
-        hydration: &str,
+        excluded: Option<Bound<'_, PyAny>>,
+        hydration: Option<Bound<'_, PyAny>>,
         probe: f64,
         spacing: f64,
         thickness: f64,
-        contrast_density: f64,
+        excluded_spacing: f64,
         bulk_electron_density: f64,
     ) -> PyResult<PyMultipoleModel> {
-        let cfg = solvent_from_kwargs(
-            excluded,
-            volume_scale,
+        let cfg = solvent_basis(
+            excluded.as_ref(),
+            hydration.as_ref(),
             excluded_spacing,
-            hydration,
             probe,
             spacing,
             thickness,
-            contrast_density,
             bulk_electron_density,
         )?;
         self.0
@@ -80,9 +303,8 @@ impl PyPripps {
             .map_err(into_py_err)
     }
 
-    /// Prepare a stateful Debye fit. Caches exact per-q Debye terms
-    /// so `DebyeModel.intensity` is cheap to call repeatedly with
-    /// different `(volume_scale, contrast_density)`.
+    /// Prepare a cached Debye model (exact, O(N²·Q) — best for small
+    /// structures). See `multipole_model` for the solvent arguments.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         structure_file,
@@ -90,14 +312,12 @@ impl PyPripps {
         qmin = 0.0,
         qmax = 0.5,
         nq = 100,
-        excluded = "none",
-        volume_scale = 1.0,
-        excluded_spacing = 1.0,
-        hydration = "none",
+        excluded = None,
+        hydration = None,
         probe = 1.8,
         spacing = 3.10516,
         thickness = 3.0,
-        contrast_density = 0.03,
+        excluded_spacing = 1.0,
         bulk_electron_density = 0.334,
     ))]
     fn debye_model(
@@ -106,25 +326,21 @@ impl PyPripps {
         qmin: f64,
         qmax: f64,
         nq: usize,
-        excluded: &str,
-        volume_scale: f64,
-        excluded_spacing: f64,
-        hydration: &str,
+        excluded: Option<Bound<'_, PyAny>>,
+        hydration: Option<Bound<'_, PyAny>>,
         probe: f64,
         spacing: f64,
         thickness: f64,
-        contrast_density: f64,
+        excluded_spacing: f64,
         bulk_electron_density: f64,
     ) -> PyResult<PyDebyeModel> {
-        let cfg = solvent_from_kwargs(
-            excluded,
-            volume_scale,
+        let cfg = solvent_basis(
+            excluded.as_ref(),
+            hydration.as_ref(),
             excluded_spacing,
-            hydration,
             probe,
             spacing,
             thickness,
-            contrast_density,
             bulk_electron_density,
         )?;
         self.0
@@ -133,23 +349,21 @@ impl PyPripps {
             .map_err(into_py_err)
     }
 
-    /// Prepare a stateful direct/explicit fit. Caches per-q-vector
-    /// amplitudes so `DirectModel.intensity` is cheap to call
-    /// repeatedly with different `(volume_scale, contrast_density)`.
+    /// Prepare a cached direct/explicit model (discrete q-vectors in a
+    /// cubic box of `side_length` Å). See `multipole_model` for the
+    /// solvent arguments.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         structure_file,
         *,
         pmax = 6,
         side_length = 200.0,
-        excluded = "none",
-        volume_scale = 1.0,
-        excluded_spacing = 1.0,
-        hydration = "none",
+        excluded = None,
+        hydration = None,
         probe = 1.8,
         spacing = 3.10516,
         thickness = 3.0,
-        contrast_density = 0.03,
+        excluded_spacing = 1.0,
         bulk_electron_density = 0.334,
     ))]
     fn direct_model(
@@ -157,25 +371,21 @@ impl PyPripps {
         structure_file: &str,
         pmax: usize,
         side_length: f64,
-        excluded: &str,
-        volume_scale: f64,
-        excluded_spacing: f64,
-        hydration: &str,
+        excluded: Option<Bound<'_, PyAny>>,
+        hydration: Option<Bound<'_, PyAny>>,
         probe: f64,
         spacing: f64,
         thickness: f64,
-        contrast_density: f64,
+        excluded_spacing: f64,
         bulk_electron_density: f64,
     ) -> PyResult<PyDirectModel> {
-        let cfg = solvent_from_kwargs(
-            excluded,
-            volume_scale,
+        let cfg = solvent_basis(
+            excluded.as_ref(),
+            hydration.as_ref(),
             excluded_spacing,
-            hydration,
             probe,
             spacing,
             thickness,
-            contrast_density,
             bulk_electron_density,
         )?;
         self.0
@@ -183,97 +393,203 @@ impl PyPripps {
             .map(PyDirectModel)
             .map_err(into_py_err)
     }
-}
 
-/// A prepared multipole fit returned by `Pripps.multipole_model`.
-///
-/// Call `intensity(volume_scale, contrast_density)` to compute the I(q)
-/// curve, and read the `q_values` property for the q grid it was
-/// prepared over.
-#[pyclass(name = "MultipoleModel", module = "pripps")]
-struct PyMultipoleModel(MultipoleModel);
-
-#[pymethods]
-impl PyMultipoleModel {
-    /// Compute I(q) for the given fit parameters. Returns a dict of
-    /// numpy arrays: `q`, `total`, `atoms`, `excluded`, `hydration`.
-    fn intensity<'py>(
+    /// One-shot intensity for a single structure or an XTC trajectory
+    /// average. `model` selects the calculator (`"multipole"` /
+    /// `"debye"` / `"direct"` or a `pripps.Scheme`). Pass `xtc=` to
+    /// average over a trajectory (with optional `stride` and per-frame
+    /// `weights`); trajectory averages carry no per-contribution
+    /// breakdown. `volume_scale` / `contrast_density` are baked into the
+    /// solvent model here (this path is not cached).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        structure_file,
+        *,
+        model = None,
+        xtc = None,
+        stride = 1,
+        weights = None,
+        box_sides = None,
+        excluded = None,
+        hydration = None,
+        qmin = 0.0,
+        qmax = 0.5,
+        nq = None,
+        l_max = None,
+        pmax = 6,
+        probe = 1.8,
+        spacing = 3.10516,
+        thickness = 3.0,
+        excluded_spacing = 1.0,
+        bulk_electron_density = 0.334,
+        volume_scale = 1.0,
+        contrast_density = 0.0,
+    ))]
+    fn intensity(
         &self,
-        py: Python<'py>,
+        structure_file: &str,
+        model: Option<Bound<'_, PyAny>>,
+        xtc: Option<String>,
+        stride: usize,
+        weights: Option<String>,
+        box_sides: Option<Bound<'_, PyAny>>,
+        excluded: Option<Bound<'_, PyAny>>,
+        hydration: Option<Bound<'_, PyAny>>,
+        qmin: f64,
+        qmax: f64,
+        nq: Option<usize>,
+        l_max: Option<usize>,
+        pmax: usize,
+        probe: f64,
+        spacing: f64,
+        thickness: f64,
+        excluded_spacing: f64,
+        bulk_electron_density: f64,
         volume_scale: f64,
         contrast_density: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let out = self.0.intensity(volume_scale, contrast_density);
-        intensity_to_dict(py, out)
-    }
-
-    /// The q grid the fit was prepared over.
-    #[getter]
-    fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
-        self.0.q_values().to_vec().into_pyarray(py)
+    ) -> PyResult<PyIntensity> {
+        let scheme = match scheme_from(model.as_ref())? {
+            PyScheme::Multipole => IntensityScheme::Multipole {
+                qmin,
+                qmax,
+                nq,
+                l_max,
+            },
+            PyScheme::Debye => IntensityScheme::Debye {
+                qmin,
+                qmax,
+                nq: nq.unwrap_or(100),
+            },
+            PyScheme::Direct => IntensityScheme::Direct { pmax },
+        };
+        let cfg = solvent_config(
+            &excluded_name(excluded.as_ref())?,
+            volume_scale,
+            excluded_spacing,
+            &hydration_name(hydration.as_ref())?,
+            probe,
+            spacing,
+            thickness,
+            contrast_density,
+            bulk_electron_density,
+        )?;
+        let box_sides = match box_sides {
+            None => None,
+            Some(b) => Some(parse_box(&b)?),
+        };
+        let stride = NonZeroUsize::new(stride)
+            .ok_or_else(|| PyValueError::new_err("`stride` must be >= 1"))?;
+        let xtc_path = xtc.map(PathBuf::from);
+        let weights_path = weights.map(PathBuf::from);
+        let xtc_opts = xtc_path.as_deref().map(|p| TrajectoryOptions {
+            xtcfile: p,
+            stride,
+            weights: weights_path.as_deref(),
+        });
+        self.0
+            .intensity(
+                scheme,
+                structure_file.as_ref(),
+                xtc_opts,
+                box_sides,
+                Some(&cfg),
+            )
+            .map(|inner| PyIntensity { inner })
+            .map_err(into_py_err)
     }
 }
 
-/// A prepared Debye fit returned by `Pripps.debye_model`.
-///
-/// Call `intensity(volume_scale, contrast_density)` to compute the I(q)
-/// curve, and read the `q_values` property for the q grid it was
-/// prepared over.
-#[pyclass(name = "DebyeModel", module = "pripps")]
-struct PyDebyeModel(DebyeModel);
+/// Macro-free helper: define a cached-model pyclass with `intensity`,
+/// `fit`, and `q_values`. (Written out per type for clear docstrings.)
+macro_rules! cached_model {
+    ($Py:ident, $Core:ty, $name:literal, $doc:literal) => {
+        #[doc = $doc]
+        #[pyclass(name = $name, module = "pripps")]
+        struct $Py($Core);
 
-#[pymethods]
-impl PyDebyeModel {
-    /// Compute I(q) for the given fit parameters. Returns a dict of
-    /// numpy arrays: `q`, `total`, `atoms`, `excluded`, `hydration`.
-    fn intensity<'py>(
-        &self,
-        py: Python<'py>,
-        volume_scale: f64,
-        contrast_density: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let out = self.0.intensity(volume_scale, contrast_density);
-        intensity_to_dict(py, out)
-    }
+        #[pymethods]
+        impl $Py {
+            /// Compute I(q) for the given fit knobs, returning an
+            /// `Intensity` (numpy `.q` / `.total` / `.atoms` / ...).
+            #[pyo3(signature = (volume_scale = 1.0, contrast_density = 0.0))]
+            fn intensity(&self, volume_scale: f64, contrast_density: f64) -> PyIntensity {
+                PyIntensity {
+                    inner: self.0.intensity(volume_scale, contrast_density),
+                }
+            }
 
-    /// The q grid the fit was prepared over.
-    #[getter]
-    fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
-        self.0.q_values().to_vec().into_pyarray(py)
-    }
+            /// Fit `(volume_scale, contrast_density)` to experimental
+            /// data. `q`/`intensity` are equal-length arrays; `sigma`
+            /// (uncertainties) defaults to ones (unweighted χ²).
+            #[pyo3(signature = (q, intensity, sigma = None))]
+            fn fit(
+                &self,
+                q: Vec<f64>,
+                intensity: Vec<f64>,
+                sigma: Option<Vec<f64>>,
+            ) -> PyResult<PyFitResult> {
+                run_fit(q, intensity, sigma, |c1, c2| self.0.intensity(c1, c2))
+            }
+
+            /// The q grid the model was prepared over.
+            #[getter]
+            fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+                self.0.q_values().to_vec().into_pyarray(py)
+            }
+        }
+    };
 }
 
-/// A prepared direct/explicit fit returned by `Pripps.direct_model`.
-///
-/// Call `intensity(volume_scale, contrast_density)` to compute the I(q)
-/// curve, and read the `q_values` property for the q grid it was
-/// prepared over.
-#[pyclass(name = "DirectModel", module = "pripps")]
-struct PyDirectModel(DirectModel);
+cached_model!(
+    PyMultipoleModel,
+    MultipoleModel,
+    "MultipoleModel",
+    "A cached Multipole model from `Pripps.multipole_model`."
+);
+cached_model!(
+    PyDebyeModel,
+    DebyeModel,
+    "DebyeModel",
+    "A cached Debye model from `Pripps.debye_model`."
+);
+cached_model!(
+    PyDirectModel,
+    DirectModel,
+    "DirectModel",
+    "A cached direct/explicit model from `Pripps.direct_model`."
+);
 
-#[pymethods]
-impl PyDirectModel {
-    /// Compute I(q) for the given fit parameters. Returns a dict of
-    /// numpy arrays: `q`, `total`, `atoms`, `excluded`, `hydration`.
-    fn intensity<'py>(
-        &self,
-        py: Python<'py>,
-        volume_scale: f64,
-        contrast_density: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let out = self.0.intensity(volume_scale, contrast_density);
-        intensity_to_dict(py, out)
-    }
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
 
-    /// The duplicate-averaged q grid the fit was prepared over.
-    #[getter]
-    fn q_values<'py>(&self, py: Python<'py>) -> Bound<'py, numpy::PyArray1<f64>> {
-        self.0.q_values().to_vec().into_pyarray(py)
-    }
+/// Build a `SolventConfig` for a cached model: the model is built at a
+/// unit basis and the `volume_scale`/`contrast_density` knobs are applied
+/// later in `intensity()`, so placeholder values are used here.
+fn solvent_basis(
+    excluded: Option<&Bound<'_, PyAny>>,
+    hydration: Option<&Bound<'_, PyAny>>,
+    excluded_spacing: f64,
+    probe: f64,
+    spacing: f64,
+    thickness: f64,
+    bulk_electron_density: f64,
+) -> PyResult<SolventConfig> {
+    solvent_config(
+        &excluded_name(excluded)?,
+        1.0,
+        excluded_spacing,
+        &hydration_name(hydration)?,
+        probe,
+        spacing,
+        thickness,
+        0.0,
+        bulk_electron_density,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn solvent_from_kwargs(
+fn solvent_config(
     excluded: &str,
     volume_scale: f64,
     excluded_spacing: f64,
@@ -329,16 +645,30 @@ fn solvent_from_kwargs(
     })
 }
 
-fn intensity_to_dict<'py>(py: Python<'py>, intensity: Intensity) -> PyResult<Bound<'py, PyDict>> {
-    let dict = PyDict::new(py);
-    dict.set_item("q", intensity.q.into_pyarray(py))?;
-    dict.set_item("total", intensity.total.into_pyarray(py))?;
-    if let Some(c) = intensity.contributions {
-        dict.set_item("atoms", c.atoms.into_pyarray(py))?;
-        dict.set_item("excluded", c.excluded.into_pyarray(py))?;
-        dict.set_item("hydration", c.hydration.into_pyarray(py))?;
+/// Parse a `box_sides` argument: a single float (cubic box) or a 3-tuple.
+fn parse_box(o: &Bound<'_, PyAny>) -> PyResult<[f64; 3]> {
+    if let Ok(a) = o.extract::<[f64; 3]>() {
+        return Ok(a);
     }
-    Ok(dict)
+    if let Ok(v) = o.extract::<f64>() {
+        return Ok([v; 3]);
+    }
+    Err(PyValueError::new_err(
+        "`box_sides` must be a float (cubic) or a 3-sequence of floats",
+    ))
+}
+
+/// Run the core (volume_scale, contrast_density) fit using `eval` as the
+/// per-parameter intensity evaluator.
+fn run_fit<F: Fn(f64, f64) -> Intensity>(
+    q: Vec<f64>,
+    intensity: Vec<f64>,
+    sigma: Option<Vec<f64>>,
+    eval: F,
+) -> PyResult<PyFitResult> {
+    let exp = ExpData::from_arrays(q, intensity, sigma.unwrap_or_default()).map_err(into_py_err)?;
+    let inner = fit_parameters(&exp, eval).map_err(into_py_err)?;
+    Ok(PyFitResult { inner })
 }
 
 fn into_py_err(err: ::pripps::Error) -> PyErr {
@@ -359,10 +689,12 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
 /// Fast small-angle scattering (SAXS/SANS) intensities for atomic and
 /// coarse-grained structures.
 ///
-/// Typical use: load a form-factor table with `Pripps(atomfile)`,
-/// prepare a model with `Pripps.multipole_model(structure_file, ...)`,
-/// then call `model.intensity(volume_scale, contrast_density)` to get
-/// the I(q) curve as a dict of NumPy arrays.
+/// Load a form-factor table with `Pripps(atomfile)`, build a cached model
+/// with `Pripps.multipole_model(structure_file, ...)`, then call
+/// `model.intensity(volume_scale, contrast_density)` (→ `Intensity` with
+/// numpy `.q` / `.total` / `.atoms` / `.excluded` / `.hydration`) or
+/// `model.fit(q, intensity, sigma)` (→ `FitResult`). For trajectory
+/// averaging use the one-shot `Pripps.intensity(model=..., xtc=...)`.
 #[pymodule]
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Bridge the core library's `log` records into Python's `logging`
@@ -375,5 +707,10 @@ fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMultipoleModel>()?;
     m.add_class::<PyDebyeModel>()?;
     m.add_class::<PyDirectModel>()?;
+    m.add_class::<PyIntensity>()?;
+    m.add_class::<PyFitResult>()?;
+    m.add_class::<PyExcluded>()?;
+    m.add_class::<PyHydration>()?;
+    m.add_class::<PyScheme>()?;
     Ok(())
 }
