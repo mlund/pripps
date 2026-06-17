@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/b3791b9a-dab6-47af-93cf-012cd66bb358" width="600">
+</p>
+
 # Pripps — SAXS Intensity from Molecular Structures
 
 Pripps computes small-angle X-ray scattering (SAXS) intensity
