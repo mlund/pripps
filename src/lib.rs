@@ -1,8 +1,21 @@
+//! `pripps` computes small-angle X-ray scattering (SAXS) intensity `I(q)`
+//! from molecular structures. Three interchangeable calculators are offered
+//! via [`IntensityScheme`]: the exact Debye summation, a Direct Fourier
+//! transform over a periodic box, and a Multipole (spherical-harmonic)
+//! expansion. Each can apply optional solvent corrections — excluded volume
+//! and hydration — configured through [`SolventConfig`]. The high-level
+//! entry point is [`Pripps`], whose [`Pripps::intensity`] runs a single
+//! structure or trajectory-averages over an XTC, while the `*_model`
+//! constructors prepare cached, reusable fits.
+
 // Library-only builds (no `cli` feature) have no in-crate caller for the
 // intensity calculators — they're only instantiated through `Pripps::intensity`.
 // Suppress the per-item dead-code warnings in that configuration; external
 // consumers (pyo3 bindings, other library users) reach them via `Pripps`.
 #![cfg_attr(not(feature = "cli"), allow(dead_code))]
+// Force every public item to carry a doc comment; the build fails
+// otherwise. Keeps the library (and its pyo3/Python surface) documented.
+#![deny(missing_docs)]
 
 mod atomkind;
 #[cfg(feature = "cli")]
@@ -10,7 +23,7 @@ pub mod cli;
 mod debye;
 mod error;
 mod explicit;
-pub mod fit;
+mod fit;
 mod formfactor;
 mod input;
 mod multipole;
@@ -30,13 +43,17 @@ use multipole::MultipoleIntensity;
 use structure::Structure;
 use trajectory::trajectory_average;
 
-pub use atomkind::{AtomKind, FindByName};
 pub use debye::DebyeModel;
 pub use error::{Error, Result};
 pub use explicit::DirectModel;
-pub use formfactor::{FormFactor, FormFactorMap, read_formfactors, write_formfactors};
+pub use fit::{ExpData, FitResult, fit_parameters};
 pub use multipole::MultipoleModel;
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
+
+// Crate-internal: the form-factor table and atom-kind types are part of
+// no public signature, so they stay off the public API surface.
+pub(crate) use atomkind::{AtomKind, FindByName};
+pub(crate) use formfactor::{FormFactorMap, read_formfactors, write_formfactors};
 
 /// Crate-internal short alias. Not re-exported; public signatures use
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
@@ -55,8 +72,11 @@ pub(crate) type Vector3 = nalgebra::Vector3<f64>;
 /// diagnostic columns. It is `None` for vacuum calculations.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Intensity {
+    /// Scattering vector magnitudes (Å⁻¹).
     pub q: Vec<f64>,
+    /// Total intensity `I(q)` at each `q`.
     pub total: Vec<f64>,
+    /// Per-contribution diagnostic columns; `None` for vacuum calculations.
     pub contributions: Option<Contributions>,
 }
 
@@ -64,8 +84,11 @@ pub struct Intensity {
 /// Multipole path, each parallel to [`Intensity::q`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contributions {
+    /// Intensity from the atoms (solute) alone.
     pub atoms: Vec<f64>,
+    /// Excluded-volume (solvent displacement) contribution.
     pub excluded: Vec<f64>,
+    /// Hydration-shell contribution.
     pub hydration: Vec<f64>,
 }
 
@@ -75,22 +98,36 @@ pub struct Contributions {
 pub enum IntensityScheme {
     /// Debye formula sampled on `nq` points in `[qmin, qmax]` (Å⁻¹).
     /// O(N²·Q) — simple, exact, best for small structures.
-    Debye { qmin: f64, qmax: f64, nq: usize },
+    Debye {
+        /// Lower q bound (Å⁻¹).
+        qmin: f64,
+        /// Upper q bound (Å⁻¹).
+        qmax: f64,
+        /// Number of linearly spaced q points.
+        nq: usize,
+    },
     /// Direct Fourier transform on `pmax` Miller-index multiples. The
     /// periodic box is taken from the [`Structure`] — from a trajectory
     /// frame when averaging over an XTC, or via the `box_sides` override
     /// parameter of [`Pripps::intensity`] for single-frame calls.
-    Direct { pmax: usize },
+    Direct {
+        /// Maximum Miller-index multiple used to build q-vectors.
+        pmax: usize,
+    },
     /// Spherical-harmonic multipole expansion
     /// (*Acta Cryst. A51*, 1995). O(N·Q·L²), linear in atom count —
     /// preferred for large structures and iterative fitting. `l_max`
     /// is the multipole truncation order; `None` auto-selects from
     /// the structure's extent and `qmax`.
     Multipole {
+        /// Lower q bound (Å⁻¹).
         qmin: f64,
+        /// Upper q bound (Å⁻¹).
         qmax: f64,
         /// `None` → auto-select at the Nyquist rate `2·l_max + 1`.
         nq: Option<usize>,
+        /// Multipole truncation order; `None` auto-selects from the
+        /// structure's extent and `qmax`.
         l_max: Option<usize>,
     },
 }
@@ -139,17 +176,17 @@ pub struct Pripps {
     formfactors: FormFactorMap,
 }
 
+/// Options for trajectory-averaged intensity calculations over an XTC file.
 pub struct TrajectoryOptions<'a> {
+    /// Path to the XTC trajectory file.
     pub xtcfile: &'a path::Path,
+    /// Process every `stride`-th frame.
     pub stride: NonZeroUsize,
+    /// Optional path to a per-frame weights file for the average.
     pub weights: Option<&'a path::Path>,
 }
 
 impl Pripps {
-    pub fn formfactors(&self) -> &FormFactorMap {
-        &self.formfactors
-    }
-
     /// Construct from a YAML form-factor definition file.
     pub fn from_yaml(path: &Path) -> Result<Self> {
         let formfactors = read_formfactors(path)?;

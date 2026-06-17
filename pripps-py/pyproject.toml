@@ -7,6 +7,10 @@ name = "pripps"
 version = "0.1.0"
 description = "Python bindings for pripps (Partial Rust Implementation of PePSi)"
 requires-python = ">=3.9"
+# numpy is a runtime dependency: every array returned by the extension
+# (intensity() dict, q_values) is created through rust-numpy, which needs
+# numpy's C-API loaded at call time.
+dependencies = ["numpy>=1.22"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

@@ -13,7 +13,17 @@ for iterative fitting against experimental data.
 
 ### Installation
 
-Requires a Rust toolchain and Python ≥ 3.9.
+Install straight from GitHub with [uv](https://docs.astral.sh/uv/). The
+extension is built from source, so a
+[Rust toolchain](https://www.rust-lang.org/tools/install) and Python ≥ 3.9 are
+required:
+
+```sh
+uv pip install "git+https://github.com/mlund/pripps.git#subdirectory=pripps-py"
+```
+
+To also get the example structures and form-factor assets used below, clone the
+repo and install in editable mode instead:
 
 ```sh
 git clone https://github.com/mlund/pripps.git
@@ -33,79 +43,90 @@ model = pr.multipole_model(
     qmin=0.0,
     qmax=0.5,
     nq=500,
-    excluded="foxs",         			   # FoXS-style excluded volume (16π Fraser)
-    volume_scale=1.0,        			   # fit knob c₁ (scales excluded volume)
-    hydration="sasa",  # FoXS-style SASA-weighted hydration shell
+    excluded="foxs",          # or pripps.Excluded.Foxs — 16π Fraser excluded volume
+    hydration="sasa",         # or pripps.Hydration.Sasa
     probe=1.8,  # SASA probe radius (Å)
-    contrast_density=0.03,  # fit knob c₂ (scales hydration)
     bulk_electron_density=0.334,  # e/Å³, pure water
 )
 
-# Returns a dict of numpy arrays
-out = model.intensity(volume_scale=1.0, contrast_density=0.03)
-print(out["q"][:3], out["total"][:3])
+# Fit knobs (volume_scale, contrast_density) are applied here, not at build time.
+res = model.intensity(volume_scale=1.0, contrast_density=0.03)   # -> pripps.Intensity
+print(res.q[:3], res.total[:3])
 ```
 
-The returned dict contains:
+`intensity()` returns a typed `Intensity` with NumPy-array attributes:
 
-| Key | Description |
-|-----|-------------|
-| `q` | Scattering vector magnitudes (Å⁻¹) |
-| `total` | Total intensity I(q) |
-| `atoms` | Protein-only (vacuum) contribution |
-| `excluded` | Excluded-volume contribution |
-| `hydration` | Hydration-shell contribution |
+| Attribute | Description |
+|-----------|-------------|
+| `.q` | Scattering vector magnitudes (Å⁻¹) |
+| `.total` | Total intensity I(q) |
+| `.atoms` | Protein-only (vacuum) contribution |
+| `.excluded` | Excluded-volume contribution |
+| `.hydration` | Hydration-shell contribution |
+
+Cached models always populate `.atoms` / `.excluded` / `.hydration` (zero
+where a contribution is disabled). They are `None` only when there is no
+per-contribution breakdown — currently trajectory averages (the one-shot
+`Pripps.intensity(..., xtc=...)`).
 
 ### Fitting against experimental data
 
-`multipole_model` does the expensive per-structure setup once and
-caches the intermediate scattering amplitudes. Subsequent
-`model.intensity(volume_scale, contrast_density)` calls only apply
-the fit knobs to the cached amplitudes — typically under a
-millisecond each — so wrapping them in `scipy.minimize` or a grid
-search is fluent.
+`multipole_model` does the expensive per-structure setup once and caches the
+intermediate amplitudes; `model.intensity(volume_scale, contrast_density)` then
+only applies the fit knobs — typically under a millisecond. There are two ways
+to fit:
 
-For small structures or exact reference checks, `debye_model` accepts
-the same solvent keyword arguments and exposes the same
-`model.intensity(volume_scale, contrast_density)` interface. It caches
-the exact Debye self and cross terms for atoms, excluded volume, and
-hydration before fitting.
-`direct_model` does the same for the explicit discrete-q transform,
-caching the complex amplitudes before recombining and averaging
-duplicate q magnitudes.
+```python
+import numpy as np
 
-A full working example is in `pripps-py/examples/fit_lysozyme.py`,
-which fits lysozyme against the shipped `tests/lysozyme/lyzexp.dat`
-experimental dataset and reproduces FoXS's χ²/N ≈ 0.20:
+# experimental data: q (Å⁻¹), I(q), σ(q)
+q_exp, i_exp, sigma = np.loadtxt("experimental.dat", comments="#", unpack=True)
+
+# (a) built-in fit — returns a typed FitResult:
+fit = model.fit(q_exp, i_exp, sigma)
+print(fit.volume_scale, fit.contrast_density, fit.chi2, fit.scale)
+
+# (b) manual fit with scipy for full control:
+from scipy.optimize import minimize
+def chi2(params):
+    out = model.intensity(*params)
+    theory = np.interp(q_exp, out.q, out.total)
+    scale = np.sum(theory * i_exp / sigma**2) / np.sum((theory / sigma) ** 2)
+    return np.sum(((scale * theory - i_exp) / sigma) ** 2) / len(q_exp)
+result = minimize(chi2, x0=[1.0, 0.03],
+                  bounds=[(0.95, 1.12), (-2.0, 4.0)], method="L-BFGS-B")
+```
+
+`debye_model` (exact, for small structures) and `direct_model` (explicit
+discrete-q) accept the same solvent arguments and expose the same
+`intensity` / `fit` / `q_values` interface.
+
+A full working example is in `pripps-py/examples/fit_lysozyme.py`, which fits
+lysozyme against the shipped `tests/lysozyme/lyzexp.dat` and reproduces FoXS's
+χ²/N ≈ 0.20 (demonstrating both fitting styles):
 
 ```sh
 python pripps-py/examples/fit_lysozyme.py
 ```
 
-The core pattern:
+### Trajectory averaging
+
+To average I(q) over an MD trajectory, use the one-shot `Pripps.intensity`
+(the cached models are single-structure). The `model=` argument selects the
+calculator; trajectory averages carry no per-contribution breakdown:
 
 ```python
-import numpy as np
-from scipy.optimize import minimize
-
-# experimental data: q (Å⁻¹), I(q), σ(q)
-data = np.loadtxt("experimental.dat", comments="#")
-q_exp, i_exp, sigma = data[:, 0], data[:, 1], data[:, 2]
-
-def chi2(params):
-    c1, c2 = params
-    out = model.intensity(volume_scale=c1, contrast_density=c2)
-    theory = np.interp(q_exp, out["q"], out["total"])
-    scale = np.sum(theory * i_exp / sigma**2) / np.sum((theory / sigma) ** 2)
-    return np.sum(((scale * theory - i_exp) / sigma) ** 2) / len(q_exp)
-
-result = minimize(
-    chi2,
-    x0=[1.0, 0.2],
-    bounds=[(0.95, 1.12), (-2.0, 4.0)],
-    method="L-BFGS-B",
+avg = pr.intensity(
+    structure_file="protein.pdb",   # topology / template frame
+    model="multipole",              # or "debye" / "direct", or a pripps.Scheme
+    xtc="trajectory.xtc",
+    stride=10,                      # use every 10th frame
+    weights="weights.dat",          # optional per-frame weights
+    excluded="foxs",
+    hydration="sasa",
+    contrast_density=0.03,
 )
-print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
+print(avg.q, avg.total)
 ```
 
 ### Solvent models
@@ -114,9 +135,9 @@ print(f"c1={result.x[0]:.4f}, c2={result.x[1]:.4f}, χ²/N={result.fun:.4f}")
 |-----------|--------|-------------|
 | `excluded` | `"disabled"`, `"fraser"`, `"foxs"`, `"grid"`, `"voronoi"`, `"per-kind"` | Excluded-volume model |
 | `hydration` | `"disabled"`, `"sasa"`, `"grid"`, `"voronoi"` | Hydration-shell model |
-| `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`) |
+| `volume_scale` | float (default 1.0) | Scales excluded volume (PepsiSAXS `r₀`). In Python this is a fit knob passed to `model.intensity()` / `model.fit()`, not the model builder |
 | `excluded_spacing` | float (default 1.0) | Grid spacing (Å) for `excluded="grid"` |
-| `contrast_density` | float (default 0.03) | Fractional hydration-layer excess density (c₂ in `A − c₁·C + c₂·B`) — pepsi's `d_rho / ρ_water`, ~0.1 for a 10 % excess layer |
+| `contrast_density` | float (default 0.03) | Fractional hydration-layer excess density (c₂ in `A − c₁·C + c₂·B`) — pepsi's `d_rho / ρ_water`, ~0.1 for a 10 % excess layer. In Python a fit knob on `model.intensity()` / `model.fit()` |
 | `probe` | float (default: 1.8 for SASA/grid, 6.0 for voronoi) | Water probe radius in Å |
 | `spacing` | float (default 3.10516) | Grid spacing (Å) for `hydration="grid"`; the bulk-water linear spacing, so each cell holds ~1 water molecule |
 | `thickness` | float (default 3.0) | Shell thickness (Å) for `hydration="grid"` |

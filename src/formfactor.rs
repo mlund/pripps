@@ -41,14 +41,18 @@ struct FormFactorEntry {
 }
 
 impl FormFactorMap {
+    /// Number of atom-kind entries in the table.
     pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// `true` if the table contains no entries. Test-only helper.
+    #[cfg(test)]
     pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Iterate over `(atom kind, form factor)` pairs in atom-kind id order.
     pub fn iter(&self) -> impl Iterator<Item = (&AtomKind, &FormFactor)> {
         self.entries
             .iter()
@@ -60,10 +64,12 @@ impl FormFactorMap {
         &self.entries[id].kind
     }
 
+    /// Iterate over the atom kinds in id order.
     pub(crate) fn kinds(&self) -> impl Iterator<Item = &AtomKind> {
         self.entries.iter().map(|entry| &entry.kind)
     }
 
+    /// Iterate over the form factors in id order.
     pub(crate) fn form_factors(&self) -> impl Iterator<Item = &FormFactor> {
         self.entries.iter().map(|entry| &entry.formfactor)
     }
@@ -79,10 +85,15 @@ impl FormFactorMap {
             .map(|entry| &entry.formfactor)
     }
 
+    /// Excluded-solvent form factor for the kind at id `id`, if one was
+    /// defined. Panics on out-of-range id.
     pub(crate) fn excluded_solvent(&self, id: usize) -> Option<&FormFactor> {
         self.entries[id].excluded_solvent.as_ref()
     }
 
+    /// Build a table from `(kind, form factor)` pairs with no excluded-solvent
+    /// form factors. Test-only convenience over
+    /// [`from_entries_with_excluded`](Self::from_entries_with_excluded).
     #[cfg(test)]
     pub(crate) fn from_entries(entries: Vec<(AtomKind, FormFactor)>) -> Self {
         Self::from_entries_with_excluded(
@@ -93,6 +104,8 @@ impl FormFactorMap {
         )
     }
 
+    /// Build a table from `(kind, form factor, optional excluded-solvent
+    /// form factor)` triples, preserving their order as the atom-kind ids.
     pub(crate) fn from_entries_with_excluded(
         entries: Vec<(AtomKind, FormFactor, Option<FormFactor>)>,
     ) -> Self {
@@ -143,6 +156,9 @@ impl FormFactor {
         Self::SingleGaussian { a, b }
     }
 
+    /// Inclusive `(qmin, qmax)` range over which `F(q)` is valid. `Constant`
+    /// and `SingleGaussian` are valid for all `q ≥ 0`; `Table` uses the first
+    /// and last tabulated q.
     pub fn qrange(&self) -> (f64, f64) {
         use FormFactor::*;
         match self {
@@ -153,11 +169,6 @@ impl FormFactor {
         }
     }
 
-    pub fn in_qrange(&self, q: f64) -> bool {
-        let (lo, hi) = self.qrange();
-        q >= lo && q <= hi
-    }
-
     /// Tabulate `F(q)` at the given q values. Errors if any q is out of range.
     pub fn to_table(&self, qvalues: impl IntoIterator<Item = f64>) -> Result<Vec<(f64, f64)>> {
         qvalues
@@ -166,6 +177,8 @@ impl FormFactor {
             .try_collect()
     }
 
+    /// Evaluate `F(q)` at scattering vector `q`. Errors with
+    /// [`Error::QOutOfRange`] if `q` is outside the [`qrange`](Self::qrange).
     pub fn eval(&self, q: f64) -> Result<f64> {
         use FormFactor::*;
         let (lo, hi) = self.qrange();

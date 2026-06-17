@@ -18,8 +18,11 @@ use std::path::Path;
 /// Experimental SAXS data: q, I(q), σ(q).
 #[derive(Debug, Clone)]
 pub struct ExpData {
+    /// Scattering vector magnitudes q (Å⁻¹).
     pub q: Vec<f64>,
+    /// Measured scattering intensity I(q) at each q.
     pub intensity: Vec<f64>,
+    /// Experimental uncertainty σ(q) on each intensity (σ=1 if absent).
     pub sigma: Vec<f64>,
 }
 
@@ -90,6 +93,38 @@ impl ExpData {
             q.last().unwrap()
         );
 
+        Ok(Self {
+            q,
+            intensity,
+            sigma,
+        })
+    }
+
+    /// Build from in-memory arrays. `q` and `intensity` must be the
+    /// same non-zero length; `sigma` is either empty (→ σ=1, unweighted
+    /// χ²) or the same length as `q`.
+    pub fn from_arrays(q: Vec<f64>, intensity: Vec<f64>, sigma: Vec<f64>) -> Result<Self> {
+        if q.is_empty() {
+            return Err(crate::Error::validation("experimental data is empty"));
+        }
+        if intensity.len() != q.len() {
+            return Err(crate::Error::validation(format!(
+                "q ({}) and intensity ({}) length mismatch",
+                q.len(),
+                intensity.len()
+            )));
+        }
+        let sigma = if sigma.is_empty() {
+            vec![1.0; q.len()]
+        } else if sigma.len() == q.len() {
+            sigma
+        } else {
+            return Err(crate::Error::validation(format!(
+                "q ({}) and sigma ({}) length mismatch",
+                q.len(),
+                sigma.len()
+            )));
+        };
         Ok(Self {
             q,
             intensity,
@@ -202,9 +237,13 @@ pub fn chi2_per_point(theory: &Intensity, exp: &ExpData) -> f64 {
 /// Result of a fit against experimental data.
 #[derive(Debug, Clone)]
 pub struct FitResult {
+    /// Fitted excluded-volume scaling factor c₁.
     pub volume_scale: f64,
+    /// Fitted hydration-shell contrast density c₂.
     pub contrast_density: f64,
+    /// Minimised χ²/N at the fitted parameters.
     pub chi2: f64,
+    /// Optimal linear scale factor between theory and experiment.
     pub scale: f64,
 }
 

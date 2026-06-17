@@ -34,10 +34,23 @@ import urllib.request
 # Additional IDs listed in Fig. S1 of the supporting information are
 # not yet included here — add them once Table S2 is available.
 SASBDB_IDS = [
-    "SASDA92", "SASDAW3",            "SASDEM6", "SASDF86",
-    "SASDJF5", "SASDJG5", "SASDJQ4", "SASDJU5", "SASDKG4",
-    "SASDL82", "SASDMB5", "SASDME4", "SASDMZ9", "SASDP39",
-    "SASDT75", "SASDT85", "SASDT95",
+    "SASDA92",
+    "SASDAW3",
+    "SASDEM6",
+    "SASDF86",
+    "SASDJF5",
+    "SASDJG5",
+    "SASDJQ4",
+    "SASDJU5",
+    "SASDKG4",
+    "SASDL82",
+    "SASDMB5",
+    "SASDME4",
+    "SASDMZ9",
+    "SASDP39",
+    "SASDT75",
+    "SASDT85",
+    "SASDT95",
     # SASDEL9 is a dummy-residue envelope model, not atomistic —
     # excluded from the atomistic comparison.
     # SASDDD3 is a hard dataset where the deposited PDB disagrees
@@ -105,7 +118,9 @@ def strip_explicit_hydrogens(src, dst):
                 # Element column is 77-78 (1-indexed); atom name is 13-16.
                 element = line[76:78].strip() if len(line) >= 78 else ""
                 name = line[12:16].strip()
-                is_h = element == "H" or (not element and name.lstrip("0123456789").startswith("H"))
+                is_h = element == "H" or (
+                    not element and name.lstrip("0123456789").startswith("H")
+                )
                 if is_h:
                     continue
             fout.write(line)
@@ -151,8 +166,9 @@ def preprocess(sid, refetch=False):
         return None, None
     m = fits[0]["models"][0]
     if m.get("type_of_model") != "atomic":
-        print(f"{sid}: skipping, model type = {m.get('type_of_model')}",
-              file=sys.stderr)
+        print(
+            f"{sid}: skipping, model type = {m.get('type_of_model')}", file=sys.stderr
+        )
         return None, None
 
     raw_exp = d / "exp_raw.dat"
@@ -179,7 +195,8 @@ def preprocess(sid, refetch=False):
     fixed = d / "fixed.pdb"
     if not fixed.is_file() or refetch:
         cmd = [
-            "pdbfixer", str(cleaned),
+            "pdbfixer",
+            str(cleaned),
             "--add-atoms=heavy",
             "--add-residues",
             "--replace-nonstandard",
@@ -217,8 +234,7 @@ def parse_expdata_qmax(path):
     return qmax
 
 
-def run_pripps(exp, fixed, out_csv, log_path, pripps, atomfile,
-               excluded, hydration):
+def run_pripps(exp, fixed, out_csv, log_path, pripps, atomfile, excluded, hydration):
     """Invoke pripps with fit mode. Returns (returncode, stderr_text)."""
     qmax = parse_expdata_qmax(exp)
     # Cap at 6.0 Å⁻¹ — the atomic form-factor Gaussians in the
@@ -229,16 +245,23 @@ def run_pripps(exp, fixed, out_csv, log_path, pripps, atomfile,
     env["RUST_LOG"] = "info"
     cmd = [
         pripps,
-        "-a", str(atomfile),
-        "-i", str(fixed),
-        "-f", str(exp),
-        "-o", str(out_csv),
+        "-a",
+        str(atomfile),
+        "-i",
+        str(fixed),
+        "-f",
+        str(exp),
+        "-o",
+        str(out_csv),
         "multipole",
-        "--qmax", f"{qmax:.3f}",
+        "--qmax",
+        f"{qmax:.3f}",
         # Intentionally no --nq: pripps auto-selects at the
         # Shannon-Nyquist rate `2·L_max + 1` (floored at 21).
-        "--excluded", excluded,
-        "--hydration", hydration,
+        "--excluded",
+        excluded,
+        "--hydration",
+        hydration,
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     log_path.write_text(r.stderr)
@@ -249,6 +272,7 @@ def chi2_from_fit_csv(csv_path):
     """Compute reduced χ² from a pripps fit CSV (q, I_exp, I_fit, σ).
     Pripps already applies the analytical scale factor to I_fit."""
     import math
+
     n, total = 0, 0.0
     with open(csv_path) as f:
         for i, line in enumerate(f):
@@ -273,14 +297,22 @@ def run_pepsi(pepsi_bin, fixed, exp, out_dir):
     is benchmarked against. Returns χ² (pepsi's own `Chi^2` line) or
     NaN on failure. Cached per-entry as `pepsi_fit.log`."""
     import math
+
     log_path = out_dir / "pepsi_fit.log"
     out_path = out_dir / "pepsi_fit.out"
     if not log_path.is_file():
         # Pepsi writes output relative to its own cwd; run it in the entry dir.
         r = subprocess.run(
-            [str(pepsi_bin), str(fixed.resolve()), str(exp.resolve()),
-             "-o", str(out_path.resolve())],
-            cwd=str(out_dir), capture_output=True, text=True,
+            [
+                str(pepsi_bin),
+                str(fixed.resolve()),
+                str(exp.resolve()),
+                "-o",
+                str(out_path.resolve()),
+            ],
+            cwd=str(out_dir),
+            capture_output=True,
+            text=True,
         )
         log_path.write_text(r.stdout + "\n---STDERR---\n" + r.stderr)
         if r.returncode != 0:
@@ -300,27 +332,37 @@ def run_pepsi(pepsi_bin, fixed, exp, out_dir):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--only", nargs="*", help="subset of SASBDB IDs to run")
-    ap.add_argument("--refetch", action="store_true",
-                    help="ignore cache and re-download everything")
-    ap.add_argument("--excluded", default="foxs",
-                    choices=["disabled", "fraser", "foxs", "grid", "voronoi"])
-    ap.add_argument("--hydration", default="sasa",
-                    choices=["disabled", "sasa", "grid", "voronoi"])
     ap.add_argument(
-        "--atomfile", type=pathlib.Path, default=FF_YAML_DEFAULT,
+        "--refetch", action="store_true", help="ignore cache and re-download everything"
+    )
+    ap.add_argument(
+        "--excluded",
+        default="foxs",
+        choices=["disabled", "fraser", "foxs", "grid", "voronoi"],
+    )
+    ap.add_argument(
+        "--hydration", default="sasa", choices=["disabled", "sasa", "grid", "voronoi"]
+    )
+    ap.add_argument(
+        "--atomfile",
+        type=pathlib.Path,
+        default=FF_YAML_DEFAULT,
         help=f"form-factor YAML (default: {FF_YAML_DEFAULT.relative_to(REPO)})",
     )
     ap.add_argument(
-        "--label", default=None,
+        "--label",
+        default=None,
         help="tag baked into fit output filename (default: "
-             "'<atomfile-stem>_<excluded>_<hydration>')",
+        "'<atomfile-stem>_<excluded>_<hydration>')",
     )
     ap.add_argument(
-        "--with-pepsi", action="store_true",
+        "--with-pepsi",
+        action="store_true",
         help="also run Pepsi-SAXS on each entry for side-by-side comparison",
     )
     ap.add_argument(
-        "--pepsi", default=str(pathlib.Path("~/bin/Pepsi-SAXS").expanduser()),
+        "--pepsi",
+        default=str(pathlib.Path("~/bin/Pepsi-SAXS").expanduser()),
         help="path to Pepsi-SAXS binary (default: ~/bin/Pepsi-SAXS)",
     )
     args = ap.parse_args()
@@ -391,8 +433,16 @@ def main():
             chi2, npts = chi2_from_fit_csv(out_csv)
             status = "cached"
         else:
-            rc, stderr = run_pripps(exp, fixed, out_csv, log_path, pripps,
-                                    args.atomfile, args.excluded, args.hydration)
+            rc, stderr = run_pripps(
+                exp,
+                fixed,
+                out_csv,
+                log_path,
+                pripps,
+                args.atomfile,
+                args.excluded,
+                args.hydration,
+            )
             if rc != 0:
                 short = stderr.strip().splitlines()[-1] if stderr.strip() else "unknown"
                 row = f"{sid:<9} {n_atoms:>8} {'—':>6} {'—':>8}"
@@ -415,6 +465,7 @@ def main():
 
     if results:
         import math
+
         pripps_vals = sorted(r[3] for r in results if r[3] == r[3])
         pepsi_vals = sorted(r[4] for r in results if r[4] == r[4])
         med_p = pripps_vals[len(pripps_vals) // 2] if pripps_vals else math.nan
