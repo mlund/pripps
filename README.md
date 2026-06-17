@@ -82,7 +82,7 @@ q_exp, i_exp, sigma = np.loadtxt("experimental.dat", comments="#", unpack=True)
 fit = model.fit(q_exp, i_exp, sigma)
 print(fit.volume_scale, fit.contrast_density, fit.chi2, fit.scale)
 
-# (b) manual fit with scipy for full control over the objective:
+# (b) manual fit with scipy for full control:
 from scipy.optimize import minimize
 def chi2(params):
     out = model.intensity(*params)
