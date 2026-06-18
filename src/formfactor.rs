@@ -18,7 +18,13 @@ use crate::{AtomKind, Error, Result};
 use itertools::Itertools;
 use nalgebra::{DMatrix, DVector};
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::BTreeMap, fs::File, ops::Add, path::Path};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    fs::File,
+    ops::Add,
+    path::{Path, PathBuf},
+};
 
 /// A flat table pairing each [`AtomKind`] with its runtime [`FormFactor`],
 /// stored in atom-kind id order. Lookups by id are `O(1)` vector indexes.
@@ -401,11 +407,19 @@ fn interpolate(table: &[(f64, f64)], x: f64) -> f64 {
     y0 + (x - x0) * (y1 - y0) / (x1 - x0)
 }
 
-/// Read YAML file with form factors for different atom types (atomic or coarse grained)
-pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
+/// Parse a YAML form-factor file into its raw, still-symbolic spec map
+/// (keyed by species name). The symbolic variants (`!Alias`, `!United`,
+/// `!Linear`) are left unresolved so that [`read_formfactors_merged`] can
+/// combine maps from several files *before* resolution — letting an alias
+/// in one file reference a definition supplied by another.
+fn parse_specs(path: &Path) -> Result<BTreeMap<String, AtomSpec>> {
     let file = File::open(path).with_path(path)?;
-    let mut specs: BTreeMap<String, AtomSpec> = yaml_serde::from_reader(file)?;
+    Ok(yaml_serde::from_reader(file)?)
+}
 
+/// Resolve the symbolic specs in `specs` and flatten them into a runtime
+/// [`FormFactorMap`]. The inverse second half of [`parse_specs`].
+fn finalize_specs(mut specs: BTreeMap<String, AtomSpec>) -> Result<FormFactorMap> {
     resolve_symbolic_specs(&mut specs, SpecRole::FormFactor)?;
     resolve_symbolic_specs(&mut specs, SpecRole::ExcludedSolvent)?;
 
@@ -425,10 +439,57 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
         })
         .collect::<Result<_>>()?;
 
-    let formfactor = FormFactorMap::from_entries_with_excluded(entries);
+    Ok(FormFactorMap::from_entries_with_excluded(entries))
+}
+
+/// Read YAML file with form factors for different atom types (atomic or coarse grained)
+pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
+    let formfactor = finalize_specs(parse_specs(path)?)?;
     log::info!(
         "Read form-factor definitions from {} for {} species",
         path.display(),
+        formfactor.len(),
+    );
+    Ok(formfactor)
+}
+
+/// Read and merge several YAML form-factor files into one table.
+///
+/// Files are parsed in the given order and their species merged by name.
+/// When the same species appears in more than one file, the **later** file
+/// wins (last definition supplied), and a warning is logged naming the
+/// species and the file that overrode it. Merging happens before symbolic
+/// resolution, so an `!Alias` / `!United` / `!Linear` spec in one file may
+/// reference a definition contributed by an earlier file.
+pub fn read_formfactors_merged(paths: &[PathBuf]) -> Result<FormFactorMap> {
+    let [first, rest @ ..] = paths else {
+        return Err(Error::validation("no form-factor files supplied"));
+    };
+
+    let mut merged = parse_specs(first)?;
+    for path in rest {
+        for (name, spec) in parse_specs(path)? {
+            use std::collections::btree_map::Entry;
+            match merged.entry(name) {
+                Entry::Occupied(mut entry) => {
+                    log::warn!(
+                        "Duplicate species '{}' redefined by {}; using the latest definition",
+                        entry.key(),
+                        path.display(),
+                    );
+                    entry.insert(spec);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(spec);
+                }
+            }
+        }
+    }
+
+    let formfactor = finalize_specs(merged)?;
+    log::info!(
+        "Merged form-factor definitions from {} file(s) into {} species",
+        paths.len(),
         formfactor.len(),
     );
     Ok(formfactor)
@@ -749,6 +810,46 @@ ALA:
         let ff = read_formfactors(&path).unwrap();
         let excluded = ff.excluded_solvent(0).expect("excluded_solvent");
         assert_relative_eq!(excluded.eval(0.2).unwrap(), 3.5);
+    }
+
+    #[test]
+    fn read_formfactors_merged_latest_wins_and_cross_file_alias() {
+        // `base` defines C; `override_` redefines C (latest wins) and adds
+        // an alias that resolves against the base file's C — exercising the
+        // pre-resolution merge.
+        let base = r"
+C:
+  formfactor: !Constant 6.0
+N:
+  formfactor: !Constant 7.0
+";
+        let override_ = r"
+C:
+  formfactor: !Constant 60.0
+CA:
+  formfactor: !Alias N
+";
+        let dir = std::env::temp_dir();
+        let base_path = dir.join("pripps_merge_base.yaml");
+        let over_path = dir.join("pripps_merge_override.yaml");
+        std::fs::write(&base_path, base).unwrap();
+        std::fs::write(&over_path, override_).unwrap();
+
+        let ff = read_formfactors_merged(&[base_path, over_path]).unwrap();
+
+        // Union of species: C, N (from base) + CA (from override).
+        assert_eq!(ff.len(), 3);
+        let eval = |name: &str| {
+            ff.form_factor_by_name(name)
+                .unwrap_or_else(|| panic!("missing {name}"))
+                .eval(0.0)
+                .unwrap()
+        };
+        // Duplicate C: the later file's value wins.
+        assert_relative_eq!(eval("C"), 60.0);
+        assert_relative_eq!(eval("N"), 7.0);
+        // Alias in the override resolves against base's N.
+        assert_relative_eq!(eval("CA"), 7.0);
     }
 
     #[test]

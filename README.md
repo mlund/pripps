@@ -234,12 +234,33 @@ scaled by `volume_scale` — instead of building a Gaussian dummy from
 `radius`/`displaced_volume`. Every species present in the structure
 must define it when `--excluded per-kind` is selected.
 
+#### Merging multiple files
+
+Several form-factor files can be supplied and are merged in the order
+given — repeat `--atomfile` (or pass several paths) on the CLI, or pass a
+list to the Python constructor:
+
+```bash
+pripps --atomfile assets/gaussian_atoms.yaml --atomfile my_overrides.yaml ...
+```
+
+```python
+pr = pripps.Pripps(["assets/gaussian_atoms.yaml", "my_overrides.yaml"])
+```
+
+This lets you compose, e.g., a coarse-grained residue file with an atomic
+file. **Duplicate policy:** if the same species is defined in more than one
+file, the **last file listed wins** and a warning is logged naming the
+overridden species. Merging happens before symbolic resolution, so an
+`!Alias` / `!United` / `!Linear` entry in one file may reference a species
+defined in another.
+
 ### Shipped form-factor files
 
 | File | Description | Best for |
 |------|-------------|----------|
 | `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C) atomic form factors, FoXS-compatible volumes and SASA radii | Atomic PDBs with `--excluded foxs` |
-| `assets/gaussian_atoms.yaml` | Mixed table: residue single-bead polynomials plus atomic/united-atom Gaussians (CH/CH₂/NH/…) | Atomic PDBs with PepsiSAXS-style solvent models |
+| `assets/gaussian_atoms.yaml` | Atomic and united-atom Gaussians (CH/CH₂/NH/…), PepsiSAXS-style (K = 4π) | Atomic PDBs with PepsiSAXS-style solvent models |
 | `assets/stovgaard2010.yaml` | Per-residue form-factor centroids (one-body model, q ∈ [0, 0.75] Å⁻¹) from Stovgaard et al. 2010, <https://doi.org/10.1186/1471-2105-11-429> | Residue / Cα single-bead models |
 | `assets/poly_amino_acid.yaml` | Amino-acid bead polynomials with a separate `excluded_solvent` polynomial per bead | Cα / single-bead with `--excluded per-kind` |
 | `assets/poly_amino_acid_combined.yaml` | Amino-acid bead polynomials with the excluded solvent already folded into the form factor | Cα / single-bead with `--excluded disabled` |
@@ -334,6 +355,9 @@ pripps --help
 
 # Debye formula (exact, O(N²))
 pripps -a atoms.yaml -i structure.pdb debye
+
+# Merge several form-factor files (last listed wins on duplicate species)
+pripps -a base.yaml -a overrides.yaml -i structure.pdb debye
 
 # Multipole expansion (linear in atoms, truncation auto-selected)
 pripps -a atoms.yaml -i structure.pdb multipole

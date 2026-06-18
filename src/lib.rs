@@ -55,7 +55,9 @@ pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
 // Crate-internal: the form-factor table and atom-kind types are part of
 // no public signature, so they stay off the public API surface.
 pub(crate) use atomkind::{AtomKind, FindByName};
-pub(crate) use formfactor::{FormFactorMap, read_formfactors, write_formfactors};
+pub(crate) use formfactor::{
+    FormFactorMap, read_formfactors, read_formfactors_merged, write_formfactors,
+};
 
 /// Crate-internal short alias. Not re-exported; public signatures use
 /// `[f64; 3]` instead so the API doesn't leak `nalgebra` types.
@@ -198,10 +200,21 @@ pub struct TrajectoryOptions<'a> {
 }
 
 impl Pripps {
-    /// Construct from a YAML form-factor definition file.
+    /// Construct from a single YAML form-factor definition file.
     pub fn from_yaml(path: &Path) -> Result<Self> {
-        let formfactors = read_formfactors(path)?;
+        Self::from_formfactors(read_formfactors(path)?)
+    }
 
+    /// Construct from one or more YAML form-factor definition files,
+    /// merged in order. When a species is defined in more than one file
+    /// the later file wins and a warning is logged (see
+    /// [`read_formfactors_merged`]). Symbolic specs (`!Alias` / `!United`
+    /// / `!Linear`) may reference definitions from any of the files.
+    pub fn from_yaml_files(paths: &[std::path::PathBuf]) -> Result<Self> {
+        Self::from_formfactors(read_formfactors_merged(paths)?)
+    }
+
+    fn from_formfactors(formfactors: FormFactorMap) -> Result<Self> {
         if std::env::var("FF_TABLE").is_ok() {
             write_formfactors(&formfactors, Path::new("tabulated_formfactors.yaml"))?;
         }
@@ -897,7 +910,9 @@ mod tests {
     ///    rescales it back to a full average (not frame 0 × 1/N_frames).
     #[test]
     fn trajectory_stride_and_weights() {
-        let pripps = Pripps::from_yaml(Path::new("assets/gaussian_atoms.yaml")).unwrap();
+        // 4lzt.xyz is a residue-bead structure, so it needs the CG
+        // single-bead form factors from poly_amino_acid.yaml.
+        let pripps = Pripps::from_yaml(Path::new("assets/poly_amino_acid.yaml")).unwrap();
         let template = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         let xtc = std::env::temp_dir().join("pripps_stride_test.xtc");
         write_two_frame_xtc(&xtc);

@@ -259,7 +259,8 @@ impl PyFitResult {
 
 /// Scattering calculator loaded from a form-factor YAML file.
 ///
-/// Construct with `Pripps(atomfile)`, then either build a cached model
+/// Construct with `Pripps(atomfile)` — a single path or a list of paths
+/// merged in order (latest wins on duplicate species) — then either build a cached model
 /// (`multipole_model(...)` / `debye_model(...)` / `direct_model(...)`)
 /// for repeated/fitting use, or call `intensity(...)` for a one-shot
 /// calculation (the only path that averages over an XTC trajectory).
@@ -268,10 +269,24 @@ struct PyPripps(Pripps);
 
 #[pymethods]
 impl PyPripps {
-    /// Load a pripps instance from a form-factor YAML file.
+    /// Load a pripps instance from one or more form-factor YAML files.
+    ///
+    /// `atomfile` is either a single path (`Pripps("a.yaml")`) or a list
+    /// of paths (`Pripps(["base.yaml", "override.yaml"])`). Multiple files
+    /// are merged in order; when a species appears in more than one file
+    /// the last one listed wins (a warning is logged for each override).
     #[new]
-    fn new(atomfile: &str) -> PyResult<Self> {
-        Pripps::from_yaml(atomfile.as_ref())
+    fn new(atomfile: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let paths: Vec<PathBuf> = if let Ok(single) = atomfile.extract::<String>() {
+            vec![single.into()]
+        } else if let Ok(many) = atomfile.extract::<Vec<String>>() {
+            many.into_iter().map(PathBuf::from).collect()
+        } else {
+            return Err(PyTypeError::new_err(
+                "`atomfile` must be a str or a list of str",
+            ));
+        };
+        Pripps::from_yaml_files(&paths)
             .map(Self)
             .map_err(into_py_err)
     }

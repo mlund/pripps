@@ -216,9 +216,11 @@ pub struct Args {
     #[clap(subcommand)]
     pub command: Commands,
 
-    /// Form factor definitions for species (atoms, residues, etc.)
-    #[clap(long, short = 'a')]
-    pub atomfile: PathBuf,
+    /// Form factor definitions for species (atoms, residues, etc.).
+    /// Repeat the flag or pass several paths to merge multiple files;
+    /// on a duplicate species the last file listed wins.
+    #[clap(long = "atomfile", short = 'a', num_args = 1.., required = true)]
+    pub atomfiles: Vec<PathBuf>,
 
     /// Input structure (xyz, pdb, gro etc.)
     #[clap(short = 'i', long)]
@@ -266,7 +268,7 @@ pub fn do_main() -> Result<()> {
     }
     pretty_env_logger::init();
 
-    let pripps = Pripps::from_yaml(&args.atomfile)?;
+    let pripps = Pripps::from_yaml_files(&args.atomfiles)?;
     let (scheme, box_override, solvent) = command_to_scheme(args.command)?;
 
     if let Some(fit_path) = &args.fit {
