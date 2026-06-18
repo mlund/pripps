@@ -237,6 +237,8 @@ impl IntensityCalculator for GpuDirectTransform {
         })?;
 
         // |q| for every direction; a pure function of the (per-frame) box.
+        // Kept f64 to match the CPU form factors and q-grid; only the in-shader
+        // phase `q·r` is f32.
         let qmags: Vec<f64> = self
             .directions
             .iter()

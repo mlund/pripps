@@ -185,6 +185,11 @@ pub fn trajectory_average(
     let mut structure = structure.clone();
     let mut weight_sum = 0.0;
 
+    // Count frames we actually consume: `XtcIterator` stops early on a frame
+    // read error (its `next` swallows the error), so `num_frames` (the offset
+    // table length) can overstate what was processed. Time against the real
+    // count so ms/frame stays honest.
+    let mut processed = 0usize;
     let average_start = Instant::now();
     for (frame, weight) in reader {
         weight_sum += weight;
@@ -200,14 +205,15 @@ pub fn trajectory_average(
             *acc += weight * v;
         }
 
+        processed += 1;
         #[cfg(feature = "cli")]
         progress.inc(1);
     }
 
     let elapsed = average_start.elapsed().as_secs_f64();
     log::info!(
-        "Averaged {num_frames} frames in {elapsed:.2} s ({:.1} ms/frame)",
-        1e3 * elapsed / num_frames.max(1) as f64
+        "Averaged {processed} frames in {elapsed:.2} s ({:.1} ms/frame)",
+        1e3 * elapsed / processed.max(1) as f64
     );
 
     // Normalize the accumulated sum by the total weight to get the weighted average
