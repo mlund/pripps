@@ -775,7 +775,8 @@ mod tests {
         // produce a physically reasonable profile. Not as good as
         // the FoXS pipeline (different coefficients, different
         // denominator) but the shape should be plausible.
-        let pripps = Pripps::from_yaml(std::path::Path::new("assets/gaussian_atoms.yaml")).unwrap();
+        let pripps =
+            Pripps::from_yaml(std::path::Path::new("assets/poly_aas+gaussian_atoms.yaml")).unwrap();
         let pdb = std::path::PathBuf::from("tests/lysozyme/4lzt.pdb");
         let solvent = SolventConfig {
             excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
@@ -848,7 +849,7 @@ mod tests {
     ///    rescales it back to a full average (not frame 0 × 1/N_frames).
     #[test]
     fn trajectory_stride_and_weights() {
-        let pripps = Pripps::from_yaml(Path::new("assets/gaussian_atoms.yaml")).unwrap();
+        let pripps = Pripps::from_yaml(Path::new("assets/poly_amino_acid.yaml")).unwrap();
         let template = std::path::PathBuf::from("tests/lysozyme/4lzt.xyz");
         let xtc = std::env::temp_dir().join("pripps_stride_test.xtc");
         write_two_frame_xtc(&xtc);

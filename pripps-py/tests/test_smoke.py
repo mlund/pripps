@@ -132,7 +132,7 @@ class TestPepsiFit(unittest.TestCase):
     def setUpClass(cls):
         cls.exp = load_lyzexp()
         q_max = float(cls.exp[-1, 0])
-        pr = pripps.Pripps("../assets/gaussian_atoms.yaml")
+        pr = pripps.Pripps("../assets/poly_aas+gaussian_atoms.yaml")
         cls.model = pr.multipole_model(
             "../tests/lysozyme/4lzt.pdb",
             qmin=0.0,

@@ -239,7 +239,7 @@ must define it when `--excluded per-kind` is selected.
 | File | Description | Best for |
 |------|-------------|----------|
 | `assets/foxs_formfactors.yaml` | Cromer-Mann (Int. Tables Vol. C) atomic form factors, FoXS-compatible volumes and SASA radii | Atomic PDBs with `--excluded foxs` |
-| `assets/gaussian_atoms.yaml` | Mixed table: residue single-bead polynomials plus atomic/united-atom Gaussians (CH/CH₂/NH/…) | Atomic PDBs with PepsiSAXS-style solvent models |
+| `assets/poly_aas+gaussian_atoms.yaml` | Mixed table: residue single-bead polynomials plus atomic/united-atom Gaussians (CH/CH₂/NH/…) | Atomic PDBs with PepsiSAXS-style solvent models |
 | `assets/stovgaard2010.yaml` | Per-residue form-factor centroids (one-body model, q ∈ [0, 0.75] Å⁻¹) from Stovgaard et al. 2010, <https://doi.org/10.1186/1471-2105-11-429> | Residue / Cα single-bead models |
 | `assets/poly_amino_acid.yaml` | Amino-acid bead polynomials with a separate `excluded_solvent` polynomial per bead | Cα / single-bead with `--excluded per-kind` |
 | `assets/poly_amino_acid_combined.yaml` | Amino-acid bead polynomials with the excluded solvent already folded into the form factor | Cα / single-bead with `--excluded disabled` |
@@ -254,7 +254,7 @@ their respective tools.
 **Don't mix files with non-matching `--excluded` flags.** Each
 YAML + excluded-volume convention is a self-consistent bundle:
 `foxs_formfactors.yaml` was calibrated jointly with FoXS's
-`K = 16π` Gaussian, while `gaussian_atoms.yaml` was calibrated with
+`K = 16π` Gaussian, while `poly_aas+gaussian_atoms.yaml` was calibrated with
 PepsiSAXS's `K = 4π`. Swapping the denominator gives atomic and
 excluded contributions that were never fit together and yields
 subtly biased intensities.
