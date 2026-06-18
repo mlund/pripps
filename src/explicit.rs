@@ -280,7 +280,7 @@ fn eval_atom_form_factors(
 }
 
 /// Merge duplicate q-values by averaging, for 2-column data.
-fn average_duplicates(data: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+pub(crate) fn average_duplicates(data: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
     let round = |x: f64| x.mul(1e6).round() as i64;
     let average = |pair: &[(f64, f64)]| {
         let mean_y = pair.iter().map(|(_, y)| y).sum::<f64>() / pair.len() as f64;

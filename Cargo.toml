@@ -26,6 +26,11 @@ serde = { version = "1.0", features = ["derive"] }
 yaml_serde = "0.10"
 voronota-ltr = { git = "https://github.com/mlund/voronota-ltr" }
 
+# GPU (wgpu) Direct Fourier transform — see `gpu` feature below.
+wgpu = { version = "29", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+
 [dev-dependencies]
 approx = "0.5"
 criterion = "0.5"
@@ -34,6 +39,8 @@ tempfile = "3"
 [features]
 default = ["cli"]
 cli = ["dep:clap", "dep:pretty_env_logger", "dep:indicatif"]
+# GPU-accelerated Direct Fourier transform via wgpu/WGSL.
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 
 [[bin]]
 name = "pripps"

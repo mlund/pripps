@@ -25,6 +25,8 @@ mod error;
 mod explicit;
 mod fit;
 mod formfactor;
+#[cfg(feature = "gpu")]
+mod gpu;
 mod input;
 mod multipole;
 mod q_sampler;
@@ -111,6 +113,15 @@ pub enum IntensityScheme {
     /// frame when averaging over an XTC, or via the `box_sides` override
     /// parameter of [`Pripps::intensity`] for single-frame calls.
     Direct {
+        /// Maximum Miller-index multiple used to build q-vectors.
+        pmax: usize,
+    },
+    /// GPU (wgpu) Direct Fourier transform, vacuum path only. Identical
+    /// physics to [`Direct`](Self::Direct) but evaluated on the GPU in `f32`,
+    /// for fast trajectory averaging. Requires the `gpu` build feature; with
+    /// an active solvent or no available adapter it falls back to the CPU
+    /// [`Direct`](Self::Direct) path.
+    DirectGpu {
         /// Maximum Miller-index multiple used to build q-vectors.
         pmax: usize,
     },
@@ -331,6 +342,44 @@ impl Pripps {
                     pmax,
                     active_solvent.cloned(),
                 ))
+            }
+            IntensityScheme::DirectGpu { pmax } => {
+                #[cfg(feature = "gpu")]
+                {
+                    // The GPU path covers the vacuum case only; with an active
+                    // solvent or no usable adapter, fall back to the CPU Direct
+                    // transform so results stay correct.
+                    if active_solvent.is_some() {
+                        log::warn!(
+                            "solvent corrections are not supported on the GPU; using CPU direct transform"
+                        );
+                        Box::new(DirectTransform::new(
+                            self.formfactors.clone(),
+                            pmax,
+                            active_solvent.cloned(),
+                        ))
+                    } else {
+                        match gpu::GpuDirectTransform::new(self.formfactors.clone(), pmax) {
+                            Ok(calc) => {
+                                log::info!(
+                                    "Using GPU direct Fourier transform with p_max = {pmax}"
+                                );
+                                Box::new(calc) as Box<dyn IntensityCalculator>
+                            }
+                            Err(e) => {
+                                log::warn!("GPU unavailable ({e}); using CPU direct transform");
+                                Box::new(DirectTransform::new(self.formfactors.clone(), pmax, None))
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(feature = "gpu"))]
+                {
+                    let _ = pmax;
+                    return Err(Error::usage(
+                        "GPU direct transform requested but pripps was built without the `gpu` feature",
+                    ));
+                }
             }
             IntensityScheme::Multipole {
                 qmin,
