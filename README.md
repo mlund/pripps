@@ -318,6 +318,9 @@ Requires a [Rust toolchain](https://www.rust-lang.org/tools/install):
 
 ```sh
 cargo install --git https://github.com/mlund/pripps.git
+
+# …or with GPU acceleration for the `direct` scheme (see below)
+cargo install --git https://github.com/mlund/pripps.git --features gpu
 ```
 
 ### Usage
@@ -368,6 +371,14 @@ Output is CSV: `q,total` for vacuum, or
 With `--fit`, output is `q,i_exp,i_fit,sigma` at experimental
 q points. The experimental file is auto-detected as CSV or
 whitespace-separated (3 columns: q, I, σ).
+
+### GPU acceleration (`gpu` feature)
+
+Building with `--features gpu` runs the **`direct`** scheme on the GPU,
+which speeds up trajectory averaging substantially (measured ~15× over
+the CPU on an Apple M4). It applies to the vacuum transform; runs with a
+solvent model, or without a usable GPU, fall back to the CPU
+automatically. Pass `--cpu` to opt out.
 
 ### Environment variables
 
