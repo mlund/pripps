@@ -53,6 +53,11 @@ pub enum Commands {
         /// (the per-frame box from the XTC is used instead).
         #[clap(short = 'b', long = "box")]
         side_length: Option<f64>,
+        /// Force the CPU transform. When built with the `gpu` feature the
+        /// vacuum transform runs on the GPU by default; this opts back out.
+        /// (An active solvent model always uses the CPU.)
+        #[clap(long)]
+        cpu: bool,
         /// Solvent correction parameters (excluded volume and hydration)
         #[clap(flatten)]
         solvent: SolventArgs,
@@ -286,7 +291,9 @@ pub fn do_main() -> Result<()> {
                 let out = model.intensity(result.volume_scale, result.contrast_density);
                 crate::fit::write_fit_csv(&args.output, &exp, &out, result.scale)?;
             }
-            IntensityScheme::Direct { pmax } => {
+            // Fitting always uses the cached CPU DirectModel; the GPU path is
+            // for trajectory averaging, not the (c1, c2) optimisation loop.
+            IntensityScheme::Direct { pmax } | IntensityScheme::DirectGpu { pmax } => {
                 let box_sides = box_override.ok_or_else(|| {
                     crate::Error::usage("direct fitting requires box side lengths")
                 })?;
@@ -363,9 +370,16 @@ fn command_to_scheme(
         Commands::Direct {
             pmax,
             side_length,
+            cpu,
             solvent,
         } => Ok((
-            IntensityScheme::Direct { pmax },
+            // GPU is the default route when compiled in; `--cpu` forces the
+            // CPU path, and a build without the `gpu` feature is always CPU.
+            if cfg!(feature = "gpu") && !cpu {
+                IntensityScheme::DirectGpu { pmax }
+            } else {
+                IntensityScheme::Direct { pmax }
+            },
             side_length.map(|s| [s; 3]),
             solvent.to_config()?,
         )),

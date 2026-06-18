@@ -16,6 +16,7 @@ use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
 use std::iter::zip;
 use std::num::NonZeroUsize;
+use std::time::Instant;
 use std::{f64, path};
 
 #[cfg(feature = "cli")]
@@ -164,8 +165,17 @@ pub fn trajectory_average(
     structure: &Structure,
     xtc_opts: crate::TrajectoryOptions,
 ) -> Result<Intensity> {
+    // The offset scan walks every frame header in the file (see
+    // `XtcIterator::open`); for multi-gigabyte trajectories this is a
+    // noticeable up-front cost, so time it separately from the averaging.
+    let scan_start = Instant::now();
     let reader = XtcIterator::open(xtc_opts.xtcfile, xtc_opts.weights, xtc_opts.stride)?;
     let num_frames = reader.len();
+    log::info!(
+        "Scanned frame offsets in {:.2} s",
+        scan_start.elapsed().as_secs_f64()
+    );
+
     #[cfg(feature = "cli")]
     let progress = ProgressBar::new(num_frames as u64);
 
@@ -175,6 +185,12 @@ pub fn trajectory_average(
     let mut structure = structure.clone();
     let mut weight_sum = 0.0;
 
+    // Count frames we actually consume: `XtcIterator` stops early on a frame
+    // read error (its `next` swallows the error), so `num_frames` (the offset
+    // table length) can overstate what was processed. Time against the real
+    // count so ms/frame stays honest.
+    let mut processed = 0usize;
+    let average_start = Instant::now();
     for (frame, weight) in reader {
         weight_sum += weight;
         structure.set_positions(&frame)?;
@@ -189,9 +205,16 @@ pub fn trajectory_average(
             *acc += weight * v;
         }
 
+        processed += 1;
         #[cfg(feature = "cli")]
         progress.inc(1);
     }
+
+    let elapsed = average_start.elapsed().as_secs_f64();
+    log::info!(
+        "Averaged {processed} frames in {elapsed:.2} s ({:.1} ms/frame)",
+        1e3 * elapsed / processed.max(1) as f64
+    );
 
     // Normalize the accumulated sum by the total weight to get the weighted average
     for acc in &mut mean.total {
