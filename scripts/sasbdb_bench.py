@@ -62,7 +62,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 BENCH = REPO / "sasbdb_bench"
 CACHE = BENCH / "cache"
 FF_YAML_DEFAULT = REPO / "assets" / "foxs_formfactors.yaml"
-# Override via --atomfile if you want gaussian_atoms.yaml for the
+# Override via --atomfile if you want pepsi_atoms.yaml for the
 # PepsiSAXS-style K=4π convention.
 
 SASBDB_API = "https://www.sasbdb.org/rest-api/entry/summary/{}/"
