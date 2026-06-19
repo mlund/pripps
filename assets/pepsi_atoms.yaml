@@ -1,4 +1,11 @@
-# Atomic / united-atom form factors for PRIPPS (PepsiSAXS-style K = 4π).
+# Atomic / united-atom form factors for PRIPPS (PepsiSAXS-style, K = 4π).
+#
+# Atomic five-Gaussian scattering factors are the Waasmaier & Kirfel (1995)
+# parametrization, valid for sinθ/λ ∈ [0, 6] Å⁻¹:
+#   https://doi.org/10.1107/S0108767394013292
+# combined with PepsiSAXS united-atom groups (CH/CH₂/NH/…) and the K = 4π
+# solvent convention, Grudinin et al. (2017):
+#   https://doi.org/10.1107/S2059798317005745
 #
 # Atomic-resolution structures only. Residue single-bead form factors live
 # in assets/poly_amino_acid.yaml — pass several --atomfile paths to merge

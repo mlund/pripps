@@ -829,9 +829,9 @@ C:
 CA:
   formfactor: !Alias N
 ";
-        let dir = std::env::temp_dir();
-        let base_path = dir.join("pripps_merge_base.yaml");
-        let over_path = dir.join("pripps_merge_override.yaml");
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("base.yaml");
+        let over_path = dir.path().join("override.yaml");
         std::fs::write(&base_path, base).unwrap();
         std::fs::write(&over_path, override_).unwrap();
 
