@@ -256,10 +256,12 @@ defined in another.
 | `assets/poly_martini.yaml` | Martini-3 bead polynomials with a separate `excluded_solvent` polynomial per bead | Martini-3 CG with `--excluded per-kind` |
 | `assets/poly_martini_combined.yaml` | Martini-3 bead polynomials with the excluded solvent already folded into the form factor | Martini-3 CG with `--excluded disabled` |
 
-Gaussian files use b values in the standard s² = (q/4π)² convention
-(International Tables / Cromer-Mann). The atomic coefficients differ
-(Cromer-Mann vs Stovgaard-2010) and the volume/radius tables match
-their respective tools.
+Files using `!Gaussian` form factors (`foxs_formfactors.yaml`,
+`pepsi_atoms.yaml`) give b values in the standard s² = (q/4π)² convention
+(International Tables / Cromer-Mann), so published exponents can be used
+directly. Their atomic coefficients come from different parametrizations
+(Cromer-Mann for FoXS vs Waasmaier-Kirfel for Pepsi) and the volume/radius
+tables match their respective tools.
 
 **Don't mix files with non-matching `--excluded` flags.** Each
 YAML + excluded-volume convention is a self-consistent bundle:
