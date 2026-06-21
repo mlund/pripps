@@ -32,6 +32,7 @@ mod multipole;
 mod q_sampler;
 mod solvent;
 mod structure;
+mod structure_factor;
 mod trajectory;
 
 use std::{
@@ -82,6 +83,28 @@ pub struct Intensity {
     pub total: Vec<f64>,
     /// Per-contribution diagnostic columns; `None` for vacuum calculations.
     pub contributions: Option<Contributions>,
+    /// Effective structure factor S_eff(q) and decoupling parameter β(q),
+    /// present only when a monomer reference was supplied. `None` otherwise.
+    pub structure_factor: Option<StructureFactor>,
+}
+
+/// Single-particle decoupling parameter β(q) and the measured structure
+/// factor, parallel to [`Intensity::q`]. Populated when a reference whole-
+/// molecule structure is supplied (see [`Pripps::intensity`]); the main
+/// [`Intensity::total`] supplies the box `I(q)`.
+///
+/// The *true* centre–centre structure factor is `S(q) = 1 + (S_eff(q)−1)/β(q)`,
+/// but that inversion is ill-conditioned near β nodes (⟨F⟩ → 0), so pripps
+/// emits β and `S_eff` and leaves the (judgement-dependent) node masking and
+/// inversion to the caller.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructureFactor {
+    /// Number of reference molecules in the box, `N = box atoms / reference atoms`.
+    pub n_molecules: usize,
+    /// β(q), the decoupling parameter (1 for spheres, < 1 for anisotropic particles).
+    pub beta: Vec<f64>,
+    /// Effective structure factor `S_eff(q) = I(q)/(N·P(q))`.
+    pub effective_structure_factor: Vec<f64>,
 }
 
 /// Per-contribution intensity curves emitted by the three-contribution
@@ -325,6 +348,7 @@ impl Pripps {
         xtc_opts: Option<TrajectoryOptions>,
         box_sides: Option<[f64; 3]>,
         solvent: Option<&SolventConfig>,
+        monomer: Option<&path::Path>,
     ) -> Result<Intensity> {
         let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
@@ -337,6 +361,24 @@ impl Pripps {
         }
 
         let active_solvent = solvent.filter(|cfg| cfg.is_active());
+
+        // Resolve the monomer reference up front (vacuum-only + molecule count
+        // N). The box intensity must come from the explicit `direct` scheme —
+        // the only periodic-box method — so non-Direct schemes are rejected
+        // here before any work is done.
+        let monomer = monomer
+            .map(|ref_path| {
+                if !matches!(
+                    scheme,
+                    IntensityScheme::Direct { .. } | IntensityScheme::DirectGpu { .. }
+                ) {
+                    return Err(Error::usage(
+                        "--monomer requires the `direct` scheme (the periodic-box Fourier method)",
+                    ));
+                }
+                self.resolve_monomer(ref_path, structure.pos.len(), active_solvent)
+            })
+            .transpose()?;
 
         let calc: Box<dyn IntensityCalculator> = match scheme {
             IntensityScheme::Debye { qmin, qmax, nq } => {
@@ -414,11 +456,64 @@ impl Pripps {
             }
         };
 
-        if let Some(xtc_opts) = xtc_opts {
-            trajectory_average(calc.as_ref(), &structure, xtc_opts)
+        let mut result = if let Some(xtc_opts) = xtc_opts {
+            trajectory_average(calc.as_ref(), &structure, xtc_opts)?
         } else {
-            calc.calc_intensities(&structure)
+            calc.calc_intensities(&structure)?
+        };
+
+        // Derive β(q) and S_eff(q) from the monomer (Debye ⟨F⟩ and P) and the
+        // box intensity `total`.
+        if let Some((monomer, n)) = monomer {
+            let sq = structure_factor::from_monomer(
+                &monomer,
+                &self.formfactors,
+                &result.total,
+                &result.q,
+                n,
+            )?;
+            if let (Some(&first), Some(&last)) = (sq.beta.first(), sq.beta.last()) {
+                log::info!("Decoupling parameter β ∈ [{last:.4}, {first:.4}] over the q-grid");
+            }
+            result.structure_factor = Some(sq);
         }
+        Ok(result)
+    }
+
+    /// Load and validate a monomer reference structure, returning it
+    /// together with the molecule count `N = box atoms / reference atoms`.
+    ///
+    /// **Vacuum only:** the structure-factor extraction needs `I_box` and the
+    /// reference `P(q)` to share one particle definition, so an active solvent
+    /// model is rejected. The box atom count must be an integer multiple of the
+    /// reference's (whole copies of the reference molecule).
+    fn resolve_monomer(
+        &self,
+        reference_file: &path::Path,
+        box_atoms: usize,
+        active_solvent: Option<&SolventConfig>,
+    ) -> Result<(Structure, usize)> {
+        if active_solvent.is_some() {
+            return Err(Error::usage(
+                "--monomer supports vacuum runs only (no excluded-volume/hydration model)",
+            ));
+        }
+        let reference = Structure::from_file(reference_file, &self.atomkinds())?;
+        let ref_atoms = reference.pos.len();
+        if ref_atoms == 0 || !box_atoms.is_multiple_of(ref_atoms) {
+            return Err(Error::validation(format!(
+                "structure atom count ({box_atoms}) is not an integer multiple of the \
+                 reference atom count ({ref_atoms}); the box must hold whole copies of \
+                 the reference molecule"
+            )));
+        }
+        let n = box_atoms / ref_atoms;
+        log::info!(
+            "Computing decoupling parameter β(q) and structure factors from reference {} \
+             ({ref_atoms} atoms × N = {n} → {box_atoms} box atoms)",
+            reference_file.display(),
+        );
+        Ok((reference, n))
     }
 }
 
@@ -448,6 +543,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -477,6 +573,7 @@ mod tests {
                 None,
                 Some(box_sides),
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -513,6 +610,7 @@ mod tests {
                 None,
                 None,
                 Some(&scaled_solvent),
+                None,
             )
             .unwrap();
         let debye_model = pripps
@@ -531,6 +629,7 @@ mod tests {
                 None,
                 Some(direct_box),
                 Some(&scaled_solvent),
+                None,
             )
             .unwrap();
         let direct_model = pripps
@@ -553,6 +652,7 @@ mod tests {
                 None,
                 None,
                 Some(&scaled_solvent),
+                None,
             )
             .unwrap();
         let multipole_model = pripps
@@ -593,6 +693,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -710,6 +811,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -765,6 +867,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -801,6 +904,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -855,6 +959,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -940,6 +1045,7 @@ mod tests {
                     Some(opts),
                     None,
                     None,
+                    None,
                 )
                 .unwrap()
                 .total
@@ -978,6 +1084,94 @@ mod tests {
         assert!(
             close(&i_stride2, &i_f0),
             "stride=2 must select and renormalise to frame 0"
+        );
+    }
+
+    /// `--monomer` wiring: a single anisotropic dumbbell yields β ≈ 1 at low q,
+    /// decaying and ≤ 1; and the guards (non-`direct` scheme, active solvent,
+    /// non-integer box/monomer ratio) all error.
+    #[test]
+    fn monomer_wiring_and_guards() {
+        let dir = std::env::temp_dir();
+        let yaml = dir.join("pripps_monomer_ff.yaml");
+        std::fs::write(&yaml, "X: { formfactor: !Constant 1.0 }\n").unwrap();
+        // A single anisotropic dumbbell, used as both the box and the
+        // (single-molecule, N = 1) monomer reference.
+        let dumbbell = dir.join("pripps_monomer_dumbbell.xyz");
+        std::fs::write(&dumbbell, "2\nd\nX 0 0 -3\nX 0 0 3\n").unwrap();
+        let pripps = Pripps::from_yaml(&yaml).unwrap();
+
+        let curve = pripps
+            .intensity(
+                IntensityScheme::Direct { pmax: 60 },
+                &dumbbell,
+                None,
+                Some([200.0; 3]),
+                None,
+                Some(dumbbell.as_path()),
+            )
+            .unwrap();
+        let dec = curve.structure_factor.expect("structure factor present");
+
+        assert_eq!(dec.n_molecules, 1);
+        // β (from the exact Debye orientational averages) is ≈ 1 at the lowest
+        // q, never exceeds 1, and decays for the anisotropic dumbbell.
+        assert!(dec.beta[0] > 0.99, "β at low q = {}", dec.beta[0]);
+        assert!(dec.beta.iter().all(|&b| b <= 1.0 + 1e-9));
+        assert!(dec.beta.iter().any(|&b| b < 0.9));
+        // β and S_eff are emitted; S(q) inversion/masking is left to the caller.
+        assert_eq!(dec.effective_structure_factor.len(), dec.beta.len());
+
+        // Guard: the decoupling parameter requires the explicit `direct` scheme.
+        assert!(
+            pripps
+                .intensity(
+                    IntensityScheme::Debye {
+                        qmin: 0.0,
+                        qmax: 0.3,
+                        nq: 8,
+                    },
+                    &dumbbell,
+                    None,
+                    None,
+                    None,
+                    Some(dumbbell.as_path()),
+                )
+                .is_err()
+        );
+
+        // Guard: vacuum only — an active solvent model is rejected.
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        assert!(
+            pripps
+                .intensity(
+                    IntensityScheme::Direct { pmax: 2 },
+                    &dumbbell,
+                    None,
+                    Some([200.0; 3]),
+                    Some(&solvent),
+                    Some(dumbbell.as_path()),
+                )
+                .is_err()
+        );
+
+        // Guard: the box atom count must be a whole multiple of the reference.
+        let three = dir.join("pripps_monomer_three.xyz");
+        std::fs::write(&three, "3\nt\nX 0 0 0\nX 0 0 1\nX 0 0 2\n").unwrap();
+        assert!(
+            pripps
+                .intensity(
+                    IntensityScheme::Direct { pmax: 2 },
+                    &dumbbell,
+                    None,
+                    Some([200.0; 3]),
+                    None,
+                    Some(three.as_path()),
+                )
+                .is_err()
         );
     }
 }

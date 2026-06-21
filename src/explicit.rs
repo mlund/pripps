@@ -267,7 +267,7 @@ struct DirectTerms {
 }
 
 /// Evaluate form factors for each atom at a given q.
-fn eval_atom_form_factors(
+pub(crate) fn eval_atom_form_factors(
     q: f64,
     atom_ids: &[usize],
     formfactors: &FormFactorMap,
@@ -340,6 +340,7 @@ fn intensity_from_5col(table: Vec<(f64, f64, f64, f64, f64)>) -> Intensity {
             excluded,
             hydration,
         }),
+        ..Default::default()
     }
 }
 

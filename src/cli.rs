@@ -234,19 +234,25 @@ pub struct Args {
     #[clap(short = 'f', long)]
     fit: Option<PathBuf>,
 
+    /// Single whole-molecule reference. Adds effective structure
+    /// factor S_eff(q) and decoupling parameter β(q) columns (`direct` scheme,
+    /// vacuum; the input box must hold a whole number of copies).
+    #[clap(long)]
+    monomer: Option<PathBuf>,
+
     /// Optional .xtc trajectory file with structures to average over
     #[clap(short = 'x', long)]
     xtcfile: Option<PathBuf>,
 
-    /// Optional stride for XTC frames (default: 1, i.e. use all frames)
+    /// Optional stride for XTC frames (default: 1 = all frames)
     #[clap(short = 's', long, default_value = "1", requires = "xtcfile")]
     xtc_stride: std::num::NonZeroUsize,
 
-    /// Optional file with weights for each frame in XTC file (one weight per line)
+    /// Optional file with weights for each XTC frame (one weight per line)
     #[clap(short = 'w', long, requires = "xtcfile")]
     weights: Option<PathBuf>,
 
-    /// Verbose output. See more with e.g. RUST_LOG=Trace
+    /// Verbose output. See more with RUST_LOG=Trace
     #[clap(long, short = 'v', action)]
     pub verbose: bool,
 }
@@ -345,6 +351,7 @@ pub fn do_main() -> Result<()> {
             xtc_opts,
             box_override,
             solvent.as_ref(),
+            args.monomer.as_deref(),
         )?;
         write_csv(&args.output, &intensity)?;
     }
@@ -418,29 +425,35 @@ fn write_csv(path: &Path, curve: &Intensity) -> Result<()> {
     let mut out = BufWriter::new(file);
     log::info!("Writing {}", path.display());
 
-    match &curve.contributions {
-        None => {
-            writeln!(out, "q,total")?;
-            for (q, total) in curve.q.iter().zip(&curve.total) {
-                writeln!(out, "{q:.6},{total:.6}")?;
-            }
+    // Columns are assembled from optional blocks: the base `q,total`, the
+    // per-contribution diagnostics, and the decoupling parameter β and
+    // effective structure factor S_eff. Each block is emitted iff present.
+    let mut header = String::from("q,total");
+    if curve.contributions.is_some() {
+        header.push_str(",atoms,excluded,hydration");
+    }
+    if curve.structure_factor.is_some() {
+        header.push_str(",beta,s_eff");
+    }
+    writeln!(out, "{header}")?;
+
+    for i in 0..curve.q.len() {
+        write!(out, "{:.6},{:.6}", curve.q[i], curve.total[i])?;
+        if let Some(c) = &curve.contributions {
+            write!(
+                out,
+                ",{:.6},{:.6},{:.6}",
+                c.atoms[i], c.excluded[i], c.hydration[i]
+            )?;
         }
-        Some(c) => {
-            writeln!(out, "q,total,atoms,excluded,hydration")?;
-            for ((((q, total), atoms), excluded), hydration) in curve
-                .q
-                .iter()
-                .zip(&curve.total)
-                .zip(&c.atoms)
-                .zip(&c.excluded)
-                .zip(&c.hydration)
-            {
-                writeln!(
-                    out,
-                    "{q:.6},{total:.6},{atoms:.6},{excluded:.6},{hydration:.6}"
-                )?;
-            }
+        if let Some(d) = &curve.structure_factor {
+            write!(
+                out,
+                ",{:.6},{:.6}",
+                d.beta[i], d.effective_structure_factor[i]
+            )?;
         }
+        writeln!(out)?;
     }
     Ok(())
 }

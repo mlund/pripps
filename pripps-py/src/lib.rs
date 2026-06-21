@@ -3,7 +3,7 @@ use pyo3::exceptions::{PyIOError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ::pripps::{
     DebyeModel, DirectModel, ExcludedVolume, ExpData, FitResult, Hydration, Intensity,
@@ -142,6 +142,9 @@ struct PyIntensity {
     atoms: Option<Py<PyArray1<f64>>>,
     excluded: Option<Py<PyArray1<f64>>>,
     hydration: Option<Py<PyArray1<f64>>>,
+    beta: Option<Py<PyArray1<f64>>>,
+    s_eff: Option<Py<PyArray1<f64>>>,
+    n_molecules: Option<usize>,
     n_points: usize,
 }
 
@@ -157,12 +160,23 @@ impl PyIntensity {
             ),
             None => (None, None, None),
         };
+        let (beta, s_eff, n_molecules) = match inner.structure_factor {
+            Some(d) => (
+                Some(arr(d.beta)),
+                Some(arr(d.effective_structure_factor)),
+                Some(d.n_molecules),
+            ),
+            None => (None, None, None),
+        };
         Self {
             q: arr(inner.q),
             total: arr(inner.total),
             atoms,
             excluded,
             hydration,
+            beta,
+            s_eff,
+            n_molecules,
             n_points,
         }
     }
@@ -198,6 +212,25 @@ impl PyIntensity {
     #[getter]
     fn hydration(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
         self.hydration.as_ref().map(|a| a.clone_ref(py))
+    }
+
+    /// Decoupling parameter β(q), or `None` unless a `monomer` reference was given.
+    #[getter]
+    fn beta(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.beta.as_ref().map(|a| a.clone_ref(py))
+    }
+
+    /// Effective structure factor S_eff(q) = I/(N·P), or `None`. Recover the
+    /// true S(q) = 1 + (S_eff−1)/β yourself, masking β nodes as appropriate.
+    #[getter]
+    fn s_eff(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.s_eff.as_ref().map(|a| a.clone_ref(py))
+    }
+
+    /// Number of reference molecules N in the box, or `None`.
+    #[getter]
+    fn n_molecules(&self) -> Option<usize> {
+        self.n_molecules
     }
 
     fn __repr__(&self) -> String {
@@ -463,6 +496,7 @@ impl PyPripps {
         bulk_electron_density = 0.334,
         volume_scale = 1.0,
         contrast_density = 0.03,
+        monomer = None,
     ))]
     fn intensity(
         &self,
@@ -487,6 +521,7 @@ impl PyPripps {
         bulk_electron_density: f64,
         volume_scale: f64,
         contrast_density: f64,
+        monomer: Option<String>,
     ) -> PyResult<PyIntensity> {
         let scheme = match scheme_from(model.as_ref())? {
             PyScheme::Multipole => IntensityScheme::Multipole {
@@ -526,16 +561,18 @@ impl PyPripps {
             stride,
             weights: weights_path.as_deref(),
         });
-        self.0
+        let inner = self
+            .0
             .intensity(
                 scheme,
                 structure_file.as_ref(),
                 xtc_opts,
                 box_sides,
                 Some(&cfg),
+                monomer.as_deref().map(Path::new),
             )
-            .map(|inner| PyIntensity::new(py, inner))
-            .map_err(into_py_err)
+            .map_err(into_py_err)?;
+        Ok(PyIntensity::new(py, inner))
     }
 }
 

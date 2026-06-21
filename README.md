@@ -129,6 +129,40 @@ avg = pr.intensity(
 print(avg.q, avg.total)
 ```
 
+### Structure factor (`--monomer`)
+
+For a periodic box of `N` identical molecules (the `direct` scheme, optionally
+trajectory-averaged), pass a single whole-molecule **monomer** to also output the
+**effective structure factor** `S_eff(q) = I(q)/(N·P(q))` (where `P(q)` is the
+single-particle form factor) and the **decoupling parameter**
+
+```text
+β(q) = |⟨F(q)⟩_Ω|² / ⟨|F(q)|²⟩_Ω
+```
+
+the ratio of the orientationally averaged amplitude to the averaged intensity
+(β = 1 for spheres, < 1 for anisotropic particles). The box must contain a whole
+number of copies of the monomer (vacuum only).
+
+CLI — adds `beta` and `s_eff` columns to the intensity CSV:
+
+```sh
+pripps -a atoms.yaml -i box.xyz -x traj.xtc --monomer single.xyz direct -p 100
+```
+
+Python — `intensity(..., monomer="single.xyz")` exposes `.beta`,
+`.s_eff`, and `.n_molecules`.
+
+Recover the true centre–centre structure factor from the two columns:
+
+```text
+S(q) = 1 + (S_eff(q) − 1) / β(q)
+```
+
+This inversion blows up near β nodes (where β → 0 for anisotropic particles),
+so mask those points (e.g. drop `β` below a small threshold) when computing
+S(q) — pripps leaves that choice to you.
+
 ### Solvent models
 
 | Parameter | Values | Description |

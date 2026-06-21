@@ -163,6 +163,7 @@ impl DebyeModel {
                 excluded,
                 hydration,
             }),
+            ..Default::default()
         }
     }
 
@@ -209,8 +210,9 @@ fn intensity_at_q(
     Ok(self_intensity_at_q(positions, ff.as_slice(), q))
 }
 
-/// Self Debye sum: Σ_i f_i² + 2 Σ_{i<j} f_i f_j sinc(q r_ij).
-fn self_intensity_at_q(positions: &[Vector3], form_factors: &[f64], q: f64) -> f64 {
+/// Self Debye sum: Σ_i f_i² + 2 Σ_{i<j} f_i f_j sinc(q r_ij). Equals the
+/// orientationally averaged form factor ⟨|F(q)|²⟩_Ω of the scatterer set.
+pub(crate) fn self_intensity_at_q(positions: &[Vector3], form_factors: &[f64], q: f64) -> f64 {
     let n = form_factors.len();
     let diagonal: f64 = form_factors.iter().map(|f| f * f).sum();
     if n < 2 {
