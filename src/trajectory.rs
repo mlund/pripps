@@ -160,6 +160,10 @@ pub fn get_side_lengths(frame: &molly::Frame) -> Option<Vector3> {
 /// `set_positions` refreshes both coordinates and (if the frame carries
 /// one) the periodic box on every iteration. The frame loop is serial;
 /// each calculator parallelizes internally over q values / q vectors.
+///
+/// Curves are accumulated positionally against the q-grid of the first frame,
+/// so a **fixed box** (constant volume) is assumed: a fluctuating (NPT) box
+/// shifts the per-frame Direct q-grid and would misalign the average.
 pub fn trajectory_average(
     calc: &dyn IntensityCalculator,
     structure: &Structure,
@@ -199,10 +203,18 @@ pub fn trajectory_average(
         if mean.q.is_empty() {
             mean.q = curve.q.clone();
             mean.total = vec![0.0; curve.total.len()];
+            // Mirror `total` for the per-molecule self term, so S_eff is formed
+            // as a ratio of weighted averages after the loop.
+            mean.monomer_self = curve.monomer_self.as_ref().map(|s| vec![0.0; s.len()]);
         }
 
         for (acc, v) in zip(&mut mean.total, &curve.total) {
             *acc += weight * v;
+        }
+        if let (Some(acc), Some(v)) = (mean.monomer_self.as_mut(), &curve.monomer_self) {
+            for (a, x) in zip(acc, v) {
+                *a += weight * x;
+            }
         }
 
         processed += 1;
@@ -216,8 +228,13 @@ pub fn trajectory_average(
         1e3 * elapsed / processed.max(1) as f64
     );
 
-    // Normalize the accumulated sum by the total weight to get the weighted average
-    for acc in &mut mean.total {
+    // Normalize the accumulated sums by the total weight to get the weighted
+    // averages (`total` and the self term divided by the same weight).
+    for acc in mean
+        .total
+        .iter_mut()
+        .chain(mean.monomer_self.iter_mut().flatten())
+    {
         *acc /= weight_sum;
     }
 

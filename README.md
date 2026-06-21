@@ -129,6 +129,38 @@ avg = pr.intensity(
 print(avg.q, avg.total)
 ```
 
+### Structure factor (`--num-molecules`)
+
+For a periodic box of `N` identical molecules (the `direct` scheme, optionally
+XTC-averaged), pass `--num-molecules N` (CLI) or `num_molecules=N` (Python) to
+also output, per q-vector built from each molecule's amplitude
+`F_m(q) = Σ_{i∈m} f_i·e^{iq·r_i}`:
+
+```text
+S_eff(q) = |Σ_m F_m(q)|² / Σ_m |F_m(q)|²      apparent structure factor (exact)
+P(q)     = (1/N) · Σ_m |F_m(q)|²              single-molecule form factor
+```
+
+`S_eff` is the SAXS-measurable inter-particle structure factor `I(q)/(N·P)`; it
+needs no unwrapping (the box-commensurate q-vectors are PBC-invariant). `P(q)` is
+the **at-concentration** form factor — for a flexible molecule it shifts with
+crowding, unlike the dilute `P` an experiment divides by, so comparing the two
+reveals the conformational change.
+
+```sh
+pripps -a atoms.yaml -i box.xyz -x traj.xtc --num-molecules 100 direct -p 100
+```
+
+```python
+out = pr.intensity("box.xyz", model="direct", box_sides=200.0, num_molecules=100)
+print(out.s_eff, out.p)
+```
+
+The box atom count must be a multiple of `N` (contiguous equal-size molecules),
+and the run must be vacuum. The per-molecule self term is computed on the CPU
+even with the `gpu` feature (the GPU kernel emits only the total `|Σf|²`), and
+XTC averaging assumes a fixed box (constant volume).
+
 ### Solvent models
 
 | Parameter | Values | Description |

@@ -22,7 +22,6 @@ use crate::{
 use itertools::Itertools;
 use num_complex::Complex;
 use rayon::prelude::*;
-use std::ops::Mul;
 use std::{cmp::Ordering, f64::consts::PI};
 
 /// Reciprocal-space sampling directions (h, k, l).
@@ -74,6 +73,10 @@ pub(crate) struct DirectTransform {
     formfactors: FormFactorMap,
     /// Optional solvent correction
     solvent: Option<SolventConfig>,
+    /// When set, the box is split into this many contiguous, equal-size
+    /// molecules so the per-molecule self term `Σ_m|F_m|²` is accumulated
+    /// alongside `I_box = |Σ_m F_m|²` (see [`Intensity::monomer_self`]).
+    num_molecules: Option<usize>,
 }
 
 /// Complex amplitude A(q) = Σ f_i · exp(i·q·r_i) for a set of
@@ -127,25 +130,52 @@ impl DirectTransform {
             formfactors,
             directions,
             solvent,
+            num_molecules: None,
         }
     }
 
+    /// Split the box into `n` contiguous equal-size molecules so each
+    /// calculation also emits the self term `Σ_m|F_m|²` in
+    /// [`Intensity::monomer_self`] (for the effective structure factor).
+    pub(crate) fn with_num_molecules(mut self, n: usize) -> Self {
+        self.num_molecules = Some(n);
+        self
+    }
+
     fn vacuum_intensities(&self, structure: &Structure, box_sides: &Vector3) -> Result<Intensity> {
-        let table = self
+        // Split the box into `n` contiguous molecules of `m` atoms (n = 1, the
+        // whole box, when `--num-molecules` is not requested). Per q-vector,
+        // accumulate the box amplitude `a = Σ_m F_m` (→ I_box = |a|²) and the
+        // self term `Σ_m |F_m|²`. Both use the box-commensurate q-vectors, so
+        // they are PBC-invariant — no unwrapping needed.
+        let n = self.num_molecules.unwrap_or(1);
+        let m = (structure.pos.len() / n).max(1);
+        let rows: Vec<(f64, [f64; 2])> = self
             .directions
             .par_iter()
             .map(|dir| dir.component_div(box_sides))
             .map(|q| {
                 let ff = eval_atom_form_factors(q.norm(), &structure.ids, &self.formfactors)?;
-                let intensity = complex_amplitude(&q, &structure.pos, &ff).norm_sqr();
-                Ok((q.norm(), intensity))
+                let mut a = Complex::new(0.0, 0.0);
+                let mut self_term = 0.0;
+                for (pos, ff) in structure.pos.chunks(m).zip(ff.chunks(m)) {
+                    let f_m = complex_amplitude(&q, pos, ff);
+                    a += f_m;
+                    self_term += f_m.norm_sqr();
+                }
+                Ok((q.norm(), [a.norm_sqr(), self_term]))
             })
-            .collect::<Result<Vec<(f64, f64)>>>()?;
+            .collect::<Result<Vec<_>>>()?;
+        let grouped = average_by_qnorm(rows);
 
-        let (q, total): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
         Ok(Intensity {
-            q,
-            total,
+            q: grouped.iter().map(|g| g.0).collect(),
+            total: grouped.iter().map(|g| g.1[0]).collect(),
+            // The self term is only meaningful (and only output) when the box
+            // was split into molecules; for the whole box it equals `total`.
+            monomer_self: self
+                .num_molecules
+                .map(|_| grouped.iter().map(|g| g.1[1]).collect()),
             ..Default::default()
         })
     }
@@ -279,9 +309,38 @@ fn eval_atom_form_factors(
     Ok(atom_ids.iter().map(|&id| per_kind[id]).collect())
 }
 
+/// Bin a q-magnitude for grouping duplicate q-values (q-vectors of the same
+/// length along different Miller directions). The single rounding tolerance
+/// used by every `average_*` helper here.
+fn q_bin(q: f64) -> i64 {
+    (q * 1e6).round() as i64
+}
+
+/// Merge duplicate q-values by averaging a fixed-width row of accumulated
+/// columns, sorted by q. Used for the per-molecule (I_box, self) pair.
+fn average_by_qnorm<const C: usize>(rows: Vec<(f64, [f64; C])>) -> Vec<(f64, [f64; C])> {
+    let mut out: Vec<(f64, [f64; C])> = rows
+        .into_iter()
+        .into_group_map_by(|(qn, _)| q_bin(*qn))
+        .into_values()
+        .map(|group| {
+            let len = group.len() as f64;
+            let mut acc = [0.0; C];
+            for (_, v) in &group {
+                for (a, &x) in acc.iter_mut().zip(v) {
+                    *a += x;
+                }
+            }
+            acc.iter_mut().for_each(|a| *a /= len);
+            (group[0].0, acc)
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    out
+}
+
 /// Merge duplicate q-values by averaging, for 2-column data.
 pub(crate) fn average_duplicates(data: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
-    let round = |x: f64| x.mul(1e6).round() as i64;
     let average = |pair: &[(f64, f64)]| {
         let mean_y = pair.iter().map(|(_, y)| y).sum::<f64>() / pair.len() as f64;
         (pair.first().unwrap().0, mean_y)
@@ -289,7 +348,7 @@ pub(crate) fn average_duplicates(data: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 
     let mut table: Vec<_> = data
         .into_iter()
-        .into_group_map_by(|(x, _)| round(*x))
+        .into_group_map_by(|(x, _)| q_bin(*x))
         .values()
         .map(|pair| average(pair))
         .collect();
@@ -299,9 +358,8 @@ pub(crate) fn average_duplicates(data: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 
 /// Merge duplicate q-values by averaging, for 5-column data.
 fn average_duplicates_5col(data: Vec<(f64, f64, f64, f64, f64)>) -> Vec<(f64, f64, f64, f64, f64)> {
-    let round = |x: f64| x.mul(1e6).round() as i64;
     data.into_iter()
-        .into_group_map_by(|(q, _, _, _, _)| round(*q))
+        .into_group_map_by(|(q, _, _, _, _)| q_bin(*q))
         .into_values()
         .map(|group| {
             let n = group.len() as f64;
@@ -340,6 +398,7 @@ fn intensity_from_5col(table: Vec<(f64, f64, f64, f64, f64)>) -> Intensity {
             excluded,
             hydration,
         }),
+        ..Default::default()
     }
 }
 
