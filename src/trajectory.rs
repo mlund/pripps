@@ -205,13 +205,13 @@ pub fn trajectory_average(
             mean.total = vec![0.0; curve.total.len()];
             // Mirror `total` for the per-molecule self term, so S_eff is formed
             // as a ratio of weighted averages after the loop.
-            mean.monomer_self = curve.monomer_self.as_ref().map(|s| vec![0.0; s.len()]);
+            mean.self_term = curve.self_term.as_ref().map(|s| vec![0.0; s.len()]);
         }
 
         for (acc, v) in zip(&mut mean.total, &curve.total) {
             *acc += weight * v;
         }
-        if let (Some(acc), Some(v)) = (mean.monomer_self.as_mut(), &curve.monomer_self) {
+        if let (Some(acc), Some(v)) = (mean.self_term.as_mut(), &curve.self_term) {
             for (a, x) in zip(acc, v) {
                 *a += weight * x;
             }
@@ -233,7 +233,7 @@ pub fn trajectory_average(
     for acc in mean
         .total
         .iter_mut()
-        .chain(mean.monomer_self.iter_mut().flatten())
+        .chain(mean.self_term.iter_mut().flatten())
     {
         *acc /= weight_sum;
     }

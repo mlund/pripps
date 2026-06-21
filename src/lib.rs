@@ -93,7 +93,7 @@ pub struct Intensity {
     /// Raw self term `Σ_m |F_m(q)|² = N·P(q)` from the per-molecule partial sums;
     /// the trajectory-averaging carrier from which `form_factor` /
     /// `effective_structure_factor` are derived. Not part of the public output.
-    pub(crate) monomer_self: Option<Vec<f64>>,
+    pub(crate) self_term: Option<Vec<f64>>,
 }
 
 /// Per-contribution intensity curves emitted by the three-contribution
@@ -419,21 +419,11 @@ impl Pripps {
             IntensityScheme::DirectGpu { pmax } => {
                 #[cfg(feature = "gpu")]
                 {
-                    // The structure-factor self term needs per-molecule partial
-                    // sums, which only the CPU transform computes.
-                    if let Some(n) = num_molecules {
-                        log::warn!(
-                            "--num-molecules is computed on the CPU direct transform (the GPU emits only |Σf|²)"
-                        );
-                        Box::new(
-                            DirectTransform::new(self.formfactors.clone(), pmax, None)
-                                .with_num_molecules(n),
-                        )
-                    }
                     // The GPU path covers the vacuum case only; with an active
-                    // solvent or no usable adapter, fall back to the CPU Direct
-                    // transform so results stay correct.
-                    else if active_solvent.is_some() {
+                    // solvent fall back to the CPU Direct transform so results
+                    // stay correct. (`--num-molecules` is vacuum-only, guarded
+                    // above, so it never collides with this branch.)
+                    if active_solvent.is_some() {
                         log::warn!(
                             "solvent corrections are not supported on the GPU; using CPU direct transform"
                         );
@@ -443,16 +433,30 @@ impl Pripps {
                             active_solvent.cloned(),
                         ))
                     } else {
+                        // The kernel emits the per-molecule self term too, so
+                        // `--num-molecules` runs on the GPU; fall back to the CPU
+                        // transform (also carrying the molecule count) if no
+                        // adapter is available.
                         match gpu::GpuDirectTransform::new(self.formfactors.clone(), pmax) {
                             Ok(calc) => {
                                 log::info!(
                                     "Using GPU direct Fourier transform with p_max = {pmax}"
                                 );
+                                let calc = match num_molecules {
+                                    Some(n) => calc.with_num_molecules(n),
+                                    None => calc,
+                                };
                                 Box::new(calc) as Box<dyn IntensityCalculator>
                             }
                             Err(e) => {
                                 log::warn!("GPU unavailable ({e}); using CPU direct transform");
-                                Box::new(DirectTransform::new(self.formfactors.clone(), pmax, None))
+                                let transform =
+                                    DirectTransform::new(self.formfactors.clone(), pmax, None);
+                                let transform = match num_molecules {
+                                    Some(n) => transform.with_num_molecules(n),
+                                    None => transform,
+                                };
+                                Box::new(transform)
                             }
                         }
                     }
@@ -494,7 +498,7 @@ impl Pripps {
         // Derive the effective structure factor from the per-molecule self term
         // (`Σ_m|F_m|² = N·P`): S_eff = I_box/(N·P) = total/self; P = self/N. The
         // self term is the box self-scattering, so this is exact (no approximation).
-        if let (Some(n), Some(self_term)) = (num_molecules, result.monomer_self.take()) {
+        if let (Some(n), Some(self_term)) = (num_molecules, result.self_term.take()) {
             let n_f = n as f64;
             result.form_factor = Some(self_term.iter().map(|&s| s / n_f).collect());
             result.effective_structure_factor = Some(
@@ -1179,5 +1183,89 @@ mod tests {
             None,
             2
         ));
+    }
+
+    /// `--num-molecules` over a trajectory must form S_eff as the ratio of the
+    /// frame-averaged box intensity to the frame-averaged self term (ratio of
+    /// averages), not the average of per-frame S_eff. Two distinct frames make
+    /// the two interpretations differ, so this pins the averaging order.
+    #[test]
+    fn num_molecules_trajectory_is_ratio_of_averages() {
+        use approx::assert_relative_eq;
+        let dir = std::env::temp_dir();
+        let yaml = dir.join("pripps_nmol_traj_ff.yaml");
+        std::fs::write(&yaml, "X: { formfactor: !Constant 1.0 }\n").unwrap();
+        // 4 atoms = two 2-atom molecules; the template coords are overwritten
+        // per frame, only the atom kinds matter.
+        let template = dir.join("pripps_nmol_traj.xyz");
+        std::fs::write(&template, "4\nt\nX 0 0 0\nX 0 0 1\nX 0 0 2\nX 0 0 3\n").unwrap();
+        let pripps = Pripps::from_yaml(&yaml).unwrap();
+
+        // Two distinct frames (coords in Å, converted to nm for the XTC); the
+        // 100 Å box is constant so the per-frame q-grids align.
+        let frames_a: [[[f32; 3]; 4]; 2] = [
+            [[0., 0., 0.], [0., 0., 4.], [30., 0., 0.], [30., 0., 4.]],
+            [[0., 0., 0.], [0., 0., 5.], [60., 0., 0.], [60., 0., 5.]],
+        ];
+        let make_frame = |coords: &[[f32; 3]; 4], step: u32| {
+            let mut positions = Vec::with_capacity(12);
+            for c in coords {
+                positions.extend_from_slice(&[c[0] / 10.0, c[1] / 10.0, c[2] / 10.0]);
+            }
+            let mut boxvec = [0.0f32; 9];
+            (boxvec[0], boxvec[4], boxvec[8]) = (10.0, 10.0, 10.0);
+            molly::Frame {
+                step,
+                time: step as f32,
+                boxvec,
+                precision: 1000.0,
+                positions,
+            }
+        };
+        let frame0 = make_frame(&frames_a[0], 0);
+        let frame1 = make_frame(&frames_a[1], 1);
+
+        // Per-frame reference: the raw total and self term from the static path.
+        let calc = DirectTransform::new(pripps.formfactors.clone(), 8, None).with_num_molecules(2);
+        let per_frame = |frame: &molly::Frame| {
+            let mut s = Structure::from_file(&template, &pripps.atomkinds()).unwrap();
+            s.set_positions(frame).unwrap();
+            calc.calc_intensities(&s).unwrap()
+        };
+        let f0 = per_frame(&frame0);
+        let f1 = per_frame(&frame1);
+        let (self0, self1) = (f0.self_term.unwrap(), f1.self_term.unwrap());
+
+        // The full trajectory path through Pripps::intensity.
+        let xtc = dir.join("pripps_nmol_traj.xtc");
+        let mut writer = molly::XTCWriter::create(&xtc).unwrap();
+        writer.write_frame(&frame0).unwrap();
+        writer.write_frame(&frame1).unwrap();
+        drop(writer);
+        let opts = TrajectoryOptions {
+            xtcfile: &xtc,
+            stride: NonZeroUsize::new(1).unwrap(),
+            weights: None,
+        };
+        let traj = pripps
+            .intensity(
+                IntensityScheme::Direct { pmax: 8 },
+                &template,
+                Some(opts),
+                None,
+                None,
+                Some(2),
+            )
+            .unwrap();
+        let s_eff = traj.effective_structure_factor.unwrap();
+        let p = traj.form_factor.unwrap();
+
+        assert_eq!(traj.q, f0.q, "static and trajectory q-grids must align");
+        for i in 0..traj.q.len() {
+            let total_avg = 0.5 * (f0.total[i] + f1.total[i]);
+            let self_avg = 0.5 * (self0[i] + self1[i]);
+            assert_relative_eq!(s_eff[i], total_avg / self_avg, epsilon = 1e-9);
+            assert_relative_eq!(p[i], self_avg / 2.0, epsilon = 1e-9);
+        }
     }
 }

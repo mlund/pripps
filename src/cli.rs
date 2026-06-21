@@ -423,8 +423,8 @@ fn write_csv(path: &Path, curve: &Intensity) -> Result<()> {
     let mut out = BufWriter::new(file);
     log::info!("Writing {}", path.display());
 
-    // Columns are assembled from optional blocks: the base `q,total`, the
-    // per-contribution diagnostics, and the structure-factor pair (`p,s_eff`).
+    // Header and rows gate the same optional blocks (contributions, then the
+    // `p,s_eff` structure-factor pair) so their column sets can't diverge.
     let mut header = String::from("q,total");
     if curve.contributions.is_some() {
         header.push_str(",atoms,excluded,hydration");

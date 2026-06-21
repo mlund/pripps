@@ -75,7 +75,7 @@ pub(crate) struct DirectTransform {
     solvent: Option<SolventConfig>,
     /// When set, the box is split into this many contiguous, equal-size
     /// molecules so the per-molecule self term `Σ_m|F_m|²` is accumulated
-    /// alongside `I_box = |Σ_m F_m|²` (see [`Intensity::monomer_self`]).
+    /// alongside `I_box = |Σ_m F_m|²` (see [`Intensity::self_term`]).
     num_molecules: Option<usize>,
 }
 
@@ -136,18 +136,17 @@ impl DirectTransform {
 
     /// Split the box into `n` contiguous equal-size molecules so each
     /// calculation also emits the self term `Σ_m|F_m|²` in
-    /// [`Intensity::monomer_self`] (for the effective structure factor).
+    /// [`Intensity::self_term`] (for the effective structure factor).
     pub(crate) fn with_num_molecules(mut self, n: usize) -> Self {
         self.num_molecules = Some(n);
         self
     }
 
     fn vacuum_intensities(&self, structure: &Structure, box_sides: &Vector3) -> Result<Intensity> {
-        // Split the box into `n` contiguous molecules of `m` atoms (n = 1, the
-        // whole box, when `--num-molecules` is not requested). Per q-vector,
-        // accumulate the box amplitude `a = Σ_m F_m` (→ I_box = |a|²) and the
-        // self term `Σ_m |F_m|²`. Both use the box-commensurate q-vectors, so
-        // they are PBC-invariant — no unwrapping needed.
+        // One path for both modes: `n = 1` is the whole box, so the per-molecule
+        // sum collapses to the plain box amplitude and the extra self term is
+        // dropped below. Commensurate q-vectors make `|Σ_m F_m|²` and `Σ_m|F_m|²`
+        // PBC-invariant, so the molecule positions never need unwrapping.
         let n = self.num_molecules.unwrap_or(1);
         let m = (structure.pos.len() / n).max(1);
         let rows: Vec<(f64, [f64; 2])> = self
@@ -173,7 +172,7 @@ impl DirectTransform {
             total: grouped.iter().map(|g| g.1[0]).collect(),
             // The self term is only meaningful (and only output) when the box
             // was split into molecules; for the whole box it equals `total`.
-            monomer_self: self
+            self_term: self
                 .num_molecules
                 .map(|_| grouped.iter().map(|g| g.1[1]).collect()),
             ..Default::default()
@@ -317,8 +316,9 @@ fn q_bin(q: f64) -> i64 {
 }
 
 /// Merge duplicate q-values by averaging a fixed-width row of accumulated
-/// columns, sorted by q. Used for the per-molecule (I_box, self) pair.
-fn average_by_qnorm<const C: usize>(rows: Vec<(f64, [f64; C])>) -> Vec<(f64, [f64; C])> {
+/// columns, sorted by q. Used for the per-molecule (I_box, self) pair on both
+/// the CPU and GPU direct paths.
+pub(crate) fn average_by_qnorm<const C: usize>(rows: Vec<(f64, [f64; C])>) -> Vec<(f64, [f64; C])> {
     let mut out: Vec<(f64, [f64; C])> = rows
         .into_iter()
         .into_group_map_by(|(qn, _)| q_bin(*qn))
@@ -339,50 +339,30 @@ fn average_by_qnorm<const C: usize>(rows: Vec<(f64, [f64; C])>) -> Vec<(f64, [f6
     out
 }
 
-/// Merge duplicate q-values by averaging, for 2-column data.
+/// Merge duplicate q-values by averaging, for 2-column data. Thin wrapper over
+/// [`average_by_qnorm`] so the grouping/binning/sort lives in one place.
 pub(crate) fn average_duplicates(data: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
-    let average = |pair: &[(f64, f64)]| {
-        let mean_y = pair.iter().map(|(_, y)| y).sum::<f64>() / pair.len() as f64;
-        (pair.first().unwrap().0, mean_y)
-    };
-
-    let mut table: Vec<_> = data
+    average_by_qnorm(data.into_iter().map(|(q, y)| (q, [y])).collect())
         .into_iter()
-        .into_group_map_by(|(x, _)| q_bin(*x))
-        .values()
-        .map(|pair| average(pair))
-        .collect();
-    table.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-    table
-}
-
-/// Merge duplicate q-values by averaging, for 5-column data.
-fn average_duplicates_5col(data: Vec<(f64, f64, f64, f64, f64)>) -> Vec<(f64, f64, f64, f64, f64)> {
-    data.into_iter()
-        .into_group_map_by(|(q, _, _, _, _)| q_bin(*q))
-        .into_values()
-        .map(|group| {
-            let n = group.len() as f64;
-            let q = group[0].0;
-            let t = group.iter().map(|g| g.1).sum::<f64>() / n;
-            let a = group.iter().map(|g| g.2).sum::<f64>() / n;
-            let e = group.iter().map(|g| g.3).sum::<f64>() / n;
-            let h = group.iter().map(|g| g.4).sum::<f64>() / n;
-            (q, t, a, e, h)
-        })
+        .map(|(q, [y])| (q, y))
         .collect()
 }
 
 fn intensity_from_5col(table: Vec<(f64, f64, f64, f64, f64)>) -> Intensity {
-    let mut grouped = average_duplicates_5col(table);
-    grouped.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    // Average the four data columns by q-magnitude (sorted) in one place.
+    let grouped = average_by_qnorm(
+        table
+            .into_iter()
+            .map(|(q, t, a, e, h)| (q, [t, a, e, h]))
+            .collect(),
+    );
 
     let mut q = Vec::with_capacity(grouped.len());
     let mut total = Vec::with_capacity(grouped.len());
     let mut atoms = Vec::with_capacity(grouped.len());
     let mut excluded = Vec::with_capacity(grouped.len());
     let mut hydration = Vec::with_capacity(grouped.len());
-    for (qi, t, a, e, h) in grouped {
+    for (qi, [t, a, e, h]) in grouped {
         q.push(qi);
         total.push(t);
         atoms.push(a);

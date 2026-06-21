@@ -157,9 +157,8 @@ print(out.s_eff, out.p)
 ```
 
 The box atom count must be a multiple of `N` (contiguous equal-size molecules),
-and the run must be vacuum. The per-molecule self term is computed on the CPU
-even with the `gpu` feature (the GPU kernel emits only the total `|Σf|²`), and
-XTC averaging assumes a fixed box (constant volume).
+and the run must be vacuum. The `gpu` feature accelerates this path too. XTC
+averaging assumes a fixed box (constant volume).
 
 ### Solvent models
 
