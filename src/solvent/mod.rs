@@ -168,7 +168,7 @@ impl Hydration {
 
 /// How the excluded-volume contribution is represented. Each variant
 /// generates its own set of dummy scatterers via
-/// [`ExcludedVolume::dummies`].
+/// its `dummies` method.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExcludedVolume {
     /// No excluded-volume contribution; the `C` term is omitted.
@@ -187,7 +187,7 @@ pub enum ExcludedVolume {
         volume_scale: f64,
     },
     /// FoXS-style Fraser dummies: same per-atom Gaussians as
-    /// [`Fraser`] but with a 4× sharper exponential
+    /// [`Fraser`](Self::Fraser) but with a 4× sharper exponential
     /// (`V^(2/3)/(16π)` instead of `V^(2/3)/(4π)`). Subtracts less
     /// excluded volume at high q, matching the FoXS/IMP-SAXS
     /// convention (`FormFactorTable.cpp:285`).
@@ -239,7 +239,7 @@ pub enum Hydration {
         contrast_density: f64,
     },
     /// FoXS-style SASA-weighted hydration shell — see
-    /// [`crate::solvent::sasa`] for the physics writeup.
+    /// the `sasa` module for the physics writeup.
     Sasa {
         /// Solvent probe radius used for the accessible-surface calculation, in Å.
         probe: f64,

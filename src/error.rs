@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 /// All failures produced by the pripps library.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// I/O error with a known file path — attached by [`IoResultExt::with_path`]
+    /// I/O error with a known file path — attached by `IoResultExt::with_path`
     /// at every site that reads or writes a user-supplied file.
     #[error("{}: {source}", .path.display())]
     File {

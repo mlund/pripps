@@ -123,7 +123,7 @@ pub enum IntensityScheme {
         nq: usize,
     },
     /// Direct Fourier transform on `pmax` Miller-index multiples. The
-    /// periodic box is taken from the [`Structure`] — from a trajectory
+    /// periodic box is taken from the structure — from a trajectory
     /// frame when averaging over an XTC, or via the `box_sides` override
     /// parameter of [`Pripps::intensity`] for single-frame calls.
     Direct {
@@ -219,8 +219,7 @@ impl Pripps {
 
     /// Construct from one or more YAML form-factor definition files,
     /// merged in order. When a species is defined in more than one file
-    /// the later file wins and a warning is logged (see
-    /// [`read_formfactors_merged`]). Symbolic specs (`!Alias` / `!United`
+    /// the later file wins and a warning is logged. Symbolic specs (`!Alias` / `!United`
     /// / `!Linear`) may reference definitions from any of the files.
     pub fn from_yaml_files(paths: &[std::path::PathBuf]) -> Result<Self> {
         Self::from_formfactors(read_formfactors_merged(paths)?)

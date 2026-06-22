@@ -444,7 +444,7 @@ pub(crate) fn build_model(
 /// Holds the per-q multipole coefficient triangles for atoms,
 /// excluded volume, and hydration shell. The expensive O(N·Q·L²)
 /// work runs once at construction (via
-/// [`Pripps::multipole_model`]); the cheap O(Q·L²) combine
+/// [`Pripps::multipole_model`](crate::Pripps::multipole_model)); the cheap O(Q·L²) combine
 /// runs per [`intensity`](MultipoleModel::intensity) call with
 /// different fit knobs `(volume_scale, contrast_density)`.
 pub struct MultipoleModel {
