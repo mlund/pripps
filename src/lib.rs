@@ -82,6 +82,18 @@ pub struct Intensity {
     pub total: Vec<f64>,
     /// Per-contribution diagnostic columns; `None` for vacuum calculations.
     pub contributions: Option<Contributions>,
+    /// At-concentration single-molecule form factor `P(q)`, present only when
+    /// `--num-molecules` (a periodic box of identical molecules) is used. For a
+    /// flexible molecule this is the *crowded* form factor, which an experiment
+    /// (dividing by a dilute `P`) cannot access. `None` otherwise.
+    pub form_factor: Option<Vec<f64>>,
+    /// Apparent (effective) structure factor `S_eff(q) = I(q)/(N·P(q))`, present
+    /// only with `--num-molecules`. `None` otherwise.
+    pub effective_structure_factor: Option<Vec<f64>>,
+    /// Raw self term `Σ_m |F_m(q)|² = N·P(q)` from the per-molecule partial sums;
+    /// the trajectory-averaging carrier from which `form_factor` /
+    /// `effective_structure_factor` are derived. Not part of the public output.
+    pub(crate) self_term: Option<Vec<f64>>,
 }
 
 /// Per-contribution intensity curves emitted by the three-contribution
@@ -325,6 +337,7 @@ impl Pripps {
         xtc_opts: Option<TrajectoryOptions>,
         box_sides: Option<[f64; 3]>,
         solvent: Option<&SolventConfig>,
+        num_molecules: Option<usize>,
     ) -> Result<Intensity> {
         let mut structure = Structure::from_file(structure_file, &self.atomkinds())?;
         if let Some(box_sides) = box_sides {
@@ -338,6 +351,55 @@ impl Pripps {
 
         let active_solvent = solvent.filter(|cfg| cfg.is_active());
 
+        // `--num-molecules N` (effective structure factor) needs the explicit
+        // periodic-box method, vacuum, and an integer N. Validate up front so a
+        // bad request fails immediately, before any (trajectory) work.
+        if let Some(n) = num_molecules {
+            if !matches!(
+                scheme,
+                IntensityScheme::Direct { .. } | IntensityScheme::DirectGpu { .. }
+            ) {
+                return Err(Error::usage(
+                    "--num-molecules requires the `direct` scheme (the periodic-box method)",
+                ));
+            }
+            if n == 0 {
+                return Err(Error::usage("--num-molecules must be at least 1"));
+            }
+            // (An empty box would pass the modulus check below — `0 % n == 0` —
+            // and yield `S_eff = 0/0 = NaN`, but `Structure::from_file` already
+            // rejects atomless inputs, so `structure.pos` is non-empty here.)
+            if active_solvent.is_some() {
+                return Err(Error::usage(
+                    "--num-molecules supports vacuum runs only (no excluded-volume/hydration model)",
+                ));
+            }
+            if !structure.pos.len().is_multiple_of(n) {
+                return Err(Error::validation(format!(
+                    "box atom count ({}) is not a multiple of --num-molecules ({n})",
+                    structure.pos.len()
+                )));
+            }
+            // A divisible count is not enough: the N blocks must actually be
+            // identical contiguous molecules. Require every M-atom block to share
+            // the first block's atom-kind sequence — this catches a count that
+            // splits molecules or doesn't match the box composition (e.g. asking
+            // for 7 molecules from a single 1001-atom protein).
+            let m = structure.pos.len() / n;
+            if m > 0
+                && !structure
+                    .ids
+                    .chunks(m)
+                    .all(|block| block == &structure.ids[..m])
+            {
+                return Err(Error::validation(format!(
+                    "--num-molecules {n} does not partition the box into {n} identical \
+                     contiguous molecules: the atom composition differs between blocks"
+                )));
+            }
+            log::info!("Computing structure factor for {n} molecules ({m} atoms each)");
+        }
+
         let calc: Box<dyn IntensityCalculator> = match scheme {
             IntensityScheme::Debye { qmin, qmax, nq } => {
                 log::info!("Using Debye formula to calculate 𝐼(𝑞) for {qmin} ≤ 𝑞 ≤ {qmax} Å⁻¹");
@@ -350,18 +412,20 @@ impl Pripps {
             }
             IntensityScheme::Direct { pmax } => {
                 log::info!("Using direct Fourier transform with p_max = {pmax}");
-                Box::new(DirectTransform::new(
-                    self.formfactors.clone(),
-                    pmax,
-                    active_solvent.cloned(),
-                ))
+                let transform =
+                    DirectTransform::new(self.formfactors.clone(), pmax, active_solvent.cloned());
+                Box::new(match num_molecules {
+                    Some(n) => transform.with_num_molecules(n),
+                    None => transform,
+                })
             }
             IntensityScheme::DirectGpu { pmax } => {
                 #[cfg(feature = "gpu")]
                 {
                     // The GPU path covers the vacuum case only; with an active
-                    // solvent or no usable adapter, fall back to the CPU Direct
-                    // transform so results stay correct.
+                    // solvent fall back to the CPU Direct transform so results
+                    // stay correct. (`--num-molecules` is vacuum-only, guarded
+                    // above, so it never collides with this branch.)
                     if active_solvent.is_some() {
                         log::warn!(
                             "solvent corrections are not supported on the GPU; using CPU direct transform"
@@ -372,16 +436,30 @@ impl Pripps {
                             active_solvent.cloned(),
                         ))
                     } else {
+                        // The kernel emits the per-molecule self term too, so
+                        // `--num-molecules` runs on the GPU; fall back to the CPU
+                        // transform (also carrying the molecule count) if no
+                        // adapter is available.
                         match gpu::GpuDirectTransform::new(self.formfactors.clone(), pmax) {
                             Ok(calc) => {
                                 log::info!(
                                     "Using GPU direct Fourier transform with p_max = {pmax}"
                                 );
+                                let calc = match num_molecules {
+                                    Some(n) => calc.with_num_molecules(n),
+                                    None => calc,
+                                };
                                 Box::new(calc) as Box<dyn IntensityCalculator>
                             }
                             Err(e) => {
                                 log::warn!("GPU unavailable ({e}); using CPU direct transform");
-                                Box::new(DirectTransform::new(self.formfactors.clone(), pmax, None))
+                                let transform =
+                                    DirectTransform::new(self.formfactors.clone(), pmax, None);
+                                let transform = match num_molecules {
+                                    Some(n) => transform.with_num_molecules(n),
+                                    None => transform,
+                                };
+                                Box::new(transform)
                             }
                         }
                     }
@@ -414,11 +492,28 @@ impl Pripps {
             }
         };
 
-        if let Some(xtc_opts) = xtc_opts {
-            trajectory_average(calc.as_ref(), &structure, xtc_opts)
+        let mut result = if let Some(xtc_opts) = xtc_opts {
+            trajectory_average(calc.as_ref(), &structure, xtc_opts)?
         } else {
-            calc.calc_intensities(&structure)
+            calc.calc_intensities(&structure)?
+        };
+
+        // Derive the effective structure factor from the per-molecule self term
+        // (`Σ_m|F_m|² = N·P`): S_eff = I_box/(N·P) = total/self; P = self/N. The
+        // self term is the box self-scattering, so this is exact (no approximation).
+        if let (Some(n), Some(self_term)) = (num_molecules, result.self_term.take()) {
+            let n_f = n as f64;
+            result.form_factor = Some(self_term.iter().map(|&s| s / n_f).collect());
+            result.effective_structure_factor = Some(
+                result
+                    .total
+                    .iter()
+                    .zip(&self_term)
+                    .map(|(&i, &s)| if s > 0.0 { i / s } else { f64::NAN })
+                    .collect(),
+            );
         }
+        Ok(result)
     }
 }
 
@@ -448,6 +543,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -477,6 +573,7 @@ mod tests {
                 None,
                 Some(box_sides),
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -513,6 +610,7 @@ mod tests {
                 None,
                 None,
                 Some(&scaled_solvent),
+                None,
             )
             .unwrap();
         let debye_model = pripps
@@ -531,6 +629,7 @@ mod tests {
                 None,
                 Some(direct_box),
                 Some(&scaled_solvent),
+                None,
             )
             .unwrap();
         let direct_model = pripps
@@ -553,6 +652,7 @@ mod tests {
                 None,
                 None,
                 Some(&scaled_solvent),
+                None,
             )
             .unwrap();
         let multipole_model = pripps
@@ -593,6 +693,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -710,6 +811,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -765,6 +867,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -801,6 +904,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -855,6 +959,7 @@ mod tests {
                 None,
                 None,
                 Some(&solvent),
+                None,
             )
             .unwrap();
 
@@ -940,6 +1045,7 @@ mod tests {
                     Some(opts),
                     None,
                     None,
+                    None,
                 )
                 .unwrap()
                 .total
@@ -979,5 +1085,201 @@ mod tests {
             close(&i_stride2, &i_f0),
             "stride=2 must select and renormalise to frame 0"
         );
+    }
+
+    /// `--num-molecules` structure factor: a single molecule gives S_eff ≡ 1 and
+    /// `p ≡ total`; a box of two identical copies has `p` (the per-molecule form
+    /// factor) equal to the single-molecule intensity; and the guards fire.
+    #[test]
+    fn num_molecules_structure_factor_and_guards() {
+        use approx::assert_relative_eq;
+        let dir = std::env::temp_dir();
+        let yaml = dir.join("pripps_nmol_ff.yaml");
+        std::fs::write(
+            &yaml,
+            "X: { formfactor: !Constant 1.0 }\nY: { formfactor: !Constant 1.0 }\n",
+        )
+        .unwrap();
+        let one = dir.join("pripps_nmol_one.xyz");
+        std::fs::write(&one, "2\nd\nX 0 0 -3\nX 0 0 3\n").unwrap();
+        // Two copies of the same dumbbell, well separated.
+        let two = dir.join("pripps_nmol_two.xyz");
+        std::fs::write(&two, "4\nb\nX 0 0 -3\nX 0 0 3\nX 50 0 -3\nX 50 0 3\n").unwrap();
+        // Divisible by 2 but not two identical molecules: blocks [X,Y] vs [Y,X].
+        let mismatch = dir.join("pripps_nmol_mismatch.xyz");
+        std::fs::write(&mismatch, "4\nm\nX 0 0 0\nY 1 0 0\nY 50 0 0\nX 51 0 0\n").unwrap();
+        let pripps = Pripps::from_yaml(&yaml).unwrap();
+
+        let run = |file: &Path, n: usize| {
+            pripps
+                .intensity(
+                    IntensityScheme::Direct { pmax: 30 },
+                    file,
+                    None,
+                    Some([200.0; 3]),
+                    None,
+                    Some(n),
+                )
+                .unwrap()
+        };
+
+        // N = 1: I_box == self ⇒ S_eff ≡ 1, p ≡ total.
+        let single = run(&one, 1);
+        let s_eff = single.effective_structure_factor.as_ref().unwrap();
+        let p = single.form_factor.as_ref().unwrap();
+        for ((&se, &pi), &ti) in s_eff.iter().zip(p).zip(&single.total) {
+            assert_relative_eq!(se, 1.0, epsilon = 1e-9);
+            assert_relative_eq!(pi, ti, epsilon = 1e-9);
+        }
+
+        // N = 2: the per-molecule form factor equals the single-molecule
+        // intensity (same q-grid, identical molecule), and S_eff is present.
+        let box2 = run(&two, 2);
+        assert_eq!(box2.form_factor.as_ref().unwrap().len(), single.total.len());
+        for (&p2, &t1) in box2.form_factor.as_ref().unwrap().iter().zip(&single.total) {
+            assert_relative_eq!(p2, t1, epsilon = 1e-6);
+        }
+
+        // Guards.
+        let err = |scheme, file: &Path, box_sides, solvent, n| {
+            pripps
+                .intensity(scheme, file, None, box_sides, solvent, Some(n))
+                .is_err()
+        };
+        // box atom count not a multiple of N.
+        assert!(err(
+            IntensityScheme::Direct { pmax: 2 },
+            &two,
+            Some([200.0; 3]),
+            None,
+            3
+        ));
+        // non-direct scheme.
+        assert!(err(
+            IntensityScheme::Debye {
+                qmin: 0.0,
+                qmax: 0.3,
+                nq: 8
+            },
+            &two,
+            None,
+            None,
+            2
+        ));
+        // active solvent.
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        };
+        assert!(err(
+            IntensityScheme::Direct { pmax: 2 },
+            &two,
+            Some([200.0; 3]),
+            Some(&solvent),
+            2
+        ));
+        // divisible count, but the blocks are not identical molecules.
+        assert!(err(
+            IntensityScheme::Direct { pmax: 2 },
+            &mismatch,
+            Some([200.0; 3]),
+            None,
+            2
+        ));
+        // empty box: rejected at file load (so it never reaches the 0/0 S_eff),
+        // a regression guard that an atomless box can't slip through.
+        let empty = dir.join("pripps_nmol_empty.xyz");
+        std::fs::write(&empty, "0\ne\n").unwrap();
+        assert!(err(
+            IntensityScheme::Direct { pmax: 2 },
+            &empty,
+            Some([200.0; 3]),
+            None,
+            2
+        ));
+    }
+
+    /// `--num-molecules` over a trajectory must form S_eff as the ratio of the
+    /// frame-averaged box intensity to the frame-averaged self term (ratio of
+    /// averages), not the average of per-frame S_eff. Two distinct frames make
+    /// the two interpretations differ, so this pins the averaging order.
+    #[test]
+    fn num_molecules_trajectory_is_ratio_of_averages() {
+        use approx::assert_relative_eq;
+        let dir = std::env::temp_dir();
+        let yaml = dir.join("pripps_nmol_traj_ff.yaml");
+        std::fs::write(&yaml, "X: { formfactor: !Constant 1.0 }\n").unwrap();
+        // 4 atoms = two 2-atom molecules; the template coords are overwritten
+        // per frame, only the atom kinds matter.
+        let template = dir.join("pripps_nmol_traj.xyz");
+        std::fs::write(&template, "4\nt\nX 0 0 0\nX 0 0 1\nX 0 0 2\nX 0 0 3\n").unwrap();
+        let pripps = Pripps::from_yaml(&yaml).unwrap();
+
+        // Two distinct frames (coords in Å, converted to nm for the XTC); the
+        // 100 Å box is constant so the per-frame q-grids align.
+        let frames_a: [[[f32; 3]; 4]; 2] = [
+            [[0., 0., 0.], [0., 0., 4.], [30., 0., 0.], [30., 0., 4.]],
+            [[0., 0., 0.], [0., 0., 5.], [60., 0., 0.], [60., 0., 5.]],
+        ];
+        let make_frame = |coords: &[[f32; 3]; 4], step: u32| {
+            let mut positions = Vec::with_capacity(12);
+            for c in coords {
+                positions.extend_from_slice(&[c[0] / 10.0, c[1] / 10.0, c[2] / 10.0]);
+            }
+            let mut boxvec = [0.0f32; 9];
+            (boxvec[0], boxvec[4], boxvec[8]) = (10.0, 10.0, 10.0);
+            molly::Frame {
+                step,
+                time: step as f32,
+                boxvec,
+                precision: 1000.0,
+                positions,
+            }
+        };
+        let frame0 = make_frame(&frames_a[0], 0);
+        let frame1 = make_frame(&frames_a[1], 1);
+
+        // Per-frame reference: the raw total and self term from the static path.
+        let calc = DirectTransform::new(pripps.formfactors.clone(), 8, None).with_num_molecules(2);
+        let per_frame = |frame: &molly::Frame| {
+            let mut s = Structure::from_file(&template, &pripps.atomkinds()).unwrap();
+            s.set_positions(frame).unwrap();
+            calc.calc_intensities(&s).unwrap()
+        };
+        let f0 = per_frame(&frame0);
+        let f1 = per_frame(&frame1);
+        let (self0, self1) = (f0.self_term.unwrap(), f1.self_term.unwrap());
+
+        // The full trajectory path through Pripps::intensity.
+        let xtc = dir.join("pripps_nmol_traj.xtc");
+        let mut writer = molly::XTCWriter::create(&xtc).unwrap();
+        writer.write_frame(&frame0).unwrap();
+        writer.write_frame(&frame1).unwrap();
+        drop(writer);
+        let opts = TrajectoryOptions {
+            xtcfile: &xtc,
+            stride: NonZeroUsize::new(1).unwrap(),
+            weights: None,
+        };
+        let traj = pripps
+            .intensity(
+                IntensityScheme::Direct { pmax: 8 },
+                &template,
+                Some(opts),
+                None,
+                None,
+                Some(2),
+            )
+            .unwrap();
+        let s_eff = traj.effective_structure_factor.unwrap();
+        let p = traj.form_factor.unwrap();
+
+        assert_eq!(traj.q, f0.q, "static and trajectory q-grids must align");
+        for i in 0..traj.q.len() {
+            let total_avg = 0.5 * (f0.total[i] + f1.total[i]);
+            let self_avg = 0.5 * (self0[i] + self1[i]);
+            assert_relative_eq!(s_eff[i], total_avg / self_avg, epsilon = 1e-9);
+            assert_relative_eq!(p[i], self_avg / 2.0, epsilon = 1e-9);
+        }
     }
 }

@@ -142,12 +142,15 @@ struct PyIntensity {
     atoms: Option<Py<PyArray1<f64>>>,
     excluded: Option<Py<PyArray1<f64>>>,
     hydration: Option<Py<PyArray1<f64>>>,
+    p: Option<Py<PyArray1<f64>>>,
+    s_eff: Option<Py<PyArray1<f64>>>,
     n_points: usize,
 }
 
 impl PyIntensity {
     fn new(py: Python<'_>, inner: Intensity) -> Self {
         let arr = |v: Vec<f64>| v.into_pyarray(py).unbind();
+        let opt = |v: Option<Vec<f64>>| v.map(arr);
         let n_points = inner.q.len();
         let (atoms, excluded, hydration) = match inner.contributions {
             Some(c) => (
@@ -163,6 +166,8 @@ impl PyIntensity {
             atoms,
             excluded,
             hydration,
+            p: opt(inner.form_factor),
+            s_eff: opt(inner.effective_structure_factor),
             n_points,
         }
     }
@@ -198,6 +203,20 @@ impl PyIntensity {
     #[getter]
     fn hydration(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
         self.hydration.as_ref().map(|a| a.clone_ref(py))
+    }
+
+    /// At-concentration single-molecule form factor P(q), or `None` unless
+    /// `num_molecules` was given.
+    #[getter]
+    fn p(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.p.as_ref().map(|a| a.clone_ref(py))
+    }
+
+    /// Effective structure factor S_eff(q) = I/(N·P), or `None` unless
+    /// `num_molecules` was given.
+    #[getter]
+    fn s_eff(&self, py: Python<'_>) -> Option<Py<PyArray1<f64>>> {
+        self.s_eff.as_ref().map(|a| a.clone_ref(py))
     }
 
     fn __repr__(&self) -> String {
@@ -463,6 +482,7 @@ impl PyPripps {
         bulk_electron_density = 0.334,
         volume_scale = 1.0,
         contrast_density = 0.03,
+        num_molecules = None,
     ))]
     fn intensity(
         &self,
@@ -487,6 +507,7 @@ impl PyPripps {
         bulk_electron_density: f64,
         volume_scale: f64,
         contrast_density: f64,
+        num_molecules: Option<usize>,
     ) -> PyResult<PyIntensity> {
         let scheme = match scheme_from(model.as_ref())? {
             PyScheme::Multipole => IntensityScheme::Multipole {
@@ -533,6 +554,7 @@ impl PyPripps {
                 xtc_opts,
                 box_sides,
                 Some(&cfg),
+                num_molecules,
             )
             .map(|inner| PyIntensity::new(py, inner))
             .map_err(into_py_err)

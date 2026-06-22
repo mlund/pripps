@@ -350,6 +350,7 @@ fn vacuum_intensity(
         q: sampler.q_values.clone(),
         total,
         contributions: None,
+        ..Default::default()
     })
 }
 
@@ -497,6 +498,7 @@ impl MultipoleModel {
                 excluded,
                 hydration,
             }),
+            ..Default::default()
         }
     }
 

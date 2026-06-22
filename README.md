@@ -129,6 +129,107 @@ avg = pr.intensity(
 print(avg.q, avg.total)
 ```
 
+### Effective structure factor (`--num-molecules`)
+
+For a periodic box of $`N`$ identical molecules — a concentrated solution
+simulated with the `direct` scheme, optionally averaged over an XTC trajectory —
+`--num-molecules N` (CLI) or `num_molecules=N` (Python) separates the
+single-molecule **form factor** $`P(q)`$ from the inter-molecular **structure
+factor**.
+
+Each molecule $`m`$ scatters with amplitude
+
+```math
+F_m(\mathbf{q}) = \sum_{i \in m} f_i(q)\, e^{\,i\,\mathbf{q}\cdot\mathbf{r}_i},
+```
+
+where $`f_i(q)`$ is the atomic form factor and $`\mathbf{r}_i`$ the atom position.
+The box intensity is the squared modulus of the total amplitude, which splits
+into intra-molecular (self) and inter-molecular (cross) terms:
+
+```math
+I(\mathbf{q}) = \left|\sum_{m=1}^{N} F_m(\mathbf{q})\right|^2
+            = \underbrace{\sum_{m} \left|F_m\right|^2}_{\text{self}}
+            + \underbrace{\sum_{m \neq m'} F_m F_{m'}^{*}}_{\text{cross}} .
+```
+
+Writing $`\langle\,\cdot\,\rangle`$ for the average over scattering-vector
+orientations at fixed $`q = |\mathbf{q}|`$ (and over trajectory frames), the form
+factor and the **effective** (apparent) structure factor are
+
+```math
+P(q) = \frac{1}{N}\left\langle \sum_{m} \left|F_m(\mathbf{q})\right|^2 \right\rangle
+     = \bigl\langle \left|F(\mathbf{q})\right|^2 \bigr\rangle_{\Omega},
+\qquad
+S_\mathrm{eff}(q) = \frac{\langle I(\mathbf{q})\rangle}{N\,P(q)}
+                  = \frac{\bigl\langle \left|\sum_m F_m\right|^2 \bigr\rangle}
+                         {\bigl\langle \sum_m \left|F_m\right|^2 \bigr\rangle} .
+```
+
+pripps emits exactly these two columns, `p` and `s_eff`. $`S_\mathrm{eff}(q)`$ is
+the quantity a scattering experiment measures — the box intensity normalised by
+$`N`$ independent molecules — and is obtained directly from the self/cross split,
+so it is **exact**: no assumption about particle shape or correlations is made.
+
+**Relation to the true structure factor.** The thermodynamic centre-to-centre
+structure factor, the Fourier transform of the centre–centre pair correlation
+$`g(r)`$, is
+
+```math
+S(q) = 1 + \frac{1}{N}\left\langle \sum_{m \neq m'}
+        e^{\,i\,\mathbf{q}\cdot(\mathbf{R}_m - \mathbf{R}_{m'})} \right\rangle,
+```
+
+with $`\mathbf{R}_m`$ the molecular centre. For non-spherical molecules
+$`S_\mathrm{eff} \neq S`$. Under the *decoupling approximation* — orientation
+uncorrelated with position — they are related by
+
+```math
+S_\mathrm{eff}(q) = 1 + \beta(q)\,\bigl[S(q) - 1\bigr],
+\qquad
+\beta(q) = \frac{\bigl|\langle F(\mathbf{q})\rangle_{\Omega}\bigr|^2}
+                {\bigl\langle |F(\mathbf{q})|^2 \bigr\rangle_{\Omega}},
+```
+
+where the decoupling parameter obeys $`0 \le \beta(q) \le 1`$, with $`\beta = 1`$ for
+centrosymmetric (e.g. spherical) particles, giving $`S_\mathrm{eff} = S`$. The true
+$`S(q)`$ follows by inversion,
+
+```math
+S(q) = 1 + \frac{S_\mathrm{eff}(q) - 1}{\beta(q)},
+```
+
+which is ill-conditioned near the nodes of $`\beta(q)`$; pripps therefore reports
+$`P`$ and $`S_\mathrm{eff}`$ and leaves $`\beta(q)`$ and the (judgement-dependent)
+inversion to the user. See Kotlarchyk & Chen, *J. Chem. Phys.* **79**, 2461
+(1983), [doi:10.1063/1.446055](https://doi.org/10.1063/1.446055).
+
+**Notes.**
+- The amplitudes use the box-commensurate vectors $`\mathbf{q} = 2\pi p\,(h,k,l)/L`$,
+  for which $`e^{\,i\,\mathbf{q}\cdot\mathbf{r}}`$ is unchanged under
+  $`\mathbf{r}\to\mathbf{r}+\mathbf{L}`$. Both $`I`$ and the self term are thus
+  PBC-invariant and need no coordinate unwrapping; the orientational average is
+  built from the sampled $`(h,k,l)`$ directions, and the trajectory average is a
+  ratio of frame-averaged numerator and denominator.
+- $`P(q)`$ is the **at-concentration** form factor — the molecules as they actually
+  are in the crowded box. For a flexible molecule it depends on concentration,
+  unlike the dilute-limit $`P`$ an experiment divides out, so comparing the two
+  reveals conformational change. It is on an absolute scale,
+  $`P(0) = \bigl(\sum_i f_i\bigr)^2`$, not normalised to $`P(0)=1`$.
+
+```sh
+pripps -a atoms.yaml -i box.xyz -x traj.xtc --num-molecules 100 direct -p 100
+```
+
+```python
+out = pr.intensity("box.xyz", model="direct", box_sides=200.0, num_molecules=100)
+print(out.s_eff, out.p)
+```
+
+The box atom count must be a multiple of $`N`$ (contiguous, identical molecules),
+and the run must be vacuum. The `gpu` feature accelerates this path too; XTC
+averaging assumes a fixed box (constant volume).
+
 ### Solvent models
 
 | Parameter | Values | Description |

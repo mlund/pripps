@@ -234,6 +234,10 @@ pub struct Args {
     #[clap(short = 'f', long)]
     fit: Option<PathBuf>,
 
+    /// Number of identical molecules in the box → add S_eff(q) (direct, vacuum)
+    #[clap(long, conflicts_with = "fit")]
+    num_molecules: Option<usize>,
+
     /// Optional .xtc trajectory file with structures to average over
     #[clap(short = 'x', long)]
     xtcfile: Option<PathBuf>,
@@ -345,6 +349,7 @@ pub fn do_main() -> Result<()> {
             xtc_opts,
             box_override,
             solvent.as_ref(),
+            args.num_molecules,
         )?;
         write_csv(&args.output, &intensity)?;
     }
@@ -418,29 +423,30 @@ fn write_csv(path: &Path, curve: &Intensity) -> Result<()> {
     let mut out = BufWriter::new(file);
     log::info!("Writing {}", path.display());
 
-    match &curve.contributions {
-        None => {
-            writeln!(out, "q,total")?;
-            for (q, total) in curve.q.iter().zip(&curve.total) {
-                writeln!(out, "{q:.6},{total:.6}")?;
-            }
+    // Header and rows gate the same optional blocks (contributions, then the
+    // `p,s_eff` structure-factor pair) so their column sets can't diverge.
+    let mut header = String::from("q,total");
+    if curve.contributions.is_some() {
+        header.push_str(",atoms,excluded,hydration");
+    }
+    if curve.effective_structure_factor.is_some() {
+        header.push_str(",p,s_eff");
+    }
+    writeln!(out, "{header}")?;
+
+    for i in 0..curve.q.len() {
+        write!(out, "{:.6},{:.6}", curve.q[i], curve.total[i])?;
+        if let Some(c) = &curve.contributions {
+            write!(
+                out,
+                ",{:.6},{:.6},{:.6}",
+                c.atoms[i], c.excluded[i], c.hydration[i]
+            )?;
         }
-        Some(c) => {
-            writeln!(out, "q,total,atoms,excluded,hydration")?;
-            for ((((q, total), atoms), excluded), hydration) in curve
-                .q
-                .iter()
-                .zip(&curve.total)
-                .zip(&c.atoms)
-                .zip(&c.excluded)
-                .zip(&c.hydration)
-            {
-                writeln!(
-                    out,
-                    "{q:.6},{total:.6},{atoms:.6},{excluded:.6},{hydration:.6}"
-                )?;
-            }
+        if let (Some(p), Some(s)) = (&curve.form_factor, &curve.effective_structure_factor) {
+            write!(out, ",{:.6},{:.6}", p[i], s[i])?;
         }
+        writeln!(out)?;
     }
     Ok(())
 }

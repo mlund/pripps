@@ -29,12 +29,16 @@
 //! The win is **trajectory averaging**: the q-vectors and atom ids stay
 //! resident on the device across frames, and only the atom positions (and the
 //! per-frame box / form-factor table) are re-uploaded each frame.
+//!
+//! With [`with_num_molecules`](GpuDirectTransform::with_num_molecules) the
+//! kernel additionally groups atoms into molecules and emits the per-molecule
+//! self term `Σ_m|F_m|²` alongside `I_box`, for the effective structure factor.
 
 use std::sync::Mutex;
 
 use wgpu::util::DeviceExt;
 
-use crate::explicit::{average_duplicates, directions};
+use crate::explicit::{average_by_qnorm, average_duplicates, directions};
 use crate::formfactor::FormFactor;
 use crate::{Error, FormFactorMap, Intensity, IntensityCalculator, Result, Structure, Vector3};
 
@@ -46,8 +50,8 @@ struct Params {
     inv_box: vec4<f32>,   // 1/box_sides; .xyz used
     n_atoms: u32,
     n_q: u32,
-    _pad0: u32,
-    _pad1: u32,
+    atoms_per_mol: u32,   // M; 0 = whole box (self term unused)
+    _pad: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -55,10 +59,11 @@ struct Params {
 @group(0) @binding(2) var<storage, read> positions: array<vec4<f32>>;  // n_atoms (.xyz used)
 @group(0) @binding(3) var<storage, read> atom_ids: array<u32>;         // n_atoms
 @group(0) @binding(4) var<storage, read> ff_table: array<f32>;         // n_kinds * n_q (kind-major)
-@group(0) @binding(5) var<storage, read_write> out_iq: array<f32>;     // n_q
+@group(0) @binding(5) var<storage, read_write> out_iq: array<f32>;     // 2 * n_q: [I_box, self]
 
 var<workgroup> sh_re: array<f32, 256>;
 var<workgroup> sh_im: array<f32, 256>;
+var<workgroup> sh_self: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn structure_factor(
@@ -68,30 +73,66 @@ fn structure_factor(
     let qi = wg.x;
     let q = directions[qi].xyz * params.inv_box.xyz;
 
-    // Strided walk over atoms; each thread accumulates its own partial sum.
+    // total = Σ_m F_m (→ I_box = |total|²); self = Σ_m |F_m|².
     var re = 0.0;
     var im = 0.0;
-    var a = lid.x;
-    loop {
-        if (a >= params.n_atoms) { break; }
-        let r = positions[a].xyz;
-        let f = ff_table[atom_ids[a] * params.n_q + qi];
-        let qr = dot(q, r);
-        re = re + f * cos(qr);
-        im = im + f * sin(qr);
-        a = a + 256u;
+    var self_term = 0.0;
+
+    let m = params.atoms_per_mol;
+    if (m == 0u) {
+        // The original whole-box path (no --num-molecules); self term stays 0.
+        var a = lid.x;
+        loop {
+            if (a >= params.n_atoms) { break; }
+            let r = positions[a].xyz;
+            let f = ff_table[atom_ids[a] * params.n_q + qi];
+            let qr = dot(q, r);
+            re = re + f * cos(qr);
+            im = im + f * sin(qr);
+            a = a + 256u;
+        }
+    } else {
+        // Per molecule: each thread strides over whole molecules (so each F_m
+        // is summed by a single thread); accumulate the box amplitude and the
+        // self term. With fewer than 256 molecules some threads idle, but the
+        // n_q workgroups keep the device busy.
+        let n_mol = params.n_atoms / m;
+        var mol = lid.x;
+        loop {
+            if (mol >= n_mol) { break; }
+            let start = mol * m;
+            var fre = 0.0;
+            var fim = 0.0;
+            var k = 0u;
+            loop {
+                if (k >= m) { break; }
+                let a = start + k;
+                let r = positions[a].xyz;
+                let f = ff_table[atom_ids[a] * params.n_q + qi];
+                let qr = dot(q, r);
+                fre = fre + f * cos(qr);
+                fim = fim + f * sin(qr);
+                k = k + 1u;
+            }
+            re = re + fre;
+            im = im + fim;
+            self_term = self_term + fre * fre + fim * fim;
+            mol = mol + 256u;
+        }
     }
     sh_re[lid.x] = re;
     sh_im[lid.x] = im;
+    sh_self[lid.x] = self_term;
     workgroupBarrier();
 
-    // Shared-memory tree reduction.
+    // Shared-memory tree reduction of all three partial sums.
     var stride = 128u;
     loop {
         if (stride == 0u) { break; }
         if (lid.x < stride) {
             sh_re[lid.x] = sh_re[lid.x] + sh_re[lid.x + stride];
             sh_im[lid.x] = sh_im[lid.x] + sh_im[lid.x + stride];
+            sh_self[lid.x] = sh_self[lid.x] + sh_self[lid.x + stride];
         }
         workgroupBarrier();
         stride = stride / 2u;
@@ -100,22 +141,28 @@ fn structure_factor(
     if (lid.x == 0u) {
         let rr = sh_re[0];
         let ii = sh_im[0];
-        out_iq[qi] = rr * rr + ii * ii;
+        out_iq[2u * qi] = rr * rr + ii * ii;
+        out_iq[2u * qi + 1u] = sh_self[0];
     }
 }
 "#;
 
 /// Per-frame uniform block. `#[repr(C)]` with explicit padding so the layout
-/// matches the WGSL `Params` struct (vec4 + two u32 + two pad u32 = 32 bytes,
-/// the size rounding required by the vec4's 16-byte alignment).
+/// matches the WGSL `Params` struct (vec4 + four u32 = 32 bytes, the size
+/// rounding required by the vec4's 16-byte alignment).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     inv_box: [f32; 4],
     n_atoms: u32,
     n_q: u32,
-    _pad: [u32; 2],
+    /// Atoms per molecule (`M`); 0 = whole box, the self term is then unused.
+    atoms_per_mol: u32,
+    _pad: u32,
 }
+
+/// Bytes the kernel writes per q-vector: two `f32`, `[I_box, self term]`.
+const OUT_BYTES_PER_Q: u64 = 2 * 4;
 
 /// GPU device context plus the static, structure-independent resources
 /// (q-directions, pipeline). Built once in [`GpuDirectTransform::new`].
@@ -150,6 +197,9 @@ pub(crate) struct GpuDirectTransform {
     /// q-directions in host (f64) form, for per-frame `|q|` and box division.
     directions: Vec<Vector3>,
     ctx: GpuContext,
+    /// When set, split the box into this many contiguous molecules and emit the
+    /// per-molecule self term `Σ_m|F_m|²` for the effective structure factor.
+    num_molecules: Option<usize>,
     /// Lazily built on the first frame; the trait is `&self`, so interior
     /// mutability is required. The trajectory loop is serial, so contention
     /// is nil.
@@ -225,8 +275,16 @@ impl GpuDirectTransform {
                 dir_buf,
                 n_q,
             },
+            num_molecules: None,
             frame: Mutex::new(None),
         })
+    }
+
+    /// Split the box into `n` contiguous equal-size molecules so each frame also
+    /// emits the self term `Σ_m|F_m|²` in [`Intensity::self_term`].
+    pub(crate) fn with_num_molecules(mut self, n: usize) -> Self {
+        self.num_molecules = Some(n);
+        self
     }
 }
 
@@ -286,6 +344,13 @@ impl IntensityCalculator for GpuDirectTransform {
             .map(|p| [p.x as f32, p.y as f32, p.z as f32, 0.0])
             .collect();
 
+        // Atoms per molecule (0 = whole box). Divisibility is enforced upstream
+        // by the `--num-molecules` guard in `Pripps::intensity`.
+        let atoms_per_mol = self
+            .num_molecules
+            .map(|n| structure.pos.len() / n)
+            .unwrap_or(0) as u32;
+
         let params = Params {
             inv_box: [
                 (1.0 / box_sides.x) as f32,
@@ -295,7 +360,8 @@ impl IntensityCalculator for GpuDirectTransform {
             ],
             n_atoms,
             n_q: ctx.n_q,
-            _pad: [0, 0],
+            atoms_per_mol,
+            _pad: 0,
         };
 
         ctx.queue
@@ -305,19 +371,23 @@ impl IntensityCalculator for GpuDirectTransform {
         ctx.queue
             .write_buffer(&frame.params_buf, 0, bytemuck::bytes_of(&params));
 
-        let intensities = ctx.dispatch(frame)?;
-
-        // Pair each |q| with its I(q) and average duplicate magnitudes, exactly
-        // as the CPU vacuum path does.
-        let table: Vec<(f64, f64)> = qmags
+        // The kernel writes two f32 per q-vector: [I_box, self term].
+        let out = ctx.dispatch(frame)?;
+        let rows: Vec<(f64, [f64; 2])> = qmags
             .into_iter()
-            .zip(intensities.into_iter().map(f64::from))
+            .enumerate()
+            .map(|(i, q)| (q, [f64::from(out[2 * i]), f64::from(out[2 * i + 1])]))
             .collect();
-        let (q, total): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
+        // Average duplicate |q| magnitudes, exactly as the CPU vacuum path does.
+        let grouped = average_by_qnorm(rows);
 
         Ok(Intensity {
-            q,
-            total,
+            q: grouped.iter().map(|g| g.0).collect(),
+            total: grouped.iter().map(|g| g.1[0]).collect(),
+            // The self term is only meaningful when the box was split.
+            self_term: self
+                .num_molecules
+                .map(|_| grouped.iter().map(|g| g.1[1]).collect()),
             ..Default::default()
         })
     }
@@ -371,7 +441,8 @@ impl GpuContext {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let out_size = u64::from(self.n_q) * 4;
+        // Two f32 per q-vector: [I_box, self term].
+        let out_size = u64::from(self.n_q) * OUT_BYTES_PER_Q;
         let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("out-iq"),
             size: out_size,
@@ -448,7 +519,7 @@ impl GpuContext {
             pass.set_bind_group(0, &frame.bind_group, &[]);
             pass.dispatch_workgroups(self.n_q, 1, 1);
         }
-        let out_size = u64::from(self.n_q) * 4;
+        let out_size = u64::from(self.n_q) * OUT_BYTES_PER_Q;
         encoder.copy_buffer_to_buffer(&frame.out_buf, 0, &frame.read_buf, 0, out_size);
         self.queue.submit([encoder.finish()]);
 
@@ -544,5 +615,59 @@ mod tests {
                 cpu_i.q[i]
             );
         }
+    }
+
+    /// With `--num-molecules`, the GPU must also reproduce the CPU per-molecule
+    /// self term `Σ_m|F_m|²` (and hence S_eff/P). Compares the raw `total` and
+    /// `self_term`; the S_eff/P finalize is identical host arithmetic.
+    #[test]
+    fn gpu_matches_cpu_num_molecules() {
+        let dir = std::env::temp_dir();
+        let yaml = dir.join("pripps_gpu_nmol.yaml");
+        std::fs::write(&yaml, "X: { formfactor: !Constant 1.0 }\n").unwrap();
+        // Three identical 2-atom molecules spread through the box.
+        let xyz = dir.join("pripps_gpu_nmol.xyz");
+        std::fs::write(
+            &xyz,
+            "6\nb\nX 0 0 0\nX 0 0 4\nX 30 10 0\nX 30 10 4\nX 70 50 0\nX 70 50 4\n",
+        )
+        .unwrap();
+        let pripps = Pripps::from_yaml(&yaml).unwrap();
+
+        let gpu = match GpuDirectTransform::new(pripps.formfactors.clone(), 6) {
+            Ok(g) => g.with_num_molecules(3),
+            Err(e) => {
+                eprintln!("skipping GPU num-molecules test: {e}");
+                return;
+            }
+        };
+        let cpu = DirectTransform::new(pripps.formfactors.clone(), 6, None).with_num_molecules(3);
+
+        let mut structure = Structure::from_file(&xyz, &pripps.atomkinds()).unwrap();
+        structure.box_sides = Some(Vector3::new(100.0, 100.0, 100.0));
+
+        let cpu_i = cpu.calc_intensities(&structure).unwrap();
+        let gpu_i = gpu.calc_intensities(&structure).unwrap();
+
+        assert_eq!(cpu_i.q, gpu_i.q, "q grids must match exactly");
+        let cmp = |name: &str, a: &[f64], b: &[f64]| {
+            assert_eq!(a.len(), b.len(), "{name} length mismatch");
+            for i in 0..a.len() {
+                let rel = (a[i] - b[i]).abs() / a[i].abs().max(1e-30);
+                assert!(
+                    rel < 1e-3,
+                    "{name} q={}: cpu={} gpu={} rel={rel}",
+                    cpu_i.q[i],
+                    a[i],
+                    b[i]
+                );
+            }
+        };
+        cmp("total", &cpu_i.total, &gpu_i.total);
+        cmp(
+            "self",
+            cpu_i.self_term.as_ref().unwrap(),
+            gpu_i.self_term.as_ref().unwrap(),
+        );
     }
 }
