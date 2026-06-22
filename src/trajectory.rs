@@ -228,6 +228,15 @@ pub fn trajectory_average(
         1e3 * elapsed / processed.max(1) as f64
     );
 
+    // The *consumed* weights can sum to zero even though `read_weights` checked
+    // the full set (striding may select a zero-sum subset of signed weights);
+    // dividing by it would turn every average into NaN, so reject it.
+    if !weight_sum.abs().is_normal() {
+        return Err(Error::validation(format!(
+            "weights of the {processed} averaged frames sum to {weight_sum}; cannot normalize"
+        )));
+    }
+
     // Normalize the accumulated sums by the total weight to get the weighted
     // averages (`total` and the self term divided by the same weight).
     for acc in mean

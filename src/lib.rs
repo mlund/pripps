@@ -366,6 +366,9 @@ impl Pripps {
             if n == 0 {
                 return Err(Error::usage("--num-molecules must be at least 1"));
             }
+            // (An empty box would pass the modulus check below — `0 % n == 0` —
+            // and yield `S_eff = 0/0 = NaN`, but `Structure::from_file` already
+            // rejects atomless inputs, so `structure.pos` is non-empty here.)
             if active_solvent.is_some() {
                 return Err(Error::usage(
                     "--num-molecules supports vacuum runs only (no excluded-volume/hydration model)",
@@ -1179,6 +1182,17 @@ mod tests {
         assert!(err(
             IntensityScheme::Direct { pmax: 2 },
             &mismatch,
+            Some([200.0; 3]),
+            None,
+            2
+        ));
+        // empty box: rejected at file load (so it never reaches the 0/0 S_eff),
+        // a regression guard that an atomless box can't slip through.
+        let empty = dir.join("pripps_nmol_empty.xyz");
+        std::fs::write(&empty, "0\ne\n").unwrap();
+        assert!(err(
+            IntensityScheme::Direct { pmax: 2 },
+            &empty,
             Some([200.0; 3]),
             None,
             2
