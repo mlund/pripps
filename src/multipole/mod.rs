@@ -386,6 +386,11 @@ pub(crate) fn build_model(
         &sampler.formfactors,
         cfg.bulk_electron_density,
     )?;
+    let excluded_deriv_dummies = cfg.excluded.unit_scale_derivative_dummies(
+        structure,
+        &sampler.formfactors,
+        cfg.bulk_electron_density,
+    )?;
     let hydration_dummies = cfg.hydration.dummies(structure, &sampler.formfactors)?;
 
     let excluded_basis = SphericalBasis::new(excluded_dummies.positions(), l_max);
@@ -425,8 +430,34 @@ pub(crate) fn build_model(
         l_max_per_q,
     )?;
 
+    // C1 derivative triangles (PepsiSAXS `Clm1`) for the first-order
+    // width correction, or all-zero triangles for variants without one.
+    let excluded_deriv_coeffs = match &excluded_deriv_dummies {
+        Some(deriv_dummies) => {
+            // C1 dummies sit at the same atom positions as C0, so the
+            // spherical basis is identical — reuse it instead of rebuilding
+            // the O(N·L²) angular/radial table.
+            debug_assert_eq!(deriv_dummies.positions(), excluded_dummies.positions());
+            let deriv_contrib = Contribution::from_dummies(deriv_dummies, &excluded_basis);
+            compute_coeffs(
+                &excluded_basis,
+                &deriv_contrib,
+                &sampler.formfactors,
+                &structure.ids,
+                &sampler.q_values,
+                l_max_per_q,
+            )?
+        }
+        None => sampler
+            .q_values
+            .iter()
+            .map(|_| LowerTriangle::zeros(l_max))
+            .collect(),
+    };
+
     debug_assert_eq!(atoms_coeffs.len(), sampler.q_values.len());
     debug_assert_eq!(excluded_coeffs.len(), sampler.q_values.len());
+    debug_assert_eq!(excluded_deriv_coeffs.len(), sampler.q_values.len());
     debug_assert_eq!(hydration_coeffs.len(), sampler.q_values.len());
     debug_assert_eq!(l_max_per_q.len(), sampler.q_values.len());
 
@@ -435,6 +466,7 @@ pub(crate) fn build_model(
         l_max_per_q: l_max_per_q.to_vec(),
         atoms_coeffs,
         excluded_coeffs,
+        excluded_deriv_coeffs,
         hydration_coeffs,
     })
 }
@@ -455,6 +487,10 @@ pub struct MultipoleModel {
     l_max_per_q: Vec<usize>,
     atoms_coeffs: Vec<LowerTriangle<Complex<f64>>>,
     excluded_coeffs: Vec<LowerTriangle<Complex<f64>>>,
+    /// First-order Taylor derivative (`C1`) coefficients of the excluded
+    /// volume — PepsiSAXS' `Clm1`. All-zero triangles for variants
+    /// without an analytic width correction.
+    excluded_deriv_coeffs: Vec<LowerTriangle<Complex<f64>>>,
     hydration_coeffs: Vec<LowerTriangle<Complex<f64>>>,
 }
 
@@ -473,11 +509,12 @@ impl MultipoleModel {
         let per_q: Vec<(f64, f64, f64, f64)> = izip!(
             &self.atoms_coeffs,
             &self.excluded_coeffs,
+            &self.excluded_deriv_coeffs,
             &self.hydration_coeffs,
             &self.l_max_per_q,
         )
-        .map(|(a, e, h, &l_q)| {
-            let total = combine_contributions(a, e, h, l_q, volume_scale, contrast_density);
+        .map(|(a, e, ed, h, &l_q)| {
+            let total = combine_contributions(a, e, ed, h, l_q, volume_scale, contrast_density);
             (
                 total,
                 intensity_from_multipoles(a, l_q),
@@ -799,19 +836,23 @@ fn intensity_from_multipoles(coeffs: &LowerTriangle<Complex<f64>>, l_max: usize)
 /// contribution plus the scaled hydration contribution, combined
 /// coherently at the coefficient level and then squared and summed.
 // PepsiSAXS `cSAS.cpp::computeIntensity` uses the same shape,
-// `|A - C + dp·B|²`, for its final intensity.
+// `|A - C + dp·B|²`, for its final intensity, with the excluded
+// amplitude `C = f0·C0 + f1·C1` split across a base and a first-order
+// Taylor derivative basis (`Clm1`).
 fn combine_contributions(
     atoms: &LowerTriangle<Complex<f64>>,
     excluded: &LowerTriangle<Complex<f64>>,
+    excluded_deriv: &LowerTriangle<Complex<f64>>,
     hydration: &LowerTriangle<Complex<f64>>,
     l_max: usize,
     volume_scale: f64,
     contrast_density: f64,
 ) -> f64 {
+    let (f0, f1) = crate::solvent::taylor_coefficients(volume_scale);
     let sum: f64 = (0..=l_max)
         .map(|l| {
             let combined = |m: usize| -> Complex<f64> {
-                atoms[(l, m)] - volume_scale * excluded[(l, m)]
+                atoms[(l, m)] - f0 * excluded[(l, m)] - f1 * excluded_deriv[(l, m)]
                     + contrast_density * hydration[(l, m)]
             };
             let m_zero = combined(0).norm_sqr();

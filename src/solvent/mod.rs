@@ -45,6 +45,20 @@ pub(super) const WATER_KIND_NAME: &str = "H2O";
 /// Bulk water molecular volume in Å³ (ρ_water = 0.334 e/Å³ → ≈ 30 Å³/molecule).
 pub(super) const WATER_VOLUME: f64 = 30.0;
 
+/// Recombination coefficients `(f0, f1)` for the excluded-volume scale
+/// `c1` (`volume_scale`): base-basis weight `f0 = c1` and derivative-basis
+/// weight `f1 = −(2/3)·c1·(c1−1)`, so the excluded amplitude is
+/// `f0·C0 + f1·C1`. The `c1` factor in `f1` comes from keeping the exact
+/// prefactor while expanding only the Gaussian width to first order (not
+/// the naive gradient `−(2/3)(c1−1)`); this makes `f1(0)=0` and is more
+/// accurate than the fully-linearised form — see the [`fraser`] module
+/// docs. All three schemes call this so the formula lives in one place.
+pub(crate) fn taylor_coefficients(volume_scale: f64) -> (f64, f64) {
+    let f0 = volume_scale;
+    let f1 = -(2.0 / 3.0) * volume_scale * (volume_scale - 1.0);
+    (f0, f1)
+}
+
 /// Convert `(position, radius)` pairs to voronota-ltr `Ball`s.
 fn balls_from_radii(atoms: &[(Vector3, f64)]) -> Vec<voronota_ltr::Ball> {
     atoms
@@ -375,13 +389,29 @@ impl DummySet {
 }
 
 impl ExcludedVolume {
+    /// Fraser Gaussian denominator for the Gaussian dummy variants
+    /// (4π PepsiSAXS / 16π FoXS); `None` for the non-Gaussian variants,
+    /// which have no analytic width and therefore no Taylor correction.
+    const fn fraser_denominator(&self) -> Option<f64> {
+        match self {
+            Self::Fraser { .. } => Some(fraser::PEPSI_DENOMINATOR),
+            Self::FraserFoxs { .. } => Some(fraser::FOXS_DENOMINATOR),
+            Self::Disabled | Self::Grid { .. } | Self::Voronoi { .. } | Self::PerKind { .. } => {
+                None
+            }
+        }
+    }
+
     /// Generate excluded-volume dummies for cached solvent models.
     ///
-    /// Cached Debye/Direct/Multipole models apply `volume_scale` during
-    /// the coherent recombination step. Fraser/FoXS dummy generation can
-    /// also bake that scale into the Gaussian form factors, so cached
-    /// builders must force the dummy basis to unit scale to avoid applying
-    /// the same fit knob twice.
+    /// Cached Debye/Direct/Multipole models apply the volume scale `c1`
+    /// during the coherent recombination step, split across the base
+    /// (`C0`, this method) and derivative (`C1`,
+    /// [`unit_scale_derivative_dummies`](Self::unit_scale_derivative_dummies))
+    /// bases via the first-order Taylor coefficients `(f0, f1)`. Because
+    /// Fraser/FoXS dummy generation can *also* bake the scale into the
+    /// Gaussian form factors, cached builders must force the dummy basis
+    /// to unit scale to avoid applying the same fit knob twice.
     pub(crate) fn unit_scale_dummies(
         &self,
         structure: &Structure,
@@ -400,6 +430,35 @@ impl ExcludedVolume {
             Self::PerKind { .. } => Self::PerKind { volume_scale: 1.0 },
         }
         .dummies(structure, formfactors, bulk_electron_density)
+    }
+
+    /// Generate the first-order Taylor derivative (`C1`) dummies for the
+    /// cached solvent models, or `None` when the variant has no analytic
+    /// width to correct.
+    ///
+    /// The exact Fraser dummy carries the volume scale `c1` in its
+    /// Gaussian width (`c1^(2/3)`); freezing that at `c1=1` drops the
+    /// `∝q²` width response. The cached models instead expand to first
+    /// order about `c1=1`, `F ≈ f0·C0 + f1·C1`, and this method supplies
+    /// the `C1` basis. Only the Gaussian variants (`Fraser`/`FraserFoxs`)
+    /// have such a derivative; `Grid`/`Voronoi`/`PerKind` return `None`
+    /// and keep their linear volume scaling.
+    pub(crate) fn unit_scale_derivative_dummies(
+        &self,
+        structure: &Structure,
+        formfactors: &FormFactorMap,
+        bulk_electron_density: f64,
+    ) -> Result<Option<DummySet>> {
+        match self.fraser_denominator() {
+            Some(denominator) => fraser::derivative_dummies(
+                structure,
+                formfactors,
+                bulk_electron_density,
+                denominator,
+            )
+            .map(Some),
+            None => Ok(None),
+        }
     }
 
     pub(crate) fn dummies(
@@ -476,5 +535,43 @@ mod tests {
             ..Default::default()
         };
         assert!(cfg.is_active());
+    }
+
+    #[test]
+    fn taylor_coefficients_at_reference_and_zero() {
+        // c1=1 ⇒ correction off (f1=0), f0=1.
+        assert_eq!(taylor_coefficients(1.0), (1.0, 0.0));
+        // c1=0 ⇒ excluded term removed entirely.
+        assert_eq!(taylor_coefficients(0.0), (0.0, 0.0));
+        // General f0=c1, f1=-(2/3)c1(c1-1).
+        let (f0, f1) = taylor_coefficients(1.5);
+        assert_eq!(f0, 1.5);
+        assert!((f1 - (-(2.0 / 3.0) * 1.5 * 0.5)).abs() < 1e-15);
+    }
+
+    #[test]
+    fn derivative_dummies_only_for_gaussian_variants() {
+        let mut kind = crate::AtomKind::new("C");
+        kind.displaced_volume = Some(16.0);
+        let map = FormFactorMap::from_entries(vec![(kind, FormFactor::Constant(6.0))]);
+        let s = Structure {
+            pos: vec![Vector3::new(0.0, 0.0, 0.0)],
+            ids: vec![0],
+            box_sides: None,
+        };
+        let has = |ev: ExcludedVolume| {
+            ev.unit_scale_derivative_dummies(&s, &map, 0.334)
+                .unwrap()
+                .is_some()
+        };
+        assert!(has(ExcludedVolume::Fraser { volume_scale: 1.0 }));
+        assert!(has(ExcludedVolume::FraserFoxs { volume_scale: 1.0 }));
+        assert!(!has(ExcludedVolume::Disabled));
+        assert!(!has(ExcludedVolume::Voronoi { volume_scale: 1.0 }));
+        assert!(!has(ExcludedVolume::PerKind { volume_scale: 1.0 }));
+        assert!(!has(ExcludedVolume::Grid {
+            spacing: 2.0,
+            volume_scale: 1.0,
+        }));
     }
 }
