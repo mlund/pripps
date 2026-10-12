@@ -16,8 +16,8 @@ use itertools::Itertools;
 use molly::{Frame, XTCReader, selection::AtomSelection};
 use std::iter::zip;
 use std::num::NonZeroUsize;
+use std::path;
 use std::time::Instant;
-use std::{f64, path};
 
 #[cfg(feature = "cli")]
 use indicatif::ProgressBar;

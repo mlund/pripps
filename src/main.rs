@@ -18,7 +18,7 @@ extern crate pretty_env_logger;
 fn main() -> ExitCode {
     match pripps::cli::do_main() {
         Err(err) => {
-            eprintln!("error: {}", &err);
+            eprintln!("error: {err}");
             ExitCode::FAILURE
         }
         Ok(_) => ExitCode::SUCCESS,
