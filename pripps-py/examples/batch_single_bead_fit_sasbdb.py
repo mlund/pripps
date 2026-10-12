@@ -12,19 +12,25 @@ For each cache directory containing both:
 this script fits (volume_scale, contrast_density) with the same setup
 as testing_single-bead_approximation.ipynb:
   - atomfile: assets/poly_amino_acid.yaml (or poly_martini.yaml for Martini3)
+  - structure file: raw_cleaned.xyz by default, or raw_cleaned_martini3_aa.pdb
+    for Martini3 via --structure-file
   - excluded: per-kind using the atomfile's excluded_solvent entries
   - hydration: grid
-  - fit: built-in `model.fit(q, I, sigma)` (pripps' library optimizer)
+  - fit: built-in `model.fit(q, I, sigma, method="grid")` grid search
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 from pathlib import Path
 
 import numpy as np
 import pripps
+
+
+Bounds = tuple[float, float]
 
 
 def load_exp_data(path: Path, qmax: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -53,12 +59,28 @@ def load_exp_data(path: Path, qmax: float) -> tuple[np.ndarray, np.ndarray, np.n
     return data[:, 0], data[:, 1], data[:, 2]
 
 
+def validate_bounds(name: str, bounds: list[float] | None) -> Bounds | None:
+    if bounds is None:
+        return None
+
+    lo, hi = bounds
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        raise ValueError(f"{name} bounds must be finite")
+    if lo >= hi:
+        raise ValueError(f"{name} lower bound must be less than upper bound")
+    return lo, hi
+
+
 def fit_single(
-    pr: pripps.Pripps,
+    pr: pripps.Pripps, # type: ignore
     xyz_path: Path,
     exp_path: Path,
     qmax: float,
     nq: int,
+    c1_points: int,
+    c2_points: int,
+    c1_bounds: Bounds | None,
+    c2_bounds: Bounds | None,
 ) -> dict[str, float | np.ndarray]:
     q_exp, i_exp, sigma = load_exp_data(exp_path, qmax=qmax)
 
@@ -74,8 +96,17 @@ def fit_single(
         spacing=3.8,
     )
 
-    # Built-in fit of (volume_scale, contrast_density) against the data.
-    fit = model.fit(q_exp, i_exp, sigma)
+    fit_kwargs = {
+        "c1_points": c1_points,
+        "c2_points": c2_points,
+    }
+    if c1_bounds is not None:
+        fit_kwargs["c1_bounds"] = c1_bounds # type: ignore
+    if c2_bounds is not None:
+        fit_kwargs["c2_bounds"] = c2_bounds # type: ignore
+
+    # Built-in grid fit of (volume_scale, contrast_density) against the data.
+    fit = model.fit(q_exp, i_exp, sigma, method="grid", **fit_kwargs)
 
     out = model.intensity(
         volume_scale=fit.volume_scale, contrast_density=fit.contrast_density
@@ -108,8 +139,16 @@ def main() -> None:
     parser.add_argument(
         "--atomfile",
         type=Path,
-        default=repo_root / "assets" / "poly_martini.yaml",
+        default=repo_root / "assets" / "poly_amino_acid.yaml",
         help="Form-factor YAML with formfactor and excluded_solvent entries",
+    )
+    parser.add_argument(
+        "--structure-file",
+        default="raw_cleaned.xyz",
+        help=(
+            "Structure filename inside each cache entry "
+            "(use raw_cleaned_martini3_aa.pdb with assets/poly_martini.yaml)"
+        ),
     )
     parser.add_argument(
         "--qmax",
@@ -124,6 +163,34 @@ def main() -> None:
         help="Number of q points in Debye model",
     )
     parser.add_argument(
+        "--grid-c1-points",
+        type=int,
+        default=251,
+        help='Number of c1/volume_scale grid points for model.fit(..., method="grid")',
+    )
+    parser.add_argument(
+        "--grid-c2-points",
+        type=int,
+        default=201,
+        help='Number of c2/contrast_density grid points for model.fit(..., method="grid")',
+    )
+    parser.add_argument(
+        "--c1-bounds",
+        nargs=2,
+        type=float,
+        metavar=("MIN", "MAX"),
+        default=None,
+        help='Custom c1/volume_scale bounds for model.fit(..., method="grid")',
+    )
+    parser.add_argument(
+        "--c2-bounds",
+        nargs=2,
+        type=float,
+        metavar=("MIN", "MAX"),
+        default=None,
+        help='Custom c2/contrast_density bounds for model.fit(..., method="grid")',
+    )
+    parser.add_argument(
         "--only",
         nargs="*",
         default=None,
@@ -133,14 +200,21 @@ def main() -> None:
         "--summary-csv",
         type=Path,
         default=None,
-        help="Optional output path for summary CSV (default: <cache-dir>/sba_summary.csv)",
+        help="Optional output path for summary CSV (default: <cache-dir>/sba_summary_<model>.csv)",
     )
     args = parser.parse_args()
 
     cache_dir = args.cache_dir.resolve()
-    summary_csv = args.summary_csv or (cache_dir / "sba_summary_martini.csv")
+    # Per-atomfile suffix so amino-acid and Martini runs don't overwrite each other
+    model = args.atomfile.stem.removeprefix("poly_")
+    summary_csv = args.summary_csv or (cache_dir / f"sba_summary_{model}.csv")
+    try:
+        c1_bounds = validate_bounds("c1", args.c1_bounds)
+        c2_bounds = validate_bounds("c2", args.c2_bounds)
+    except ValueError as exc:
+        parser.error(str(exc))
 
-    pr = pripps.Pripps(atomfile=str(args.atomfile))
+    pr = pripps.Pripps(atomfile=str(args.atomfile)) # type: ignore
 
     entries = sorted(d for d in cache_dir.iterdir() if d.is_dir())
     if args.only:
@@ -151,7 +225,7 @@ def main() -> None:
 
     for entry in entries:
         sid = entry.name
-        xyz_path = entry / "raw_cleaned_martini3_aa.pdb"
+        xyz_path = entry / args.structure_file
         exp_path = entry / "exp.dat"
         if not xyz_path.is_file() or not exp_path.is_file():
             continue
@@ -163,12 +237,16 @@ def main() -> None:
                 exp_path=exp_path,
                 qmax=float(args.qmax),
                 nq=int(args.nq),
+                c1_points=int(args.grid_c1_points),
+                c2_points=int(args.grid_c2_points),
+                c1_bounds=c1_bounds,
+                c2_bounds=c2_bounds,
             )
         except Exception as exc:
             print(f"{sid}: FAILED ({exc})")
             continue
 
-        fit_csv = entry / "sba_fit_martini.csv"
+        fit_csv = entry / f"sba_fit_{model}.csv"
         np.savetxt(
             fit_csv,
             np.column_stack([fit["q_exp"], fit["i_exp"], fit["i_fit"], fit["sigma"]]),
@@ -177,19 +255,23 @@ def main() -> None:
             comments="",
         )
 
+        # Safely determine number of q points (fit['q_exp'] may be a float)
+        n_q = int(np.atleast_1d(fit.get("q_exp", [])).size)
         print(
             f"{sid}: c1={fit['c1']:.4f}, c2={fit['c2']:.4f}, "
-            f"chi2/N={fit['chi2']:.4f}, n={len(fit['q_exp'])}"
+            f"chi2/N={fit['chi2']:.4f}, n={n_q}"
         )
 
+        # Ensure values are plain Python types (not numpy arrays) for CSV writing
+        q_exp = np.atleast_1d(fit.get("q_exp", []))
         summary_rows.append(
             {
                 "sid": sid,
-                "c1": fit["c1"],
-                "c2": fit["c2"],
-                "chi2_per_point": fit["chi2"],
-                "scale": fit["scale"],
-                "n_points": len(fit["q_exp"]),
+                "c1": float(fit.get("c1", float("nan"))),
+                "c2": float(fit.get("c2", float("nan"))),
+                "chi2_per_point": float(fit.get("chi2", float("nan"))),
+                "scale": float(fit.get("scale", float("nan"))),
+                "n_points": int(q_exp.size),
                 "xyz_file": str(xyz_path),
                 "exp_file": str(exp_path),
                 "fit_csv": str(fit_csv),

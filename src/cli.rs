@@ -203,6 +203,16 @@ pub enum HydrationKind {
     /// Voronoi-tessellation hydration shell
     Voronoi,
 }
+
+/// Optimizer used when fitting solvent parameters to experimental data.
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum FitMethod {
+    /// Box-constrained Nelder-Mead simplex search.
+    NelderMead,
+    /// Exhaustive endpoint-inclusive grid search over the fit bounds.
+    Grid,
+}
+
 #[derive(Parser)]
 #[clap(version, about, long_about = None, color = clap::ColorChoice::Auto)]
 #[command(styles=clap::builder::Styles::styled()
@@ -234,6 +244,37 @@ pub struct Args {
     #[clap(short = 'f', long)]
     fit: Option<PathBuf>,
 
+    /// Fitting method to use with --fit
+    #[clap(long, value_enum, default_value_t = FitMethod::NelderMead, requires = "fit")]
+    fit_method: FitMethod,
+
+    /// Number of c₁ grid points for --fit-method grid
+    #[clap(long, default_value = "151", requires = "fit")]
+    fit_c1_points: usize,
+
+    /// Number of c₂ grid points for --fit-method grid
+    #[clap(long, default_value = "101", requires = "fit")]
+    fit_c2_points: usize,
+
+    /// Bounds for fitted c₁ / excluded-volume scale: LOWER UPPER
+    #[clap(
+        long,
+        value_names = ["LOWER", "UPPER"],
+        num_args = 2,
+        allow_hyphen_values = true,
+        requires = "fit"
+    )]
+    fit_c1_bounds: Option<Vec<f64>>,
+
+    /// Bounds for fitted c₂ / hydration-shell contrast: LOWER UPPER
+    #[clap(
+        long,
+        value_names = ["LOWER", "UPPER"],
+        num_args = 2,
+        allow_hyphen_values = true,
+        requires = "fit"
+    )]
+    fit_c2_bounds: Option<Vec<f64>>,
     /// Number of identical molecules in the box → add S_eff(q) (direct, vacuum)
     #[clap(long, conflicts_with = "fit")]
     num_molecules: Option<usize>,
@@ -273,6 +314,14 @@ pub fn do_main() -> Result<()> {
     pretty_env_logger::init();
 
     let pripps = Pripps::from_yaml_files(&args.atomfiles)?;
+    let fit_method = args.fit_method;
+    let fit_c1_points = args.fit_c1_points;
+    let fit_c2_points = args.fit_c2_points;
+    let fit_c1_bounds =
+        fit_bounds_or_default(args.fit_c1_bounds.as_deref(), crate::fit::DEFAULT_C1_BOUNDS);
+    let fit_c2_bounds =
+        fit_bounds_or_default(args.fit_c2_bounds.as_deref(), crate::fit::DEFAULT_C2_BOUNDS);
+
     let (scheme, box_override, solvent) = command_to_scheme(args.command)?;
 
     if let Some(fit_path) = &args.fit {
@@ -287,7 +336,15 @@ pub fn do_main() -> Result<()> {
                 nq,
             } => {
                 let model = pripps.debye_model(&args.input, 0.0, exp.q_max(), nq, &solvent)?;
-                let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                let result = fit_parameters_with_method(
+                    fit_method,
+                    fit_c1_points,
+                    fit_c2_points,
+                    fit_c1_bounds,
+                    fit_c2_bounds,
+                    &exp,
+                    |c1, c2| model.intensity(c1, c2),
+                )?;
                 log::info!(
                     "Fitted volume_scale={:.4}, contrast_density={:.4} (χ²/N = {:.4})",
                     result.volume_scale,
@@ -304,7 +361,15 @@ pub fn do_main() -> Result<()> {
                     crate::Error::usage("direct fitting requires box side lengths")
                 })?;
                 let model = pripps.direct_model(&args.input, pmax, box_sides, &solvent)?;
-                let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                let result = fit_parameters_with_method(
+                    fit_method,
+                    fit_c1_points,
+                    fit_c2_points,
+                    fit_c1_bounds,
+                    fit_c2_bounds,
+                    &exp,
+                    |c1, c2| model.intensity(c1, c2),
+                )?;
                 log::info!(
                     "Fitted volume_scale={:.4}, contrast_density={:.4} (χ²/N = {:.4})",
                     result.volume_scale,
@@ -322,7 +387,15 @@ pub fn do_main() -> Result<()> {
             } => {
                 let model =
                     pripps.multipole_model(&args.input, 0.0, exp.q_max(), nq, l_max, &solvent)?;
-                let result = crate::fit::fit_parameters(&exp, |c1, c2| model.intensity(c1, c2))?;
+                let result = fit_parameters_with_method(
+                    fit_method,
+                    fit_c1_points,
+                    fit_c2_points,
+                    fit_c1_bounds,
+                    fit_c2_bounds,
+                    &exp,
+                    |c1, c2| model.intensity(c1, c2),
+                )?;
                 log::info!(
                     "Fitted volume_scale={:.4}, contrast_density={:.4} (χ²/N = {:.4})",
                     result.volume_scale,
@@ -355,6 +428,32 @@ pub fn do_main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn fit_parameters_with_method<F>(
+    method: FitMethod,
+    c1_points: usize,
+    c2_points: usize,
+    c1_bounds: (f64, f64),
+    c2_bounds: (f64, f64),
+    exp: &crate::fit::ExpData,
+    eval: F,
+) -> Result<crate::fit::FitResult>
+where
+    F: Fn(f64, f64) -> Intensity,
+{
+    match method {
+        FitMethod::NelderMead => {
+            crate::fit::fit_parameters_with_bounds(exp, eval, c1_bounds, c2_bounds)
+        }
+        FitMethod::Grid => crate::fit::fit_parameters_grid_with_bounds(
+            exp, eval, c1_points, c2_points, c1_bounds, c2_bounds,
+        ),
+    }
+}
+
+fn fit_bounds_or_default(values: Option<&[f64]>, default: (f64, f64)) -> (f64, f64) {
+    values.map_or(default, |values| (values[0], values[1]))
 }
 
 /// Translate parsed CLI arguments into an [`IntensityScheme`], an
