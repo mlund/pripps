@@ -21,7 +21,7 @@
 
 use std::f64::consts::PI;
 
-use voronota_ltr::{Results, compute_tessellation};
+use voronota_ltr::{CellMeasure, Results, compute_tessellation};
 
 use crate::formfactor::FormFactorMap;
 use crate::solvent::fraser::{PEPSI_DENOMINATOR, fraser_form_factor};
@@ -61,7 +61,7 @@ pub(super) fn dummies(
         .iter()
         .zip(&balls)
         .map(|(vol, ball)| match vol {
-            Some(v) if v.is_finite() && *v > 0.0 => *v,
+            CellMeasure::Computed(v) if v.is_finite() && *v > 0.0 => *v,
             _ => {
                 n_fallback += 1;
                 sphere_volume(ball.r)

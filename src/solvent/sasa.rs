@@ -22,7 +22,7 @@
 
 use std::f64::consts::PI;
 
-use voronota_ltr::{Results, compute_tessellation};
+use voronota_ltr::{CellMeasure, Results, compute_tessellation};
 
 use crate::formfactor::FormFactorMap;
 use crate::solvent::{DummySet, atom_radii, balls_from_radii, water_form_factor};
@@ -52,9 +52,10 @@ pub(super) fn dummies(
             // cap because boundaries track tangent planes, not curved
             // surfaces — clamp to keep the bulk-water count sensible.
             let full_sphere = 4.0 * PI * (ball.r + probe).powi(2);
-            let a = area
-                .as_ref()
-                .map_or(full_sphere, |a| a.clamp(0.0, full_sphere));
+            let a = match area {
+                CellMeasure::Computed(a) => a.clamp(0.0, full_sphere),
+                CellMeasure::Empty | CellMeasure::NotComputed => full_sphere,
+            };
             a * SHELL_THICKNESS / super::WATER_VOLUME
         })
         .collect();

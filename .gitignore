@@ -1,7 +1,6 @@
 /target
 a.out
 target/
-Cargo.lock
 .vscode
 *.dat
 .ipynb_checkpoints
