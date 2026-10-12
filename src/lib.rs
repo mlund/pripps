@@ -739,6 +739,121 @@ mod tests {
         assert_eq!(a.total, b.total);
     }
 
+    /// Parse `(q, I_fit)` from a committed Pepsi-SAXS `.dat` (columns
+    /// `q I_exp dI_exp I_fit`).
+    fn pepsi_q_ifit(path: &std::path::Path) -> Vec<(f64, f64)> {
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            })
+            .map(|l| {
+                let f: Vec<f64> = l.split_whitespace().map(|s| s.parse().unwrap()).collect();
+                (f[0], f[3])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pripps_excluded_matches_pepsi_ev_fixture() {
+        // Cross-code anchor for the excluded-volume pipeline. Pepsi was
+        // run with `--dro 0` (hydration off), fitting r0=1.58495 against
+        // rm=1.61072 ⇒ c1=(r0/rm)³=0.95277 (see 4lzt_pepsi_ev.README.md).
+        // pripps' per-atom first-order Taylor and Pepsi's global CRYSOL
+        // expansion factor are different approximations, so a few-percent
+        // shape agreement is the expected bar; the strict correctness gate
+        // is the analytic exact-width test in `debye.rs`.
+        let reference = pepsi_q_ifit(std::path::Path::new("tests/lysozyme/4lzt_pepsi_ev.dat"));
+        // All-atom form factors + all-atom PDB, matching Pepsi's model
+        // (the coarse-grained residue YAML has residue-sized excluded
+        // Gaussians that vanish at high q).
+        let pripps = Pripps::from_yaml(std::path::Path::new("assets/pepsi_atoms.yaml")).unwrap();
+        let pdb = std::path::PathBuf::from("tests/lysozyme/4lzt.pdb");
+        let c1 = (1.58495_f64 / 1.61072).powi(3);
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: c1 },
+            ..Default::default()
+        };
+        let intensity = pripps
+            .intensity(
+                IntensityScheme::Multipole {
+                    qmin: reference.first().unwrap().0,
+                    qmax: reference.last().unwrap().0,
+                    nq: Some(reference.len()),
+                    l_max: None,
+                },
+                &pdb,
+                None,
+                None,
+                Some(&solvent),
+                None,
+            )
+            .unwrap();
+        assert_eq!(intensity.total.len(), reference.len());
+
+        // Optimal linear scale (the two codes use different absolute units).
+        let (mut num, mut den) = (0.0, 0.0);
+        for (&p, &(_, r)) in intensity.total.iter().zip(&reference) {
+            num += p * r;
+            den += p * p;
+        }
+        let scale = num / den;
+        let (mut max_rel, mut max_q) = (0.0_f64, 0.0_f64);
+        for ((&q, &p), &(q_ref, r)) in intensity.q.iter().zip(&intensity.total).zip(&reference) {
+            // Fixture q are rounded to 6 decimals; the grids are the same
+            // linear sampling (spacing ≈ 0.0023), so a loose check suffices.
+            assert!((q - q_ref).abs() < 1e-3, "q grid mismatch: {q} vs {q_ref}");
+            let rel = ((scale * p - r) / r).abs();
+            if rel > max_rel {
+                max_rel = rel;
+                max_q = q;
+            }
+        }
+        // ~8% at high q reflects per-atom Taylor vs Pepsi's global CRYSOL
+        // expansion factor (different approximations of the same physics).
+        assert!(
+            max_rel < 0.12,
+            "pripps vs Pepsi excluded-volume profile differs by {max_rel:.4} at q={max_q:.3}"
+        );
+    }
+
+    #[test]
+    fn debye_and_multipole_agree_with_first_order_correction() {
+        // The Debye correction is expanded at the intensity level (four
+        // extra pair sums) while the multipole one is at the amplitude
+        // level; an error in either would show up as a scheme mismatch
+        // once c1 ≠ 1 activates the derivative basis.
+        let (pripps, xyz) = yaml_and_xyz();
+        let solvent = SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            hydration: Hydration::Sasa {
+                probe: 1.8,
+                contrast_density: 0.03,
+            },
+            ..Default::default()
+        };
+        let (qmin, qmax, nq) = (0.0, 0.3, 12);
+        let debye = pripps.debye_model(&xyz, qmin, qmax, nq, &solvent).unwrap();
+        let mp = pripps
+            .multipole_model(&xyz, qmin, qmax, Some(nq), None, &solvent)
+            .unwrap();
+        let (c1, c2) = (1.15, 0.03);
+        let d = debye.intensity(c1, c2).total;
+        let m = mp.intensity(c1, c2).total;
+        // Normalise away the absolute-scale convention difference between
+        // the two schemes (compare shape, which carries the width term).
+        let (d0, m0) = (d[1], m[1]);
+        for (i, (&di, &mi)) in d.iter().zip(&m).enumerate() {
+            let (dr, mr) = (di / d0, mi / m0);
+            assert!(
+                (dr - mr).abs() <= 0.03 * mr.abs().max(1e-9),
+                "Debye/multipole shape mismatch at q index {i}: {dr} vs {mr}"
+            );
+        }
+    }
+
     #[test]
     fn fit_intensity_varies_with_knobs() {
         let (pripps, xyz) = yaml_and_xyz();

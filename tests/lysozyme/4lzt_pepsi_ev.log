@@ -1,0 +1,88 @@
+Version.......................................................... : 2.6 from 29 Jan 2020
+Run at........................................................... : mbp25.local on Thu Jul  2 11:53:59 2026
+Command-line arguments........................................... : /Users/mikael/bin/Pepsi-SAXS 4lzt.pdb lyzexp.dat --dro 0 -o /tmp/pepsi_ev_4lzt.dat 
+========================Reading PDB file=========================
+Read PDB file.................................................... : 4lzt.pdb
+Number of chains read............................................ : 1
+Number of atoms read............................................. : 1001
+====================Analysing input PDB data=====================
+Geometric center at.............................................. : [-1.03864 A, 14.3894 A, 24.1032 A]
+Radius of gyration............................................... : 13.9563 A
+Maximum extension from the center................................ : 26.2411 A
+Number of residues............................................... : 129
+Chemical formula................................................. : C613H965N193O185S10
+Expected formula................................................. : C613H965N193O184S10 (different by 0.10%)
+Total molecular weight........................................... : 14.2951 kDa
+Molecular concentration.......................................... : 1 mg/mL
+Intensity scaling................................................ : 3.34523e-09
+==================Computing the hydration layer==================
+Accessible solvent radius........................................ : 3 A
+Width of the hydration shell..................................... : 3 A
+Number of points in the hydration shell.......................... : 381
+Radius of gyration of the hydration shell........................ : 21.6459 A
+Radius of gyration of the envelope............................... : 16.2707 A
+=========================Initialization==========================
+Angular units.................................................... : 1/A, q = 4pi sin(theta)/lambda
+Maximum number of processors..................................... : 10
+Number of processors online...................................... : 10
+Number of processors used........................................ : 10
+===================Reading experimental curve====================
+Experimental curve read from..................................... : lyzexp.dat
+Data smearing.................................................... : off
+Number of experimental points.................................... : 196
+Minimum angle in the data file................................... : 0.0413845
+Maximum angle in the data file................................... : 0.496032
+Angular units multiplied by...................................... : 1
+Estimated resolution............................................. : 12.6669 A
+===================Computing Rg from the curve===================
+Experimental Rg.................................................. : 14.2552 A
+===================Adaptive memory allocation====================
+Estimated minimal expansion order of spherical harmonics......... : 11
+Actually used order of spherical harmonics....................... : 11
+====================Initializing form factors====================
+Number of X-ray atom groups used................................. : 69
+==========Computing amplitudes for the hydration shell===========
+=========Computing atomic and excluded volume amplitudes=========
+Number of atomic groups.......................................... : 1001
+Average radius of the atomic group............................... : 1.61072 A
+Total number of electrons........................................ : 7611.45
+Displaced (Dry) Volume........................................... : 17522.1 A^3
+======================Computing intensities======================
+Bulk SLD......................................................... : 3.33662 x10e-6/A^2
+================Fitting to the experimental curve================
+Number of search points in r0.................................... : 100
+Minimum r0....................................................... : 1.53019 A
+Maximum r0....................................................... : 1.69126 A
+Number of search points in d_rho................................. : 1
+Minimum d_rho.................................................... : 0 e/A^3
+Maximum d_rho.................................................... : 0 e/A^3
+Best d_rho found................................................. : 0 e/A^3
+Best r0 found.................................................... : 1.58495 A^3
+Chi.............................................................. : 0.865075
+Chi^2............................................................ : 0.748355
+Scaling factor between the intensities........................... : 435.681
+Displaced Volume................................................. : 16694.5 A^3
+I(0)............................................................. : 5.40104
+=====================Writing the output file=====================
+Output file name................................................. : /tmp/pepsi_ev_4lzt.dat
+Log file name.................................................... : /tmp/pepsi_ev_4lzt.log
+=================================================================
+=========================== Timing : ============================
+=================================================================
+Parsing arguments................................................ : 0.00316083 s
+Reading PDB file................................................. : 0.00184225 s
+Analysing input PDB data......................................... : 0.000996333 s
+Computing the hydration layer.................................... : 0.000857208 s
+Initialization................................................... : 0.000232626 s
+Reading experimental curve....................................... : 0.00093825 s
+Computing Rg from the curve...................................... : 6.5542e-05 s
+Adaptive memory allocation....................................... : 3.7291e-05 s
+Initializing form factors........................................ : 0.000748917 s
+Computing amplitudes for the hydration shell..................... : 0.00102962 s
+Computing atomic and excluded volume amplitudes.................. : 0.00245392 s
+Computing intensities............................................ : 2.9667e-05 s
+Fitting to the experimental curve................................ : 0.000225792 s
+Writing the output file.......................................... : 0.000295916 s
+.................................................................
+Total time : .................................................... : 0.0129159 s
+=================================================================
