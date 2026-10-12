@@ -153,6 +153,14 @@ class TestPepsiFit(unittest.TestCase):
         self.assertIsInstance(fit, pripps.FitResult)
         self.assertLess(fit.chi2, 0.5, f"built-in fit χ²/N = {fit.chi2:.4f}")
 
+    def test_fit_defaults_to_nelder_mead(self):
+        """Omitting `method` keeps the pre-grid call signature working."""
+        default = self.model.fit(self.exp[:, 0], self.exp[:, 1], self.exp[:, 2])
+        explicit = self.model.fit(
+            self.exp[:, 0], self.exp[:, 1], self.exp[:, 2], method="nelder-mead"
+        )
+        self.assertEqual(default.chi2, explicit.chi2)
+
     def test_builtin_grid_fit_method(self):
         """Grid search should be selected through `model.fit(method=...)`."""
         fit = self.model.fit(

@@ -616,19 +616,19 @@ macro_rules! cached_model {
 
             /// Fit `(volume_scale, contrast_density)` to experimental data.
             ///
-            /// `method` is required and accepts `"nelder-mead"` or `"grid"`
+            /// `method` accepts `"nelder-mead"` (default) or `"grid"`
             /// (or `pripps.FitMethod.NelderMead` / `.Grid`). `q`/`intensity`
             /// are equal-length arrays; `sigma` defaults to ones
             /// (unweighted χ²). Grid options are ignored by Nelder-Mead
             /// except for `c1_bounds` / `c2_bounds`, which apply to both
             /// methods.
-            #[pyo3(signature = (q, intensity, sigma = None, *, method, c1_points = 151, c2_points = 101, c1_bounds = None, c2_bounds = None))]
+            #[pyo3(signature = (q, intensity, sigma = None, *, method = None, c1_points = 151, c2_points = 101, c1_bounds = None, c2_bounds = None))]
             fn fit(
                 &self,
                 q: Vec<f64>,
                 intensity: Vec<f64>,
                 sigma: Option<Vec<f64>>,
-                method: Bound<'_, PyAny>,
+                method: Option<Bound<'_, PyAny>>,
                 c1_points: usize,
                 c2_points: usize,
                 c1_bounds: Option<(f64, f64)>,
@@ -638,7 +638,9 @@ macro_rules! cached_model {
                     q,
                     intensity,
                     sigma,
-                    fit_method_from(&method)?,
+                    method
+                        .as_ref()
+                        .map_or(Ok(PyFitMethod::NelderMead), fit_method_from)?,
                     c1_points,
                     c2_points,
                     c1_bounds,

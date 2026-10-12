@@ -321,7 +321,7 @@ pub fn do_main() -> Result<()> {
         fit_bounds_or_default(args.fit_c1_bounds.as_deref(), crate::fit::DEFAULT_C1_BOUNDS);
     let fit_c2_bounds =
         fit_bounds_or_default(args.fit_c2_bounds.as_deref(), crate::fit::DEFAULT_C2_BOUNDS);
-    
+
     let (scheme, box_override, solvent) = command_to_scheme(args.command)?;
 
     if let Some(fit_path) = &args.fit {

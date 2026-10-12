@@ -200,12 +200,14 @@ def main() -> None:
         "--summary-csv",
         type=Path,
         default=None,
-        help="Optional output path for summary CSV (default: <cache-dir>/sba_summary.csv)",
+        help="Optional output path for summary CSV (default: <cache-dir>/sba_summary_<model>.csv)",
     )
     args = parser.parse_args()
 
     cache_dir = args.cache_dir.resolve()
-    summary_csv = args.summary_csv or (cache_dir / "sba_summary.csv")
+    # Per-atomfile suffix so amino-acid and Martini runs don't overwrite each other
+    model = args.atomfile.stem.removeprefix("poly_")
+    summary_csv = args.summary_csv or (cache_dir / f"sba_summary_{model}.csv")
     try:
         c1_bounds = validate_bounds("c1", args.c1_bounds)
         c2_bounds = validate_bounds("c2", args.c2_bounds)
@@ -244,7 +246,7 @@ def main() -> None:
             print(f"{sid}: FAILED ({exc})")
             continue
 
-        fit_csv = entry / "sba_fit.csv"
+        fit_csv = entry / f"sba_fit_{model}.csv"
         np.savetxt(
             fit_csv,
             np.column_stack([fit["q_exp"], fit["i_exp"], fit["i_fit"], fit["sigma"]]),

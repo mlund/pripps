@@ -395,17 +395,7 @@ where
     let theory = eval(c1, c2);
     let scale = compute_scale(&theory, exp);
 
-    let on_bound = |v: f64, (lo, hi): (f64, f64)| v <= lo + 1e-6 || v >= hi - 1e-6;
-    if on_bound(c1, c1_bounds) || on_bound(c2, c2_bounds) {
-        log::warn!(
-            "Fit hit bound: c₁ = {c1:.4} (∈ [{:.2}, {:.2}]), c₂ = {c2:.4} (∈ [{:.3}, {:.4}]). \
-             The fit wanted to go further — check the structure and experimental data.",
-            c1_bounds.0,
-            c1_bounds.1,
-            c2_bounds.0,
-            c2_bounds.1
-        );
-    }
+    warn_if_on_bound(c1, c2, c1_bounds, c2_bounds);
 
     log::info!(
         "Fit: χ²/N = {chi2:.4}, excluded volume (c₁) = {c1:.4}, \
@@ -510,6 +500,8 @@ where
     let theory = eval(c1, c2);
     let scale = compute_scale(&theory, exp);
 
+    warn_if_on_bound(c1, c2, c1_bounds, c2_bounds);
+
     log::info!(
         "Grid fit: χ²/N = {chi2:.4}, excluded volume (c₁) = {c1:.4}, \
          hydration shell (c₂) = {c2:.4}, scale = {scale:.6e}"
@@ -521,6 +513,21 @@ where
         chi2,
         scale,
     })
+}
+
+/// Warns when the optimum lies on a bound, i.e. the true minimum may be outside the box.
+fn warn_if_on_bound(c1: f64, c2: f64, c1_bounds: (f64, f64), c2_bounds: (f64, f64)) {
+    let on_bound = |v: f64, (lo, hi): (f64, f64)| v <= lo + 1e-6 || v >= hi - 1e-6;
+    if on_bound(c1, c1_bounds) || on_bound(c2, c2_bounds) {
+        log::warn!(
+            "Fit hit bound: c₁ = {c1:.4} (∈ [{:.2}, {:.2}]), c₂ = {c2:.4} (∈ [{:.3}, {:.4}]). \
+             The fit wanted to go further — check the structure and experimental data.",
+            c1_bounds.0,
+            c1_bounds.1,
+            c2_bounds.0,
+            c2_bounds.1
+        );
+    }
 }
 
 fn validate_bounds(name: &str, (lo, hi): (f64, f64)) -> Result<()> {
