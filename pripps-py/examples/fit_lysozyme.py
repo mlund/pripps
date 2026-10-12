@@ -6,7 +6,7 @@ excluded-volume formula (16π denominator), and SASA-weighted
 hydration. Reproduces FoXS's χ²/N ≈ 0.20 on lysozyme.
 
 Demonstrates BOTH fitting styles:
-  (a) the built-in `model.fit(...)` convenience, and
+  (a) the built-in `model.fit(..., method="nelder-mead")` convenience, and
   (b) a manual `scipy.optimize.minimize` over the typed `Intensity`
       result (`.q` / `.total`) for full control.
 
@@ -50,7 +50,7 @@ model = pr.multipole_model(
 )
 
 # (a) Built-in fit — one call, returns a typed FitResult.
-fit = model.fit(q_exp, i_exp, sigma)
+fit = model.fit(q_exp, i_exp, sigma, method="nelder-mead")
 print("Built-in model.fit():")
 print(f"  {fit!r}")
 print("  FoXS reference: χ²/N ≈ 0.20")

@@ -6,9 +6,8 @@
 //! Fitting against experimental SAXS data.
 //!
 //! Provides χ²/N computation with an analytical linear scale factor,
-//! experimental data parsing, and box-constrained Nelder-Mead
-//! minimisation over the (volume_scale, contrast_density) fit
-//! parameters.
+//! experimental data parsing, and bounded minimisation over the
+//! (volume_scale, contrast_density) fit parameters.
 
 use crate::error::IoResultExt;
 use crate::{Intensity, Result};
@@ -247,22 +246,32 @@ pub struct FitResult {
     pub scale: f64,
 }
 
-/// Physical bounds on fit parameters. `c₂ ≤ 0.1` is ~10% fractional
-/// excess density (pepsi's `d_rho = 0.0334 e/Å³ ÷ ρ_water`); `c₁`
-/// is wider than pepsi's ±5% radius range so non-Fraser EV (voronoi,
-/// grid) whose nominal volumes differ in scale still fit in-range.
-const C1_BOUNDS: (f64, f64) = (0.5, 2.0);
-const C2_BOUNDS: (f64, f64) = (0.0, 0.1);
+/// Default physical bounds for fitted excluded-volume scale `c₁`.
+///
+/// This is wider than pepsi's ±5% radius range so non-Fraser EV
+/// (voronoi, grid) whose nominal volumes differ in scale still fit in-range.
+pub const DEFAULT_C1_BOUNDS: (f64, f64) = (0.5, 2.0);
+
+/// Default physical bounds for fitted hydration contrast `c₂`.
+///
+/// `c₂ ≤ 0.1` is roughly 10% fractional excess density, corresponding
+/// to pepsi's `d_rho = 0.0334 e/Å³ ÷ ρ_water`.
+pub const DEFAULT_C2_BOUNDS: (f64, f64) = (0.0, 0.1);
 
 /// Box-constrained Nelder-Mead: every trial vertex is clamped into
-/// `C1_BOUNDS × C2_BOUNDS` before the cost evaluation.
-fn nelder_mead_2d(cost: impl Fn(f64, f64) -> f64, initial: [(f64, f64); 3]) -> (f64, f64, f64) {
+/// the caller-supplied bounds before the cost evaluation.
+fn nelder_mead_2d(
+    cost: impl Fn(f64, f64) -> f64,
+    initial: [(f64, f64); 3],
+    c1_bounds: (f64, f64),
+    c2_bounds: (f64, f64),
+) -> (f64, f64, f64) {
     const MAX_ITER: usize = 500;
     const TOLERANCE: f64 = 1e-10;
 
     let eval = |x: f64, y: f64| {
-        let cx = x.clamp(C1_BOUNDS.0, C1_BOUNDS.1);
-        let cy = y.clamp(C2_BOUNDS.0, C2_BOUNDS.1);
+        let cx = x.clamp(c1_bounds.0, c1_bounds.1);
+        let cy = y.clamp(c2_bounds.0, c2_bounds.1);
         (cx, cy, cost(cx, cy))
     };
 
@@ -316,6 +325,31 @@ fn nelder_mead_2d(cost: impl Fn(f64, f64) -> f64, initial: [(f64, f64); 3]) -> (
     (simplex[0].0, simplex[0].1, simplex[0].2)
 }
 
+fn bounded_offset(start: f64, bounds: (f64, f64), preferred_delta: f64) -> f64 {
+    let delta = preferred_delta.abs().min((bounds.1 - bounds.0) / 2.0);
+    if preferred_delta >= 0.0 {
+        if start + delta <= bounds.1 {
+            start + delta
+        } else {
+            start - delta
+        }
+    } else if start - delta >= bounds.0 {
+        start - delta
+    } else {
+        start + delta
+    }
+}
+
+fn initial_simplex(c1_bounds: (f64, f64), c2_bounds: (f64, f64)) -> [(f64, f64); 3] {
+    let c1 = 1.0_f64.clamp(c1_bounds.0, c1_bounds.1);
+    let c2 = 0.03_f64.clamp(c2_bounds.0, c2_bounds.1);
+    [
+        (c1, c2),
+        (bounded_offset(c1, c1_bounds, 0.08), c2),
+        (c1, bounded_offset(c2, c2_bounds, -0.015)),
+    ]
+}
+
 /// Fit (volume_scale, contrast_density) against experimental data
 /// using Nelder-Mead simplex. The `eval` closure takes (c1, c2)
 /// and returns a theoretical `Intensity`.
@@ -323,32 +357,53 @@ pub fn fit_parameters<F>(exp: &ExpData, eval: F) -> Result<FitResult>
 where
     F: Fn(f64, f64) -> Intensity,
 {
+    fit_parameters_with_bounds(exp, eval, DEFAULT_C1_BOUNDS, DEFAULT_C2_BOUNDS)
+}
+
+/// Fit (volume_scale, contrast_density) against experimental data
+/// using Nelder-Mead simplex over caller-supplied bounds.
+pub fn fit_parameters_with_bounds<F>(
+    exp: &ExpData,
+    eval: F,
+    c1_bounds: (f64, f64),
+    c2_bounds: (f64, f64),
+) -> Result<FitResult>
+where
+    F: Fn(f64, f64) -> Intensity,
+{
+    validate_bounds("c1", c1_bounds)?;
+    validate_bounds("c2", c2_bounds)?;
+
     let cost = |c1: f64, c2: f64| chi2_per_point(&eval(c1, c2), exp);
+    let initial = initial_simplex(c1_bounds, c2_bounds);
+    let (initial_c1, initial_c2) = initial[0];
 
     log::info!(
-        "Fit: initial χ²/N = {:.4} at excluded volume (c₁) = 1.0, hydration shell (c₂) = 0.03 \
+        "Fit: initial χ²/N = {:.4} at excluded volume (c₁) = {:.4}, hydration shell (c₂) = {:.4} \
          (bounds: c₁ ∈ [{:.2}, {:.2}], c₂ ∈ [{:.3}, {:.4}])",
-        cost(1.0, 0.03),
-        C1_BOUNDS.0,
-        C1_BOUNDS.1,
-        C2_BOUNDS.0,
-        C2_BOUNDS.1
+        cost(initial_c1, initial_c2),
+        initial_c1,
+        initial_c2,
+        c1_bounds.0,
+        c1_bounds.1,
+        c2_bounds.0,
+        c2_bounds.1
     );
 
-    let (c1, c2, chi2) = nelder_mead_2d(cost, [(1.0, 0.03), (1.08, 0.03), (1.0, 0.015)]);
+    let (c1, c2, chi2) = nelder_mead_2d(cost, initial, c1_bounds, c2_bounds);
 
     let theory = eval(c1, c2);
     let scale = compute_scale(&theory, exp);
 
     let on_bound = |v: f64, (lo, hi): (f64, f64)| v <= lo + 1e-6 || v >= hi - 1e-6;
-    if on_bound(c1, C1_BOUNDS) || on_bound(c2, C2_BOUNDS) {
+    if on_bound(c1, c1_bounds) || on_bound(c2, c2_bounds) {
         log::warn!(
             "Fit hit bound: c₁ = {c1:.4} (∈ [{:.2}, {:.2}]), c₂ = {c2:.4} (∈ [{:.3}, {:.4}]). \
              The fit wanted to go further — check the structure and experimental data.",
-            C1_BOUNDS.0,
-            C1_BOUNDS.1,
-            C2_BOUNDS.0,
-            C2_BOUNDS.1
+            c1_bounds.0,
+            c1_bounds.1,
+            c2_bounds.0,
+            c2_bounds.1
         );
     }
 
@@ -363,6 +418,123 @@ where
         chi2,
         scale,
     })
+}
+
+/// Fit `(volume_scale, contrast_density)` against experimental data
+/// by exhaustively evaluating an endpoint-inclusive rectangular grid
+/// over the same physical bounds as [`fit_parameters`].
+///
+/// `c1_points` and `c2_points` must both be at least 2. A finite grid
+/// finds the best sampled point, not necessarily the continuous optimum
+/// between grid points.
+pub fn fit_parameters_grid<F>(
+    exp: &ExpData,
+    eval: F,
+    c1_points: usize,
+    c2_points: usize,
+) -> Result<FitResult>
+where
+    F: Fn(f64, f64) -> Intensity,
+{
+    fit_parameters_grid_with_bounds(
+        exp,
+        eval,
+        c1_points,
+        c2_points,
+        DEFAULT_C1_BOUNDS,
+        DEFAULT_C2_BOUNDS,
+    )
+}
+
+/// Fit `(volume_scale, contrast_density)` against experimental data
+/// by exhaustively evaluating an endpoint-inclusive rectangular grid
+/// over caller-supplied fit bounds.
+///
+/// `c1_points` and `c2_points` must both be at least 2. A finite grid
+/// finds the best sampled point, not necessarily the continuous optimum
+/// between grid points.
+pub fn fit_parameters_grid_with_bounds<F>(
+    exp: &ExpData,
+    eval: F,
+    c1_points: usize,
+    c2_points: usize,
+    c1_bounds: (f64, f64),
+    c2_bounds: (f64, f64),
+) -> Result<FitResult>
+where
+    F: Fn(f64, f64) -> Intensity,
+{
+    if c1_points < 2 || c2_points < 2 {
+        return Err(crate::Error::validation(format!(
+            "grid fit requires at least 2 points per axis (got c1_points={c1_points}, \
+             c2_points={c2_points})"
+        )));
+    }
+    validate_bounds("c1", c1_bounds)?;
+    validate_bounds("c2", c2_bounds)?;
+
+    let grid_value = |(lo, hi): (f64, f64), points: usize, i: usize| {
+        lo + (hi - lo) * i as f64 / (points - 1) as f64
+    };
+
+    log::info!(
+        "Grid fit: exhaustive search over {c1_points}×{c2_points} points \
+         (c₁ ∈ [{:.2}, {:.2}], c₂ ∈ [{:.3}, {:.4}])",
+        c1_bounds.0,
+        c1_bounds.1,
+        c2_bounds.0,
+        c2_bounds.1
+    );
+
+    let mut best: Option<(f64, f64, f64)> = None;
+    for i in 0..c1_points {
+        let c1 = grid_value(c1_bounds, c1_points, i);
+        for j in 0..c2_points {
+            let c2 = grid_value(c2_bounds, c2_points, j);
+            let chi2 = chi2_per_point(&eval(c1, c2), exp);
+            if !chi2.is_finite() {
+                continue;
+            }
+            if best.is_none_or(|(_, _, best_chi2)| chi2 < best_chi2) {
+                best = Some((c1, c2, chi2));
+            }
+        }
+    }
+
+    let Some((c1, c2, chi2)) = best else {
+        return Err(crate::Error::internal(
+            "grid fit did not find any finite χ² value",
+        ));
+    };
+
+    let theory = eval(c1, c2);
+    let scale = compute_scale(&theory, exp);
+
+    log::info!(
+        "Grid fit: χ²/N = {chi2:.4}, excluded volume (c₁) = {c1:.4}, \
+         hydration shell (c₂) = {c2:.4}, scale = {scale:.6e}"
+    );
+
+    Ok(FitResult {
+        volume_scale: c1,
+        contrast_density: c2,
+        chi2,
+        scale,
+    })
+}
+
+fn validate_bounds(name: &str, (lo, hi): (f64, f64)) -> Result<()> {
+    if !lo.is_finite() || !hi.is_finite() {
+        return Err(crate::Error::validation(format!(
+            "{name} bounds must be finite"
+        )));
+    }
+    if lo >= hi {
+        return Err(crate::Error::validation(format!(
+            "{name} lower bound must be less than upper bound"
+        )));
+    }
+    Ok(())
 }
 
 /// Write the fitted curve as CSV: q, I_exp, I_fit, sigma.
@@ -402,5 +574,125 @@ mod tests {
         assert!(exp.q[0] > 0.0);
         assert!(exp.intensity[0] > 0.0);
         assert!(exp.sigma[0] > 0.0);
+    }
+
+    #[test]
+    fn nelder_mead_initial_simplex_respects_custom_bounds() {
+        let simplex = initial_simplex((2.0, 3.0), (0.2, 0.4));
+
+        for &(c1, c2) in &simplex {
+            assert!((2.0..=3.0).contains(&c1));
+            assert!((0.2..=0.4).contains(&c2));
+        }
+        assert_ne!(simplex[0], simplex[1]);
+        assert_ne!(simplex[0], simplex[2]);
+    }
+
+    #[test]
+    fn nelder_mead_rejects_invalid_bounds() {
+        let exp =
+            ExpData::from_arrays(vec![0.0, 1.0, 2.0], vec![1.0, 1.25, 0.4], Vec::new()).unwrap();
+        let err = fit_parameters_with_bounds(
+            &exp,
+            |c1, c2| Intensity {
+                q: vec![0.0, 1.0, 2.0],
+                total: vec![1.0, c1, 10.0 * c2],
+                contributions: None,
+                ..Default::default()
+            },
+            (2.0, 0.5),
+            DEFAULT_C2_BOUNDS,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("lower bound"));
+    }
+
+    #[test]
+    fn grid_fit_finds_sampled_minimum() {
+        let exp =
+            ExpData::from_arrays(vec![0.0, 1.0, 2.0], vec![1.0, 1.25, 0.4], Vec::new()).unwrap();
+        let fit = fit_parameters_grid(
+            &exp,
+            |c1, c2| Intensity {
+                q: vec![0.0, 1.0, 2.0],
+                total: vec![1.0, c1, 10.0 * c2],
+                contributions: None,
+                ..Default::default()
+            },
+            7,
+            6,
+        )
+        .unwrap();
+
+        assert!((fit.volume_scale - 1.25).abs() < 1e-12);
+        assert!((fit.contrast_density - 0.04).abs() < 1e-12);
+        assert!(fit.chi2 < 1e-24);
+    }
+
+    #[test]
+    fn grid_fit_rejects_degenerate_axes() {
+        let exp =
+            ExpData::from_arrays(vec![0.0, 1.0, 2.0], vec![1.0, 1.25, 0.4], Vec::new()).unwrap();
+        let err = fit_parameters_grid(
+            &exp,
+            |c1, c2| Intensity {
+                q: vec![0.0, 1.0, 2.0],
+                total: vec![1.0, c1, 10.0 * c2],
+                contributions: None,
+                ..Default::default()
+            },
+            1,
+            6,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("at least 2 points"));
+    }
+
+    #[test]
+    fn grid_fit_accepts_custom_c2_bounds() {
+        let exp =
+            ExpData::from_arrays(vec![0.0, 1.0, 2.0], vec![1.0, 1.25, 12.0], Vec::new()).unwrap();
+        let fit = fit_parameters_grid_with_bounds(
+            &exp,
+            |c1, c2| Intensity {
+                q: vec![0.0, 1.0, 2.0],
+                total: vec![1.0, c1, 10.0 * c2],
+                contributions: None,
+                ..Default::default()
+            },
+            7,
+            6,
+            (0.5, 2.0),
+            (0.0, 2.0),
+        )
+        .unwrap();
+
+        assert!((fit.volume_scale - 1.25).abs() < 1e-12);
+        assert!((fit.contrast_density - 1.2).abs() < 1e-12);
+        assert!(fit.chi2 < 1e-24);
+    }
+
+    #[test]
+    fn grid_fit_rejects_invalid_bounds() {
+        let exp =
+            ExpData::from_arrays(vec![0.0, 1.0, 2.0], vec![1.0, 1.25, 12.0], Vec::new()).unwrap();
+        let err = fit_parameters_grid_with_bounds(
+            &exp,
+            |c1, c2| Intensity {
+                q: vec![0.0, 1.0, 2.0],
+                total: vec![1.0, c1, 10.0 * c2],
+                contributions: None,
+                ..Default::default()
+            },
+            7,
+            6,
+            (0.5, 2.0),
+            (2.0, 0.0),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("lower bound"));
     }
 }

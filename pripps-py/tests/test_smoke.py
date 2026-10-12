@@ -147,9 +147,31 @@ class TestPepsiFit(unittest.TestCase):
 
     def test_builtin_fit(self):
         """The built-in `model.fit` should reach a competitive χ²/N."""
-        fit = self.model.fit(self.exp[:, 0], self.exp[:, 1], self.exp[:, 2])
+        fit = self.model.fit(
+            self.exp[:, 0], self.exp[:, 1], self.exp[:, 2], method="nelder-mead"
+        )
         self.assertIsInstance(fit, pripps.FitResult)
         self.assertLess(fit.chi2, 0.5, f"built-in fit χ²/N = {fit.chi2:.4f}")
+
+    def test_builtin_grid_fit_method(self):
+        """Grid search should be selected through `model.fit(method=...)`."""
+        fit = self.model.fit(
+            self.exp[:, 0],
+            self.exp[:, 1],
+            self.exp[:, 2],
+            method=pripps.FitMethod.Grid,
+            c1_points=11,
+            c2_points=11,
+        )
+        self.assertIsInstance(fit, pripps.FitResult)
+        self.assertTrue(np.isfinite(fit.chi2))
+
+    def test_bad_fit_method_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.model.fit(
+                self.exp[:, 0], self.exp[:, 1], self.exp[:, 2], method="garbage"
+            )
+        self.assertIn("garbage", str(ctx.exception))
 
     def test_manual_fit_chi2(self):
         """Manual scipy fit over the typed Intensity result."""
