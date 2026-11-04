@@ -6,8 +6,9 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use ::pripps::{
-    DebyeModel, DirectModel, ExcludedVolume, ExpData, FitResult, Hydration, Intensity,
-    IntensityScheme, MultipoleModel, Pripps, SolventConfig, TrajectoryOptions, fit_parameters,
+    DEFAULT_C1_BOUNDS, DEFAULT_C2_BOUNDS, DebyeModel, DirectModel, ExcludedVolume, ExpData,
+    FitResult, Hydration, Intensity, IntensityScheme, MultipoleModel, Pripps, SolventConfig,
+    TrajectoryOptions, fit_parameters_grid_with_bounds, fit_parameters_with_bounds,
 };
 
 // ----------------------------------------------------------------------------
@@ -46,6 +47,15 @@ enum PyScheme {
     Multipole,
     Debye,
     Direct,
+}
+
+/// Fitting method for cached model `.fit(...)`. Pass this enum or the
+/// equivalent lowercase string (e.g. `pripps.FitMethod.Grid` or `"grid"`).
+#[pyclass(name = "FitMethod", module = "pripps", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+enum PyFitMethod {
+    NelderMead,
+    Grid,
 }
 
 /// Canonical lowercase name for an `excluded` argument that is either a
@@ -117,6 +127,27 @@ fn scheme_from(obj: Option<&Bound<'_, PyAny>>) -> PyResult<PyScheme> {
     }
     Err(PyTypeError::new_err(
         "`model` must be a str or pripps.Scheme",
+    ))
+}
+
+/// Resolve a fitting-method argument (string or `pripps.FitMethod`) to a
+/// [`PyFitMethod`].
+fn fit_method_from(obj: &Bound<'_, PyAny>) -> PyResult<PyFitMethod> {
+    if let Ok(method) = obj.extract::<PyFitMethod>() {
+        return Ok(method);
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        let normalized = s.to_lowercase().replace('_', "-");
+        return match normalized.as_str() {
+            "nelder-mead" | "neldermead" => Ok(PyFitMethod::NelderMead),
+            "grid" => Ok(PyFitMethod::Grid),
+            other => Err(PyValueError::new_err(format!(
+                "unknown fit method: {other} (expected `nelder-mead` or `grid`)"
+            ))),
+        };
+    }
+    Err(PyTypeError::new_err(
+        "`method` must be a str or pripps.FitMethod",
     ))
 }
 
@@ -583,17 +614,39 @@ macro_rules! cached_model {
                 PyIntensity::new(py, self.0.intensity(volume_scale, contrast_density))
             }
 
-            /// Fit `(volume_scale, contrast_density)` to experimental
-            /// data. `q`/`intensity` are equal-length arrays; `sigma`
-            /// (uncertainties) defaults to ones (unweighted χ²).
-            #[pyo3(signature = (q, intensity, sigma = None))]
+            /// Fit `(volume_scale, contrast_density)` to experimental data.
+            ///
+            /// `method` accepts `"nelder-mead"` (default) or `"grid"`
+            /// (or `pripps.FitMethod.NelderMead` / `.Grid`). `q`/`intensity`
+            /// are equal-length arrays; `sigma` defaults to ones
+            /// (unweighted χ²). Grid options are ignored by Nelder-Mead
+            /// except for `c1_bounds` / `c2_bounds`, which apply to both
+            /// methods.
+            #[pyo3(signature = (q, intensity, sigma = None, *, method = None, c1_points = 151, c2_points = 101, c1_bounds = None, c2_bounds = None))]
             fn fit(
                 &self,
                 q: Vec<f64>,
                 intensity: Vec<f64>,
                 sigma: Option<Vec<f64>>,
+                method: Option<Bound<'_, PyAny>>,
+                c1_points: usize,
+                c2_points: usize,
+                c1_bounds: Option<(f64, f64)>,
+                c2_bounds: Option<(f64, f64)>,
             ) -> PyResult<PyFitResult> {
-                run_fit(q, intensity, sigma, |c1, c2| self.0.intensity(c1, c2))
+                run_fit(
+                    q,
+                    intensity,
+                    sigma,
+                    method
+                        .as_ref()
+                        .map_or(Ok(PyFitMethod::NelderMead), fit_method_from)?,
+                    c1_points,
+                    c2_points,
+                    c1_bounds,
+                    c2_bounds,
+                    |c1, c2| self.0.intensity(c1, c2),
+                )
             }
 
             /// The q grid the model was prepared over.
@@ -723,16 +776,29 @@ fn parse_box(o: &Bound<'_, PyAny>) -> PyResult<[f64; 3]> {
     ))
 }
 
-/// Run the core (volume_scale, contrast_density) fit using `eval` as the
-/// per-parameter intensity evaluator.
+/// Run the selected core fit using `eval` as the per-parameter intensity
+/// evaluator.
 fn run_fit<F: Fn(f64, f64) -> Intensity>(
     q: Vec<f64>,
     intensity: Vec<f64>,
     sigma: Option<Vec<f64>>,
+    method: PyFitMethod,
+    c1_points: usize,
+    c2_points: usize,
+    c1_bounds: Option<(f64, f64)>,
+    c2_bounds: Option<(f64, f64)>,
     eval: F,
 ) -> PyResult<PyFitResult> {
     let exp = ExpData::from_arrays(q, intensity, sigma.unwrap_or_default()).map_err(into_py_err)?;
-    let inner = fit_parameters(&exp, eval).map_err(into_py_err)?;
+    let c1_bounds = c1_bounds.unwrap_or(DEFAULT_C1_BOUNDS);
+    let c2_bounds = c2_bounds.unwrap_or(DEFAULT_C2_BOUNDS);
+    let inner = match method {
+        PyFitMethod::NelderMead => fit_parameters_with_bounds(&exp, eval, c1_bounds, c2_bounds),
+        PyFitMethod::Grid => {
+            fit_parameters_grid_with_bounds(&exp, eval, c1_points, c2_points, c1_bounds, c2_bounds)
+        }
+    }
+    .map_err(into_py_err)?;
     Ok(PyFitResult { inner })
 }
 
@@ -758,7 +824,8 @@ fn into_py_err(err: ::pripps::Error) -> PyErr {
 /// with `Pripps.multipole_model(structure_file, ...)`, then call
 /// `model.intensity(volume_scale, contrast_density)` (→ `Intensity` with
 /// numpy `.q` / `.total` / `.atoms` / `.excluded` / `.hydration`) or
-/// `model.fit(q, intensity, sigma)` (→ `FitResult`). For trajectory
+/// `model.fit(q, intensity, sigma, method="nelder-mead")` (→ `FitResult`).
+/// For trajectory
 /// averaging use the one-shot `Pripps.intensity(model=..., xtc=...)`.
 #[pymodule]
 fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -777,5 +844,6 @@ fn pripps(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExcluded>()?;
     m.add_class::<PyHydration>()?;
     m.add_class::<PyScheme>()?;
+    m.add_class::<PyFitMethod>()?;
     Ok(())
 }

@@ -73,20 +73,31 @@ per-contribution breakdown — currently trajectory averages (the one-shot
 
 `multipole_model` does the expensive per-structure setup once and caches the
 intermediate amplitudes; `model.intensity(volume_scale, contrast_density)` then
-only applies the fit knobs — typically under a millisecond. There are two ways
-to fit:
+only applies the fit knobs — typically under a millisecond. Choose the fitting
+method with the required `method` argument:
 
 ```python
 import numpy as np
+import pripps
 
 # experimental data: q (Å⁻¹), I(q), σ(q)
 q_exp, i_exp, sigma = np.loadtxt("experimental.dat", comments="#", unpack=True)
 
-# (a) built-in fit — returns a typed FitResult:
-fit = model.fit(q_exp, i_exp, sigma)
+# (a) Nelder-Mead fit — returns a typed FitResult:
+fit = model.fit(q_exp, i_exp, sigma, method="nelder-mead")
 print(fit.volume_scale, fit.contrast_density, fit.chi2, fit.scale)
 
-# (b) manual fit with scipy for full control:
+# (b) exhaustive grid fit over the built-in bounds:
+fit_grid = model.fit(q_exp, i_exp, sigma, method="grid",
+                     c1_points=151, c2_points=101)
+print(fit_grid.volume_scale, fit_grid.contrast_density, fit_grid.chi2)
+
+# Change the grid-search box when needed:
+fit_grid_wide = model.fit(q_exp, i_exp, sigma, method=pripps.FitMethod.Grid,
+                          c2_bounds=(0.0, 2.0),
+                          c1_points=151, c2_points=201)
+
+# (c) manual fit with scipy for full control:
 from scipy.optimize import minimize
 def chi2(params):
     out = model.intensity(*params)
@@ -103,7 +114,7 @@ discrete-q) accept the same solvent arguments and expose the same
 
 A full working example is in `pripps-py/examples/fit_lysozyme.py`, which fits
 lysozyme against the shipped `tests/lysozyme/lyzexp.dat` and reproduces FoXS's
-χ²/N ≈ 0.20 (demonstrating both fitting styles):
+χ²/N ≈ 0.20 (demonstrating both fitting methods):
 
 ```sh
 python pripps-py/examples/fit_lysozyme.py
@@ -491,6 +502,10 @@ Output is CSV: `q,total` for vacuum, or
 With `--fit`, output is `q,i_exp,i_fit,sigma` at experimental
 q points. The experimental file is auto-detected as CSV or
 whitespace-separated (3 columns: q, I, σ).
+Use `--fit-method grid --fit-c1-points 151 --fit-c2-points 101`
+to compare against an exhaustive grid search over the fit bounds.
+Override the default bounds (`c₁ ∈ [0.5, 2.0]`, `c₂ ∈ [0.0, 0.1]`)
+with `--fit-c1-bounds LOWER UPPER` and `--fit-c2-bounds LOWER UPPER`.
 
 ### GPU acceleration (`gpu` feature)
 

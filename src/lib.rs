@@ -48,7 +48,10 @@ use trajectory::trajectory_average;
 pub use debye::DebyeModel;
 pub use error::{Error, Result};
 pub use explicit::DirectModel;
-pub use fit::{ExpData, FitResult, fit_parameters};
+pub use fit::{
+    DEFAULT_C1_BOUNDS, DEFAULT_C2_BOUNDS, ExpData, FitResult, fit_parameters, fit_parameters_grid,
+    fit_parameters_grid_with_bounds, fit_parameters_with_bounds,
+};
 pub use multipole::MultipoleModel;
 pub use solvent::{ExcludedVolume, Hydration, SolventConfig};
 
