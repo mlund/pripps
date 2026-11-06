@@ -44,7 +44,7 @@ impl QGrid {
         if !box_sides.iter().all(|&l| l.is_finite() && l > 0.0) {
             return Err(Error::usage(format!("invalid box sides {box_sides:?}")));
         }
-        let mut shells = shells(box_sides, q_max);
+        let mut shells = exact_shells(box_sides, q_max);
         if shells.is_empty() {
             return Err(Error::usage(format!(
                 "q_max {q_max} Å⁻¹ is below the shortest lattice vector of box {box_sides:?}"
@@ -56,13 +56,17 @@ impl QGrid {
             bins: Vec::new(),
             q: Vec::new(),
         };
-        for (bin, shell) in shells.iter_mut().enumerate() {
-            lattice
-                .q
-                .push(shell.iter().map(|v| v.q).sum::<f64>() / shell.len() as f64);
-            for v in spread_subset(shell, max_per_bin.max(1)) {
-                lattice.vectors.push(v.n);
-                lattice.bins.push(bin);
+        let cap = max_per_bin.max(1);
+        for shell in shells.iter_mut() {
+            let q = shell.iter().map(|v| v.q).sum::<f64>() / shell.len() as f64;
+            lattice.push_bin(q, spread_subset(shell, cap).iter().map(|v| v.n));
+        }
+        let width = bin_width(box_sides);
+        let first_sampled = largest_exact_bin(box_sides) + 1;
+        let last = (q_max / width).round() as i64;
+        for k in first_sampled..=last {
+            if let Some((q, vectors)) = sampled_shell(box_sides, k, q_max, cap) {
+                lattice.push_bin(q, vectors.into_iter());
             }
         }
         Ok(Self {
@@ -149,16 +153,112 @@ impl QGrid {
     }
 }
 
+impl Lattice {
+    fn push_bin(&mut self, q: f64, vectors: impl Iterator<Item = [i32; 3]>) {
+        let bin = self.q.len();
+        self.q.push(q);
+        for n in vectors {
+            self.vectors.push(n);
+            self.bins.push(bin);
+        }
+    }
+}
+
+/// Bins up to about this many vectors are enumerated exactly; larger ones
+/// (big boxes, high q) are sampled, which bounds memory and setup time.
+/// Independent of the cap, so differently capped grids share their q.
+const EXACT_BIN_LIMIT: f64 = 20_000.0;
+
+fn bin_width(box_sides: [f64; 3]) -> f64 {
+    2.0 * PI / box_sides.iter().cloned().fold(0.0, f64::max)
+}
+
+/// Expected vectors in half of bin k: shell volume × lattice density
+/// V/(2π)³, halved for ±n.
+fn expected_count(box_sides: [f64; 3], k: i64) -> f64 {
+    let width = bin_width(box_sides);
+    let volume: f64 = box_sides.iter().product();
+    2.0 * PI * (k as f64 * width).powi(2) * width * volume / (2.0 * PI).powi(3)
+}
+
+fn largest_exact_bin(box_sides: [f64; 3]) -> i64 {
+    (1..)
+        .find(|&k| expected_count(box_sides, k + 1) > EXACT_BIN_LIMIT)
+        .unwrap()
+}
+
+/// Bin k beyond the exact range: spherical-Fibonacci directions at radii
+/// uniform in the shell volume, snapped to the lattice and deduplicated.
+/// q is the shell's mean |q| for uniform density, not the sample's, so it
+/// doesn't depend on the cap.
+fn sampled_shell(
+    box_sides: [f64; 3],
+    k: i64,
+    q_max: f64,
+    cap: usize,
+) -> Option<(f64, Vec<[i32; 3]>)> {
+    let width = bin_width(box_sides);
+    let (a, b) = (
+        (k as f64 - 0.5) * width,
+        ((k as f64 + 0.5) * width).min(q_max),
+    );
+    if b <= a {
+        return None;
+    }
+    let q = 0.75 * (b.powi(4) - a.powi(4)) / (b.powi(3) - a.powi(3));
+    let wanted = cap.min(EXACT_BIN_LIMIT as usize);
+    // Snapping loses some points (duplicates, outside the shell); the sweep
+    // runs pole to pole, so it is thinned at the end, not cut short.
+    let attempts = 2 * wanted + 16;
+    let mut seen = std::collections::HashSet::new();
+    let mut vectors = Vec::with_capacity(wanted);
+    for i in 0..attempts {
+        let z = 1.0 - (2 * i + 1) as f64 / attempts as f64;
+        let (sin, cos) = (i as f64 * GOLDEN_ANGLE).sin_cos();
+        let rho = (1.0 - z * z).sqrt();
+        let t = (i as f64 * 0.618_033_988_749_895).fract();
+        let r = (a.powi(3) + t * (b.powi(3) - a.powi(3))).cbrt();
+        let direction = [rho * cos, rho * sin, z];
+        let mut n =
+            [0, 1, 2].map(|ax| (r * direction[ax] * box_sides[ax] / (2.0 * PI)).round() as i32);
+        if !upper_half(n) {
+            n = n.map(|c| -c);
+        }
+        let length = norm(box_sides, n);
+        let inside =
+            length >= a && (length < (k as f64 + 0.5) * width) && length <= q_max * (1.0 + 1e-12);
+        if upper_half(n) && inside && seen.insert(n) {
+            vectors.push(n);
+        }
+    }
+    let kept = (0..wanted.min(vectors.len()))
+        .map(|i| vectors[i * vectors.len() / wanted.min(vectors.len())])
+        .collect::<Vec<_>>();
+    (!kept.is_empty()).then_some((q, kept))
+}
+
+const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
+
+fn norm(box_sides: [f64; 3], n: [i32; 3]) -> f64 {
+    (0..3)
+        .map(|a| (2.0 * PI * n[a] as f64 / box_sides[a]).powi(2))
+        .sum::<f64>()
+        .sqrt()
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LatticeVector {
     n: [i32; 3],
     q: f64,
 }
 
-/// Lattice vectors with |q| ≤ q_max, one of each ±n pair (I(q) = I(−q)),
-/// grouped into non-empty |q| bins of width 2π/max(L).
-fn shells(box_sides: [f64; 3], q_max: f64) -> Vec<Vec<LatticeVector>> {
-    let width = 2.0 * PI / box_sides.iter().cloned().fold(0.0, f64::max);
+/// Lattice vectors with |q| ≤ q_max in the exactly enumerated bins, one of
+/// each ±n pair (I(q) = I(−q)), grouped into non-empty |q| bins of width
+/// 2π/max(L).
+fn exact_shells(box_sides: [f64; 3], q_max: f64) -> Vec<Vec<LatticeVector>> {
+    let width = bin_width(box_sides);
+    let last_exact = largest_exact_bin(box_sides);
+    let q_max = q_max.min((last_exact as f64 + 0.5) * width);
     // Same slack as the |q| test below, so a vector at exactly q_max counts.
     let n_max = box_sides.map(|l| (q_max * (1.0 + 1e-12) * l / (2.0 * PI)).floor() as i32);
     let mut bins: BTreeMap<i64, Vec<LatticeVector>> = BTreeMap::new();
@@ -169,12 +269,10 @@ fn shells(box_sides: [f64; 3], q_max: f64) -> Vec<Vec<LatticeVector>> {
                 if !upper_half(n) {
                     continue;
                 }
-                let q = (0..3)
-                    .map(|a| (2.0 * PI * n[a] as f64 / box_sides[a]).powi(2))
-                    .sum::<f64>()
-                    .sqrt();
-                if q <= q_max * (1.0 + 1e-12) {
-                    let bin = (q / width).round() as i64;
+                let q = norm(box_sides, n);
+                let bin = (q / width).round() as i64;
+                // Bins beyond `last_exact` are sampled instead.
+                if q <= q_max * (1.0 + 1e-12) && bin <= last_exact {
                     bins.entry(bin).or_default().push(LatticeVector { n, q });
                 }
             }
@@ -242,20 +340,18 @@ mod tests {
         assert_eq!(full.q(), capped.q());
     }
 
-    /// ⟨n̂n̂ᵀ⟩ = I/3 for directions spread over the sphere.
+    /// ⟨n̂n̂ᵀ⟩ over one bin's kept vectors; I/3 when they span the sphere.
+    /// Keeping one of each ±n pair leaves it unchanged.
     #[allow(clippy::needless_range_loop)] // a tensor reads best by index
-    #[test]
-    fn a_capped_bin_still_spans_the_sphere() {
-        let grid = QGrid::lattice([L; 3], 0.5, 50).unwrap();
+    fn assert_isotropic(grid: &QGrid, bin: usize, epsilon: f64) {
         let Kind::Lattice(lattice) = &grid.kind else {
             unreachable!()
         };
-        let last = lattice.q.len() - 1;
-        let mut tensor = [[0.0; 3]; 3];
         let picked: Vec<_> = (0..lattice.vectors.len())
-            .filter(|&i| lattice.bins[i] == last)
+            .filter(|&i| lattice.bins[i] == bin)
             .map(|i| lattice.vectors[i].map(f64::from))
             .collect();
+        let mut tensor = [[0.0; 3]; 3];
         for v in &picked {
             let norm2: f64 = v.iter().map(|x| x * x).sum();
             for a in 0..3 {
@@ -264,13 +360,24 @@ mod tests {
                 }
             }
         }
-        // Only one of each ±n pair is kept, which leaves n̂n̂ᵀ unchanged.
         for a in 0..3 {
             for b in 0..3 {
                 let expected = if a == b { 1.0 / 3.0 } else { 0.0 };
-                approx::assert_abs_diff_eq!(tensor[a][b], expected, epsilon = 0.03);
+                approx::assert_abs_diff_eq!(tensor[a][b], expected, epsilon = epsilon);
             }
         }
+    }
+
+    #[test]
+    fn a_capped_bin_still_spans_the_sphere() {
+        let grid = QGrid::lattice([L; 3], 0.5, 50).unwrap();
+        assert_isotropic(&grid, grid.q().len() - 1, 0.03);
+    }
+
+    #[test]
+    fn a_sampled_bin_spans_the_sphere() {
+        let grid = QGrid::lattice([6900.0; 3], 0.5, 200).unwrap();
+        assert_isotropic(&grid, grid.q().len() - 2, 0.03);
     }
 
     #[test]
@@ -278,5 +385,33 @@ mod tests {
         assert!(QGrid::lattice([L; 3], 0.01, 10).is_err()); // below 2π/L
         assert!(QGrid::lattice([L, 0.0, L], 0.5, 10).is_err());
         assert!(QGrid::lattice([L, f64::NAN, L], 0.5, 10).is_err());
+    }
+
+    /// 0.01 mM with N = 2000 gives L ≈ 6900 Å: ~10⁸ vectors below 0.5 Å⁻¹.
+    /// Large bins must be sampled, quickly and with the cap-independent q
+    /// that lets differently capped grids share their q-values.
+    #[test]
+    fn huge_boxes_are_sampled_not_enumerated() {
+        let l = 6900.0;
+        let start = std::time::Instant::now();
+        let small = QGrid::lattice([l; 3], 0.5, 16).unwrap();
+        let large = QGrid::lattice([l; 3], 0.5, 200).unwrap();
+        assert!(start.elapsed().as_secs_f64() < 5.0, "{:?}", start.elapsed());
+        assert_eq!(small.q(), large.q());
+        assert!(small.q().windows(2).all(|w| w[0] < w[1]));
+        let counts = small.vectors_per_bin();
+        assert!(counts.iter().all(|&n| n <= 16));
+        assert!(counts.iter().filter(|&&n| n < 12).count() < 3, "{counts:?}");
+        // The shell's mean |q| (uniform in volume) near the top bin.
+        let width = 2.0 * PI / l;
+        let k = (small.q()[small.q().len() / 2] / width).round();
+        let expected = 0.75 * ((k + 0.5).powi(4) - (k - 0.5).powi(4))
+            / ((k + 0.5).powi(3) - (k - 0.5).powi(3))
+            * width;
+        approx::assert_relative_eq!(
+            small.q()[small.q().len() / 2],
+            expected,
+            max_relative = 1e-6
+        );
     }
 }
