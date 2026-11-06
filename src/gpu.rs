@@ -612,7 +612,9 @@ impl GpuContext {
             .map_err(|_| Error::internal("GPU readback callback was dropped"))?
             .map_err(|e| Error::internal(format!("GPU buffer map failed: {e}")))?;
 
-        let data = slice.get_mapped_range();
+        let data = slice
+            .get_mapped_range()
+            .map_err(|e| Error::internal(format!("GPU buffer view failed: {e}")))?;
         let out = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
         drop(data);
         frame.read_buf.unmap();

@@ -27,7 +27,7 @@ yaml_serde = "0.10"
 voronota-ltr = { git = "https://github.com/mlund/voronota-ltr" }
 
 # GPU (wgpu) Direct Fourier transform — see `gpu` feature below.
-wgpu = { version = "29", optional = true }
+wgpu = { version = "30", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
 pollster = { version = "0.4", optional = true }
 futures-channel = { version = "0.3", optional = true }
