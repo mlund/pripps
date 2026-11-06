@@ -29,6 +29,9 @@ pub struct BoxScatterer {
     backend: Backend,
 }
 
+// One per scatterer, so variant size is irrelevant; which side is larger
+// differs between native and wasm wgpu.
+#[allow(clippy::large_enum_variant)]
 enum Backend {
     Cpu(DirectTransform),
     #[cfg(feature = "gpu")]
