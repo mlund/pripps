@@ -47,6 +47,11 @@ use structure::Structure;
 use trajectory::trajectory_average;
 
 pub use box_scatterer::{BoxIntensity, BoxScatterer};
+
+/// Single-bead residue form factors with the excluded solvent folded in
+/// (Vinterbladh), as YAML text for [`BoxScatterer`]; embedded so callers
+/// without a filesystem, such as the browser, have them.
+pub const RESIDUE_FORM_FACTORS: &str = include_str!("../assets/poly_amino_acid_combined.yaml");
 pub use debye::DebyeModel;
 pub use error::{Error, Result};
 pub use explicit::DirectModel;
