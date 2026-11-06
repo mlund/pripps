@@ -16,7 +16,7 @@
 
 use crate::solvent::SolventConfig;
 use crate::{
-    Contributions, Error, Intensity, IntensityCalculator, Result, Structure, Vector3,
+    Contributions, Error, Intensity, IntensityCalculator, QGrid, Result, Structure, Vector3,
     formfactor::FormFactorMap,
 };
 use itertools::Itertools;
@@ -67,8 +67,11 @@ const MILLER_INDEX: [Vector3; 13] = [
 /// - http://doi.org/10.1063/1.449987
 #[derive(Debug)]
 pub(crate) struct DirectTransform {
-    /// q directions; divided by box side lengths to get q
+    grid: QGrid,
+    /// The grid's q-vectors times the box; divided by the box sides per frame.
     directions: Vec<Vector3>,
+    /// The same vectors as integer lattice indices, for phase tables.
+    indices: Vec<[i32; 3]>,
     /// Form factors for each atom kind
     formfactors: FormFactorMap,
     /// Optional solvent correction
@@ -77,6 +80,58 @@ pub(crate) struct DirectTransform {
     /// molecules so the per-molecule self term `Σ_m|F_m|²` is accumulated
     /// alongside `I_box = |Σ_m F_m|²` (see [`Intensity::self_term`]).
     num_molecules: Option<usize>,
+}
+
+/// e^{i2πn·x_a/L_a} for n = 0..=n_max, per atom and axis; negative n by
+/// conjugation. A q-vector's phase is then three table lookups and two
+/// complex products instead of a sin and cos, which pays when the atoms are
+/// few (mass centres) and the q-vectors many (lattice grids).
+struct PhaseTable {
+    stride: usize,
+    /// Atom-major, `stride` powers per atom.
+    powers: [Vec<Complex<f64>>; 3],
+}
+
+/// Table entries (16 bytes each) beyond which sin/cos is used instead.
+const MAX_PHASE_ENTRIES: usize = 1 << 20;
+
+impl PhaseTable {
+    fn new_if_small(pos: &[Vector3], box_sides: &Vector3, indices: &[[i32; 3]]) -> Option<Self> {
+        let n_max = indices.iter().flatten().map(|n| n.unsigned_abs()).max()? as usize;
+        let stride = n_max + 1;
+        if pos.len() * stride * 3 > MAX_PHASE_ENTRIES {
+            return None;
+        }
+        let powers = [0, 1, 2].map(|axis| {
+            pos.iter()
+                .flat_map(|r| {
+                    let step = Complex::from_polar(1.0, 2.0 * PI * r[axis] / box_sides[axis]);
+                    std::iter::successors(Some(Complex::new(1.0, 0.0)), move |p| Some(p * step))
+                        .take(stride)
+                })
+                .collect()
+        });
+        Some(Self { stride, powers })
+    }
+
+    fn phase(&self, atom: usize, axis: usize, n: i32) -> Complex<f64> {
+        let p = self.powers[axis][atom * self.stride + n.unsigned_abs() as usize];
+        if n < 0 { p.conj() } else { p }
+    }
+
+    /// Σ f_j e^{iq·r_j} over the atoms from `first` on.
+    fn amplitude(&self, first: usize, form_factors: &[f64], n: [i32; 3]) -> Complex<f64> {
+        form_factors
+            .iter()
+            .enumerate()
+            .map(|(j, &f)| {
+                let atom = first + j;
+                f * self.phase(atom, 0, n[0])
+                    * self.phase(atom, 1, n[1])
+                    * self.phase(atom, 2, n[2])
+            })
+            .sum()
+    }
 }
 
 /// Complex amplitude A(q) = Σ f_i · exp(i·q·r_i) for a set of
@@ -111,25 +166,22 @@ impl DirectTransform {
         p_max: usize,
         solvent: Option<SolventConfig>,
     ) -> Self {
-        // Expand each base direction into p_max reciprocal-lattice points,
-        // q·L = 2π·p·(h,k,l). Larger p reaches higher |q| (finer real-space
-        // detail) along the same direction; the division by the box sides is
-        // deferred to the per-structure calculation.
-        let directions: Vec<_> = MILLER_INDEX
-            .iter()
-            .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
-            .collect();
+        let mut transform = Self::from_grid(formfactors, QGrid::miller(p_max));
+        transform.solvent = solvent;
+        transform
+    }
 
-        log::info!(
-            "Generated {} q-vectors with p_max = {}",
-            directions.len(),
-            p_max
-        );
-
+    /// Vacuum only: the solvent model groups by exact |q| (Miller grids).
+    pub(crate) fn from_grid(formfactors: FormFactorMap, grid: QGrid) -> Self {
+        let indices = grid.indices();
+        let directions = to_directions(&indices);
+        log::info!("Generated {} q-vectors", directions.len());
         Self {
+            grid,
             formfactors,
             directions,
-            solvent,
+            indices,
+            solvent: None,
             num_molecules: None,
         }
     }
@@ -147,25 +199,9 @@ impl DirectTransform {
         // sum collapses to the plain box amplitude and the extra self term is
         // dropped below. Commensurate q-vectors make `|Σ_m F_m|²` and `Σ_m|F_m|²`
         // PBC-invariant, so the molecule positions never need unwrapping.
-        let n = self.num_molecules.unwrap_or(1);
-        let m = (structure.pos.len() / n).max(1);
-        let rows: Vec<(f64, [f64; 2])> = self
-            .directions
-            .par_iter()
-            .map(|dir| dir.component_div(box_sides))
-            .map(|q| {
-                let ff = eval_atom_form_factors(q.norm(), &structure.ids, &self.formfactors)?;
-                let mut a = Complex::new(0.0, 0.0);
-                let mut self_term = 0.0;
-                for (pos, ff) in structure.pos.chunks(m).zip(ff.chunks(m)) {
-                    let f_m = complex_amplitude(&q, pos, ff);
-                    a += f_m;
-                    self_term += f_m.norm_sqr();
-                }
-                Ok((q.norm(), [a.norm_sqr(), self_term]))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let grouped = average_by_qnorm(rows);
+        let phases = PhaseTable::new_if_small(&structure.pos, box_sides, &self.indices);
+        let rows = self.vacuum_rows(structure, box_sides, phases.as_ref())?;
+        let grouped = self.grid.group(rows);
 
         Ok(Intensity {
             q: grouped.iter().map(|g| g.0).collect(),
@@ -177,6 +213,36 @@ impl DirectTransform {
                 .map(|_| grouped.iter().map(|g| g.1[1]).collect()),
             ..Default::default()
         })
+    }
+
+    /// (|q|, [|Σ_m F_m|², Σ_m |F_m|²]) per q-vector.
+    fn vacuum_rows(
+        &self,
+        structure: &Structure,
+        box_sides: &Vector3,
+        phases: Option<&PhaseTable>,
+    ) -> Result<Vec<(f64, [f64; 2])>> {
+        let n = self.num_molecules.unwrap_or(1);
+        let m = (structure.pos.len() / n).max(1);
+        self.directions
+            .par_iter()
+            .zip(&self.indices)
+            .map(|(dir, &index)| {
+                let q = dir.component_div(box_sides);
+                let ff = eval_atom_form_factors(q.norm(), &structure.ids, &self.formfactors)?;
+                let mut a = Complex::new(0.0, 0.0);
+                let mut self_term = 0.0;
+                for (mol, (pos, ff)) in structure.pos.chunks(m).zip(ff.chunks(m)).enumerate() {
+                    let f_m = match phases {
+                        Some(table) => table.amplitude(mol * m, ff, index),
+                        None => complex_amplitude(&q, pos, ff),
+                    };
+                    a += f_m;
+                    self_term += f_m.norm_sqr();
+                }
+                Ok((q.norm(), [a.norm_sqr(), self_term]))
+            })
+            .collect()
     }
 
     fn solvent_intensities(
@@ -200,9 +266,24 @@ impl DirectTransform {
 }
 
 pub(crate) fn directions(p_max: usize) -> Vec<Vector3> {
+    to_directions(&miller_indices(p_max))
+}
+
+/// p·(h, k, l) for the 13 Miller directions and p = 1..=p_max.
+pub(crate) fn miller_indices(p_max: usize) -> Vec<[i32; 3]> {
     MILLER_INDEX
         .iter()
-        .flat_map(|dir| (1..=p_max).map(move |p| 2.0 * PI * p as f64 * dir))
+        .flat_map(|dir| {
+            (1..=p_max as i32).map(move |p| [dir.x, dir.y, dir.z].map(|c| p * c as i32))
+        })
+        .collect()
+}
+
+/// 2π·n, the q-vectors times the box sides.
+pub(crate) fn to_directions(indices: &[[i32; 3]]) -> Vec<Vector3> {
+    indices
+        .iter()
+        .map(|n| 2.0 * PI * Vector3::new(n[0].into(), n[1].into(), n[2].into()))
         .collect()
 }
 
@@ -398,5 +479,38 @@ mod tests {
         let v = vec![(1.0, 1.0), (3.0, 0.1), (2.0, 3.0), (2.0, 4.0), (1.0, 2.0)];
         let result = average_duplicates(v);
         assert_eq!(result, vec![(1.0, 1.5), (2.0, 3.5), (3.0, 0.1)]);
+    }
+
+    /// The phase table must reproduce sin/cos, including negative indices
+    /// and molecules that start mid-table.
+    #[test]
+    fn phase_table_matches_sin_cos() {
+        let yaml = "X: { formfactor: !Constant 1.0 }\nY: { formfactor: !Constant 0.5 }\n";
+        let formfactors = crate::formfactor::formfactors_from_yaml_str(yaml).unwrap();
+        let l = 37.0;
+        let grid = QGrid::lattice([l; 3], 0.9, 40).unwrap();
+        let transform = DirectTransform::from_grid(formfactors, grid).with_num_molecules(4);
+        let structure = Structure {
+            pos: (0..12)
+                .map(|i| {
+                    let t = i as f64;
+                    Vector3::new((7.3 * t) % l - 5.0, (3.1 * t * t) % l, (11.7 * t + 2.0) % l)
+                })
+                .collect(),
+            ids: (0..12).map(|i| i % 2).collect(),
+            box_sides: Some(Vector3::from([l; 3])),
+        };
+        let box_sides = Vector3::from([l; 3]);
+        let table = PhaseTable::new_if_small(&structure.pos, &box_sides, &transform.indices);
+        assert!(table.is_some());
+        let fast = transform
+            .vacuum_rows(&structure, &box_sides, table.as_ref())
+            .unwrap();
+        let slow = transform.vacuum_rows(&structure, &box_sides, None).unwrap();
+        for ((_, a), (_, b)) in fast.iter().zip(&slow) {
+            for (x, y) in a.iter().zip(b) {
+                approx::assert_relative_eq!(x, y, max_relative = 1e-10, epsilon = 1e-10);
+            }
+        }
     }
 }

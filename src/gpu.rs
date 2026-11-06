@@ -38,9 +38,10 @@ use std::sync::Mutex;
 
 use wgpu::util::DeviceExt;
 
-use crate::explicit::{average_by_qnorm, average_duplicates, directions};
 use crate::formfactor::FormFactor;
-use crate::{Error, FormFactorMap, Intensity, IntensityCalculator, Result, Structure, Vector3};
+use crate::{
+    Error, FormFactorMap, Intensity, IntensityCalculator, QGrid, Result, Structure, Vector3,
+};
 
 /// One workgroup reduces over all atoms for a single q-vector. The thread
 /// count per workgroup is fixed at 256 in the WGSL `@workgroup_size` and the
@@ -51,7 +52,7 @@ struct Params {
     n_atoms: u32,
     n_q: u32,
     atoms_per_mol: u32,   // M; 0 = whole box (self term unused)
-    _pad: u32,
+    groups_x: u32,        // workgroups along x; q-vectors fold into x and y
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -70,7 +71,9 @@ fn structure_factor(
     @builtin(workgroup_id) wg: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-    let qi = wg.x;
+    // Workgroup-uniform, so returning before the barriers is safe.
+    let qi = wg.y * params.groups_x + wg.x;
+    if (qi >= params.n_q) { return; }
     let q = directions[qi].xyz * params.inv_box.xyz;
 
     // total = Σ_m F_m (→ I_box = |total|²); self = Σ_m |F_m|².
@@ -158,7 +161,18 @@ struct Params {
     n_q: u32,
     /// Atoms per molecule (`M`); 0 = whole box, the self term is then unused.
     atoms_per_mol: u32,
-    _pad: u32,
+    /// Workgroups along x of the 2D dispatch (see [`dispatch_size`]).
+    groups_x: u32,
+}
+
+/// WebGPU's guaranteed workgroups per dispatch dimension.
+const MAX_GROUPS_PER_DIMENSION: u32 = 65_535;
+
+/// One workgroup per q-vector, folded into 2D when a lattice grid has more
+/// vectors than one dimension allows.
+fn dispatch_size(n_q: u32) -> (u32, u32) {
+    let x = n_q.min(MAX_GROUPS_PER_DIMENSION);
+    (x, n_q.div_ceil(x.max(1)))
 }
 
 /// Bytes the kernel writes per q-vector: two `f32`, `[I_box, self term]`.
@@ -194,6 +208,7 @@ struct FrameState {
 /// [`DirectTransform`](crate::explicit::DirectTransform).
 pub(crate) struct GpuDirectTransform {
     formfactors: FormFactorMap,
+    grid: QGrid,
     /// q-directions in host (f64) form, for per-frame `|q|` and box division.
     directions: Vec<Vector3>,
     ctx: GpuContext,
@@ -218,7 +233,7 @@ impl GpuDirectTransform {
     /// Blocking constructor for native callers; see [`new_async`](Self::new_async).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(formfactors: FormFactorMap, pmax: usize) -> Result<Self> {
-        pollster::block_on(Self::new_async(formfactors, pmax))
+        pollster::block_on(Self::new_async(formfactors, QGrid::miller(pmax)))
     }
 
     /// The browser can't block, so callers fall back to the CPU as they do
@@ -233,8 +248,8 @@ impl GpuDirectTransform {
     /// Initialise wgpu and compile the kernel. Returns `Err` if no suitable
     /// GPU adapter is available, so the caller can fall back to the CPU path.
     /// Async because WebGPU only offers async adapter and device requests.
-    pub(crate) async fn new_async(formfactors: FormFactorMap, pmax: usize) -> Result<Self> {
-        let directions = directions(pmax);
+    pub(crate) async fn new_async(formfactors: FormFactorMap, grid: QGrid) -> Result<Self> {
+        let directions = crate::explicit::to_directions(&grid.indices());
         let n_q = directions.len() as u32;
 
         let instance = wgpu::Instance::default();
@@ -294,6 +309,7 @@ impl GpuDirectTransform {
 
         Ok(Self {
             formfactors,
+            grid,
             directions,
             ctx: GpuContext {
                 device,
@@ -355,8 +371,13 @@ impl GpuDirectTransform {
             return Ok(Intensity::default());
         }
         if structure.pos.is_empty() {
-            let table = qmags.into_iter().map(|q| (q, 0.0)).collect();
-            let (q, total): (Vec<f64>, Vec<f64>) = average_duplicates(table).into_iter().unzip();
+            let rows = qmags.into_iter().map(|q| (q, [0.0])).collect();
+            let (q, total) = self
+                .grid
+                .group(rows)
+                .into_iter()
+                .map(|(q, [t])| (q, t))
+                .unzip();
             return Ok(Intensity {
                 q,
                 total,
@@ -409,7 +430,7 @@ impl GpuDirectTransform {
             n_atoms,
             n_q: ctx.n_q,
             atoms_per_mol,
-            _pad: 0,
+            groups_x: dispatch_size(ctx.n_q).0,
         };
 
         ctx.queue
@@ -430,8 +451,8 @@ impl GpuDirectTransform {
             .enumerate()
             .map(|(i, q)| (q, [f64::from(out[2 * i]), f64::from(out[2 * i + 1])]))
             .collect();
-        // Average duplicate |q| magnitudes, exactly as the CPU vacuum path does.
-        let grouped = average_by_qnorm(rows);
+        // Grouped exactly as the CPU vacuum path does.
+        let grouped = self.grid.group(rows);
 
         Ok(Intensity {
             q: grouped.iter().map(|g| g.0).collect(),
@@ -569,7 +590,8 @@ impl GpuContext {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &frame.bind_group, &[]);
-            pass.dispatch_workgroups(self.n_q, 1, 1);
+            let (x, y) = dispatch_size(self.n_q);
+            pass.dispatch_workgroups(x, y, 1);
         }
         let out_size = u64::from(self.n_q) * OUT_BYTES_PER_Q;
         encoder.copy_buffer_to_buffer(&frame.out_buf, 0, &frame.read_buf, 0, out_size);

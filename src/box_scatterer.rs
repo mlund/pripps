@@ -7,7 +7,7 @@
 use crate::explicit::DirectTransform;
 use crate::formfactor::{FormFactorMap, formfactors_from_yaml_str};
 use crate::structure::Structure;
-use crate::{AtomKind, Error, FindByName, IntensityCalculator, Result, Vector3};
+use crate::{AtomKind, Error, FindByName, IntensityCalculator, QGrid, Result, Vector3};
 
 /// Box intensity and per-molecule self term, averaged over q-vectors of
 /// equal length. `S_eff = total / self_term`; `P = self_term / n_molecules`.
@@ -25,6 +25,7 @@ pub struct BoxIntensity {
 pub struct BoxScatterer {
     /// Form-factor id of every bead in the box, molecule after molecule.
     ids: Vec<usize>,
+    grid: QGrid,
     backend: Backend,
 }
 
@@ -42,14 +43,15 @@ impl BoxScatterer {
         formfactors_yaml: &str,
         molecule_kinds: &[impl AsRef<str>],
         n_molecules: usize,
-        p_max: usize,
+        grid: QGrid,
     ) -> Result<Self> {
         let (formfactors, ids) = prepare(formfactors_yaml, molecule_kinds, n_molecules)?;
-        let transform = crate::gpu::GpuDirectTransform::new_async(formfactors, p_max)
+        let transform = crate::gpu::GpuDirectTransform::new_async(formfactors, grid.clone())
             .await?
             .with_num_molecules(n_molecules);
         Ok(Self {
             ids,
+            grid,
             backend: Backend::Gpu(transform),
         })
     }
@@ -59,19 +61,20 @@ impl BoxScatterer {
     /// against the file's kinds (no united-atom resolution, which needs
     /// atomistic residue context). Positions passed to
     /// [`evaluate`](Self::evaluate) are `n_molecules` such molecules in order.
-    /// `p_max` sets how many q-vector multiples are sampled per direction;
-    /// the largest |q| must stay inside the form factors' range.
+    /// `grid` sets the sampled q-vectors; its largest |q| must stay inside
+    /// the form factors' range.
     pub fn new_cpu(
         formfactors_yaml: &str,
         molecule_kinds: &[impl AsRef<str>],
         n_molecules: usize,
-        p_max: usize,
+        grid: QGrid,
     ) -> Result<Self> {
         let (formfactors, ids) = prepare(formfactors_yaml, molecule_kinds, n_molecules)?;
         let transform =
-            DirectTransform::new(formfactors, p_max, None).with_num_molecules(n_molecules);
+            DirectTransform::from_grid(formfactors, grid.clone()).with_num_molecules(n_molecules);
         Ok(Self {
             ids,
+            grid,
             backend: Backend::Cpu(transform),
         })
     }
@@ -94,6 +97,7 @@ impl BoxScatterer {
         if !box_sides.iter().all(|&l| l.is_finite() && l > 0.0) {
             return Err(Error::usage(format!("invalid box sides {box_sides:?}")));
         }
+        self.grid.check_box(box_sides)?;
         let structure = Structure {
             pos: positions.iter().map(|&p| Vector3::from(p)).collect(),
             ids: self.ids.clone(),
@@ -164,12 +168,120 @@ mod tests {
         pollster::block_on(scatterer.evaluate(positions, [l; 3])).unwrap()
     }
 
+    /// CPU, and with the `gpu` feature also the GPU, which must exist then:
+    /// every lattice test runs on both backends.
+    fn backends(kinds: &[&str], n: usize, grid: &QGrid) -> Vec<(&'static str, BoxScatterer)> {
+        let backends = vec![(
+            "cpu",
+            BoxScatterer::new_cpu(UNIT, kinds, n, grid.clone()).unwrap(),
+        )];
+        #[cfg(feature = "gpu")]
+        let mut backends = backends;
+        #[cfg(feature = "gpu")]
+        backends.push((
+            "gpu",
+            pollster::block_on(BoxScatterer::new_gpu(UNIT, kinds, n, grid.clone()))
+                .expect("GPU adapter required with --features gpu"),
+        ));
+        backends
+    }
+
+    /// f32 phases on the GPU.
+    const TOLERANCE: f64 = 1e-5;
+
+    /// Bin 1 holds n = (1,0,0)-type (3) and (1,1,0)-type (6) vectors. For two
+    /// points L/4 apart along x, |1 + e^{iπh/2}|² is 2 for h = ±1 and 4 for
+    /// h = 0: x gives 2, y and z 4 each, the four (±1,·,·) diagonals 2 each,
+    /// (0,1,±1) 4 each; 26 over 9 vectors.
+    #[test]
+    fn lattice_bin_gives_the_worked_intensity() {
+        let grid = QGrid::lattice([40.0; 3], 0.225, usize::MAX).unwrap();
+        for (name, scatterer) in backends(&["X"], 2, &grid) {
+            let result = evaluate(&scatterer, &[[0.0; 3], [10.0, 0.0, 0.0]], 40.0);
+            assert_eq!(result.q, grid.q(), "{name}");
+            approx::assert_relative_eq!(result.total[0], 26.0 / 9.0, max_relative = TOLERANCE);
+            approx::assert_relative_eq!(result.self_term[0], 2.0, max_relative = TOLERANCE);
+        }
+    }
+
+    #[test]
+    fn lattice_results_ignore_wrapping_by_the_box() {
+        let grid = QGrid::lattice([40.0; 3], 0.6, 20).unwrap();
+        let inside = [
+            [1.0, 2.0, 3.0],
+            [2.5, 2.0, 3.0],
+            [20.0, 7.0, 11.0],
+            [21.0, 8.0, 11.5],
+        ];
+        let mut shifted = inside;
+        shifted[2][1] -= 40.0;
+        shifted[3][1] -= 40.0;
+        for (name, scatterer) in backends(&["X", "X"], 2, &grid) {
+            let (a, b) = (
+                evaluate(&scatterer, &inside, 40.0),
+                evaluate(&scatterer, &shifted, 40.0),
+            );
+            for (x, y) in a.total.iter().zip(&b.total) {
+                approx::assert_relative_eq!(x, y, max_relative = TOLERANCE, epsilon = TOLERANCE);
+            }
+            assert_eq!(a.q.len(), grid.q().len(), "{name}");
+        }
+    }
+
+    /// Uncorrelated points: ⟨|Σ e^{iq·r}|²⟩ = N per vector, so total/N ≈ 1
+    /// in every bin, within the noise of its vector count.
+    #[test]
+    fn random_points_scatter_as_an_ideal_gas() {
+        let (n, l) = (400, 60.0);
+        let grid = QGrid::lattice([l; 3], 0.8, 200).unwrap();
+        let mut seed = 12345u64;
+        let mut uniform = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64 * l
+        };
+        let positions: Vec<[f64; 3]> = (0..n).map(|_| [uniform(), uniform(), uniform()]).collect();
+        for (name, scatterer) in backends(&["X"], n, &grid) {
+            let result = evaluate(&scatterer, &positions, l);
+            for (k, &count) in grid.vectors_per_bin().iter().enumerate() {
+                // Exponential |ρ|²/N per vector: relative error 1/√count; 4σ.
+                let s = result.total[k] / n as f64;
+                assert!(
+                    (s - 1.0).abs() < 4.0 / (count as f64).sqrt(),
+                    "{name} bin {k}: {s}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_box_other_than_the_grids_is_an_error() {
+        let grid = QGrid::lattice([40.0; 3], 0.3, 10).unwrap();
+        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 1, grid).unwrap();
+        assert!(pollster::block_on(scatterer.evaluate(&[[0.0; 3]], [41.0; 3])).is_err());
+    }
+
+    /// More q-vectors than one GPU dispatch dimension allows (65 535).
+    #[test]
+    fn one_point_scatters_one_on_a_large_grid() {
+        let grid = QGrid::lattice([405.0; 3], 0.5, usize::MAX).unwrap();
+        assert!(grid.vectors_per_bin().iter().sum::<usize>() > 65_535);
+        for (name, scatterer) in backends(&["X"], 1, &grid) {
+            let result = evaluate(&scatterer, &[[3.0, 2.0, 1.0]], 405.0);
+            for total in &result.total {
+                approx::assert_relative_eq!(*total, 1.0, max_relative = TOLERANCE);
+            }
+            assert_eq!(result.total.len(), grid.q().len(), "{name}");
+        }
+    }
+
     /// Two unit scatterers L/4 apart along x: each q-vector gives
     /// |1 + exp(iq·d)|² = 2 + 2cos(q_x d), with q_x d = ±π/2 or 0. Averaged
     /// per Miller shell: [100] (2+4+4)/3, [110] (4·2+2·4)/6, [111] 2.
     #[test]
     fn two_point_scatterers_give_the_worked_intensity() {
-        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 2, 1).unwrap();
+        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 2, QGrid::miller(1)).unwrap();
         let result = evaluate(&scatterer, &[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], 40.0);
         let two_pi_over_l = std::f64::consts::TAU / 40.0;
         let expected_q = [1.0, 2f64.sqrt(), 3f64.sqrt()].map(|s| s * two_pi_over_l);
@@ -187,7 +299,7 @@ mod tests {
     /// unwrapping: moving one by a box length changes nothing.
     #[test]
     fn moving_a_molecule_by_the_box_length_changes_nothing() {
-        let scatterer = BoxScatterer::new_cpu(UNIT, &["X", "X"], 2, 3).unwrap();
+        let scatterer = BoxScatterer::new_cpu(UNIT, &["X", "X"], 2, QGrid::miller(3)).unwrap();
         let inside = [
             [1.0, 2.0, 3.0],
             [2.5, 2.0, 3.0],
@@ -209,7 +321,7 @@ mod tests {
     /// A bead without a form factor would silently scatter nothing.
     #[test]
     fn unknown_bead_kind_is_an_error_naming_it() {
-        let error = BoxScatterer::new_cpu(UNIT, &["X", "NTR"], 1, 1)
+        let error = BoxScatterer::new_cpu(UNIT, &["X", "NTR"], 1, QGrid::miller(1))
             .err()
             .unwrap();
         assert!(error.to_string().contains("NTR"), "{error}");
@@ -221,11 +333,6 @@ mod tests {
     #[test]
     fn gpu_matches_cpu() {
         let kinds = ["X", "X", "X"];
-        let Ok(gpu) = pollster::block_on(BoxScatterer::new_gpu(UNIT, &kinds, 4, 4)) else {
-            eprintln!("no GPU adapter; skipping");
-            return;
-        };
-        let cpu = BoxScatterer::new_cpu(UNIT, &kinds, 4, 4).unwrap();
         let positions: Vec<[f64; 3]> = (0..12)
             .map(|i| {
                 let t = i as f64;
@@ -236,18 +343,27 @@ mod tests {
                 ]
             })
             .collect();
-        let (a, b) = (
-            evaluate(&cpu, &positions, 50.0),
-            evaluate(&gpu, &positions, 50.0),
-        );
-        assert_eq!(a.q.len(), b.q.len());
-        for (x, y) in a
-            .total
-            .iter()
-            .chain(&a.self_term)
-            .zip(b.total.iter().chain(&b.self_term))
-        {
-            approx::assert_relative_eq!(x, y, max_relative = 1e-4, epsilon = 1e-4);
+        let grids = [
+            QGrid::miller(4),
+            QGrid::lattice([50.0; 3], 0.6, 30).unwrap(),
+        ];
+        for grid in grids {
+            let gpu = pollster::block_on(BoxScatterer::new_gpu(UNIT, &kinds, 4, grid.clone()))
+                .expect("GPU adapter required with --features gpu");
+            let cpu = BoxScatterer::new_cpu(UNIT, &kinds, 4, grid).unwrap();
+            let (a, b) = (
+                evaluate(&cpu, &positions, 50.0),
+                evaluate(&gpu, &positions, 50.0),
+            );
+            assert_eq!(a.q, b.q);
+            for (x, y) in a
+                .total
+                .iter()
+                .chain(&a.self_term)
+                .zip(b.total.iter().chain(&b.self_term))
+            {
+                approx::assert_relative_eq!(x, y, max_relative = 1e-4, epsilon = 1e-4);
+            }
         }
     }
 
@@ -289,7 +405,7 @@ mod tests {
             .unwrap();
 
         let yaml = std::fs::read_to_string(yaml_path).unwrap();
-        let scatterer = BoxScatterer::new_cpu(&yaml, &kinds, 2, 3).unwrap(); // |q| ≤ 0.54 Å⁻¹, inside the 0.75 range of residue form factors
+        let scatterer = BoxScatterer::new_cpu(&yaml, &kinds, 2, QGrid::miller(3)).unwrap(); // |q| ≤ 0.54 Å⁻¹, inside the 0.75 range of residue form factors
         let result = evaluate(&scatterer, &positions, l);
         assert_eq!(result.q, reference.q);
         assert_eq!(result.total, reference.total);
@@ -298,14 +414,14 @@ mod tests {
 
     #[test]
     fn empty_box_is_an_error() {
-        assert!(BoxScatterer::new_cpu(UNIT, &["X"], 0, 1).is_err());
-        assert!(BoxScatterer::new_cpu(UNIT, &[] as &[&str], 2, 1).is_err());
+        assert!(BoxScatterer::new_cpu(UNIT, &["X"], 0, QGrid::miller(1)).is_err());
+        assert!(BoxScatterer::new_cpu(UNIT, &[] as &[&str], 2, QGrid::miller(1)).is_err());
     }
 
     /// A zero, negative or NaN side would give inf/NaN curves, not an error.
     #[test]
     fn invalid_box_is_an_error() {
-        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 1, 1).unwrap();
+        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 1, QGrid::miller(1)).unwrap();
         for sides in [
             [0.0, 40.0, 40.0],
             [40.0, -1.0, 40.0],
@@ -317,7 +433,7 @@ mod tests {
 
     #[test]
     fn wrong_number_of_positions_is_an_error() {
-        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 2, 1).unwrap();
+        let scatterer = BoxScatterer::new_cpu(UNIT, &["X"], 2, QGrid::miller(1)).unwrap();
         let result = pollster::block_on(scatterer.evaluate(&[[0.0; 3]], [40.0; 3]));
         assert!(result.is_err());
     }

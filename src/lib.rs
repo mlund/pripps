@@ -30,6 +30,7 @@ mod formfactor;
 mod gpu;
 mod input;
 mod multipole;
+mod q_grid;
 mod q_sampler;
 mod solvent;
 mod structure;
@@ -47,6 +48,7 @@ use structure::Structure;
 use trajectory::trajectory_average;
 
 pub use box_scatterer::{BoxIntensity, BoxScatterer};
+pub use q_grid::QGrid;
 
 /// Single-bead residue form factors with the excluded solvent folded in
 /// (Vinterbladh), as YAML text for [`BoxScatterer`]; embedded so callers
