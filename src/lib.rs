@@ -18,6 +18,7 @@
 #![deny(missing_docs)]
 
 mod atomkind;
+mod box_scatterer;
 #[cfg(feature = "cli")]
 pub mod cli;
 mod debye;
@@ -45,6 +46,7 @@ use multipole::MultipoleIntensity;
 use structure::Structure;
 use trajectory::trajectory_average;
 
+pub use box_scatterer::{BoxIntensity, BoxScatterer};
 pub use debye::DebyeModel;
 pub use error::{Error, Result};
 pub use explicit::DirectModel;

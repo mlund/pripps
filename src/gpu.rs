@@ -206,27 +206,55 @@ pub(crate) struct GpuDirectTransform {
     frame: Mutex<Option<FrameState>>,
 }
 
+// SAFETY: without the `atomics` target feature, wasm32 has no threads, so the
+// WebGPU handles (which are !Send there) are never shared across threads.
+// With atomics, values could reach a web worker, so the impls are left out.
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+unsafe impl Send for GpuDirectTransform {}
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+unsafe impl Sync for GpuDirectTransform {}
+
 impl GpuDirectTransform {
+    /// Blocking constructor for native callers; see [`new_async`](Self::new_async).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn new(formfactors: FormFactorMap, pmax: usize) -> Result<Self> {
+        pollster::block_on(Self::new_async(formfactors, pmax))
+    }
+
+    /// The browser can't block, so callers fall back to the CPU as they do
+    /// without an adapter; `BoxScatterer::new_gpu` is the async route.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn new(_formfactors: FormFactorMap, _pmax: usize) -> Result<Self> {
+        Err(Error::internal(
+            "blocking GPU setup is unavailable in WASM; use BoxScatterer::new_gpu",
+        ))
+    }
+
     /// Initialise wgpu and compile the kernel. Returns `Err` if no suitable
     /// GPU adapter is available, so the caller can fall back to the CPU path.
-    pub(crate) fn new(formfactors: FormFactorMap, pmax: usize) -> Result<Self> {
+    /// Async because WebGPU only offers async adapter and device requests.
+    pub(crate) async fn new_async(formfactors: FormFactorMap, pmax: usize) -> Result<Self> {
         let directions = directions(pmax);
         let n_q = directions.len() as u32;
 
         let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .map_err(|e| Error::internal(format!("no GPU adapter available: {e}")))?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| Error::internal(format!("no GPU adapter available: {e}")))?;
 
         log::info!("GPU adapter: {}", adapter.get_info().name);
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("pripps-direct"),
-            ..Default::default()
-        }))
-        .map_err(|e| Error::internal(format!("failed to create GPU device: {e}")))?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("pripps-direct"),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| Error::internal(format!("failed to create GPU device: {e}")))?;
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("direct-structure-factor"),
@@ -288,8 +316,25 @@ impl GpuDirectTransform {
     }
 }
 
+/// Blocking adapter for the native CLI and trajectory loop. In WASM the
+/// blocking constructor already failed, so this is never reached there.
 impl IntensityCalculator for GpuDirectTransform {
     fn calc_intensities(&self, structure: &Structure) -> Result<Intensity> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return pollster::block_on(self.calc_intensities_async(structure));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = structure;
+            Err(Error::internal(
+                "blocking GPU calculation is unavailable in WASM",
+            ))
+        }
+    }
+}
+
+impl GpuDirectTransform {
+    /// Async because WebGPU readback is; native callers block on it above.
+    pub(crate) async fn calc_intensities_async(&self, structure: &Structure) -> Result<Intensity> {
         let box_sides = structure.box_sides.ok_or_else(|| {
             Error::usage("direct Fourier transform requires box side lengths on the structure")
         })?;
@@ -323,17 +368,20 @@ impl IntensityCalculator for GpuDirectTransform {
         let n_kinds = self.formfactors.len() as u32;
         let ctx = &self.ctx;
 
-        // (Re)build the structure-sized buffers if this is the first frame or
-        // the atom count changed (it doesn't within a trajectory).
-        let mut guard = self.frame.lock().map_err(|_| {
-            Error::internal("GPU frame state mutex was poisoned by an earlier panic")
-        })?;
-        if guard.as_ref().map(|f| f.n_atoms) != Some(n_atoms) {
-            *guard = Some(ctx.build_frame_state(structure, n_kinds));
-        }
-        let frame = guard
-            .as_ref()
-            .ok_or_else(|| Error::internal("GPU frame state missing after initialization"))?;
+        // Take the structure-sized buffers out for this call, (re)building them
+        // on the first frame or if the atom count changed (it doesn't within a
+        // trajectory). Taking rather than locking keeps the lock off the await
+        // below: an interleaved call (possible in the browser's event loop)
+        // then builds its own buffers instead of blocking.
+        let cached = self
+            .frame
+            .lock()
+            .map_err(|_| Error::internal("GPU frame state mutex was poisoned by an earlier panic"))?
+            .take();
+        let frame = match cached {
+            Some(frame) if frame.n_atoms == n_atoms => frame,
+            _ => ctx.build_frame_state(structure, n_kinds),
+        };
 
         // Per-frame host work: form-factor table, packed positions, box.
         let ff_table = self.form_factor_table(&qmags)?;
@@ -372,7 +420,11 @@ impl IntensityCalculator for GpuDirectTransform {
             .write_buffer(&frame.params_buf, 0, bytemuck::bytes_of(&params));
 
         // The kernel writes two f32 per q-vector: [I_box, self term].
-        let out = ctx.dispatch(frame)?;
+        let out = ctx.dispatch(&frame).await;
+        if let Ok(mut slot) = self.frame.lock() {
+            *slot = Some(frame);
+        }
+        let out = out?;
         let rows: Vec<(f64, [f64; 2])> = qmags
             .into_iter()
             .enumerate()
@@ -499,12 +551,12 @@ impl GpuContext {
     }
 
     /// Dispatch one workgroup per q-vector, copy the result to the readback
-    /// buffer, and block until it is host-visible. Returns I(q) per q-vector.
+    /// buffer, and wait until it is host-visible. Returns I(q) per q-vector.
     ///
     /// Any device-side failure (lost device, failed map) is returned as an
     /// [`Error`] rather than panicking, so a transient GPU fault mid-trajectory
     /// surfaces as a recoverable error instead of aborting the process.
-    fn dispatch(&self, frame: &FrameState) -> Result<Vec<f32>> {
+    async fn dispatch(&self, frame: &FrameState) -> Result<Vec<f32>> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -524,14 +576,17 @@ impl GpuContext {
         self.queue.submit([encoder.finish()]);
 
         let slice = frame.read_buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = futures_channel::oneshot::channel();
         slice.map_async(wgpu::MapMode::Read, move |res| {
             let _ = tx.send(res);
         });
+        // Native must drive the device for the callback to fire; in the
+        // browser the event loop does it while we await.
+        #[cfg(not(target_arch = "wasm32"))]
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|e| Error::internal(format!("GPU poll failed: {e}")))?;
-        rx.recv()
+        rx.await
             .map_err(|_| Error::internal("GPU readback callback was dropped"))?
             .map_err(|e| Error::internal(format!("GPU buffer map failed: {e}")))?;
 
