@@ -44,6 +44,10 @@ impl QGrid {
         if !box_sides.iter().all(|&l| l.is_finite() && l > 0.0) {
             return Err(Error::usage(format!("invalid box sides {box_sides:?}")));
         }
+        // Bins are generated up to q_max, so it must bound them.
+        if !(q_max.is_finite() && q_max > 0.0) {
+            return Err(Error::usage(format!("invalid q_max {q_max} Å⁻¹")));
+        }
         let mut shells = exact_shells(box_sides, q_max);
         if shells.is_empty() {
             return Err(Error::usage(format!(
@@ -206,6 +210,11 @@ fn sampled_shell(
         return None;
     }
     let q = 0.75 * (b.powi(4) - a.powi(4)) / (b.powi(3) - a.powi(3));
+    let shell = Shell {
+        box_sides,
+        a,
+        b: ((k as f64 + 0.5) * width).min(q_max * (1.0 + 1e-12)),
+    };
     let wanted = cap.min(EXACT_BIN_LIMIT as usize);
     // Snapping loses some points (duplicates, outside the shell); the sweep
     // runs pole to pole, so it is thinned at the end, not cut short.
@@ -224,17 +233,62 @@ fn sampled_shell(
         if !upper_half(n) {
             n = n.map(|c| -c);
         }
-        let length = norm(box_sides, n);
-        let inside =
-            length >= a && (length < (k as f64 + 0.5) * width) && length <= q_max * (1.0 + 1e-12);
-        if upper_half(n) && inside && seen.insert(n) {
+        if upper_half(n) && shell.holds(n) && seen.insert(n) {
             vectors.push(n);
         }
+    }
+    // A sliver cut by q_max can dodge every sample point; whether the bin
+    // exists must not depend on the cap.
+    if vectors.is_empty() {
+        return shell.any_vector().map(|n| (q, vec![n]));
     }
     let kept = (0..wanted.min(vectors.len()))
         .map(|i| vectors[i * vectors.len() / wanted.min(vectors.len())])
         .collect::<Vec<_>>();
-    (!kept.is_empty()).then_some((q, kept))
+    Some((q, kept))
+}
+
+/// |q| in [a, b), b already clipped to q_max.
+struct Shell {
+    box_sides: [f64; 3],
+    a: f64,
+    b: f64,
+}
+
+impl Shell {
+    fn holds(&self, n: [i32; 3]) -> bool {
+        let length = norm(self.box_sides, n);
+        length >= self.a && length < self.b
+    }
+
+    /// Exact search over (h, k), solving for the l that reaches the inner
+    /// radius; only run when sampling found nothing.
+    fn any_vector(&self) -> Option<[i32; 3]> {
+        let step = self.box_sides.map(|l| 2.0 * PI / l);
+        let n_max = step.map(|s| (self.b / s).floor() as i32);
+        for h in 0..=n_max[0] {
+            for k in -n_max[1]..=n_max[1] {
+                let planar = (h as f64 * step[0]).powi(2) + (k as f64 * step[1]).powi(2);
+                if planar >= self.b * self.b {
+                    continue;
+                }
+                let l0 = ((self.a * self.a - planar).max(0.0).sqrt() / step[2]).ceil() as i32;
+                let found = (l0 - 1..=l0 + 1)
+                    .map(|l| {
+                        if upper_half([h, k, l]) {
+                            [h, k, l]
+                        } else {
+                            [-h, -k, -l]
+                        }
+                    })
+                    .find(|&n| upper_half(n) && self.holds(n));
+                if found.is_some() {
+                    return found;
+                }
+            }
+        }
+        None
+    }
 }
 
 const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
@@ -385,6 +439,19 @@ mod tests {
         assert!(QGrid::lattice([L; 3], 0.01, 10).is_err()); // below 2π/L
         assert!(QGrid::lattice([L, 0.0, L], 0.5, 10).is_err());
         assert!(QGrid::lattice([L, f64::NAN, L], 0.5, 10).is_err());
+        // An unbounded q_max would sample bins forever.
+        assert!(QGrid::lattice([L; 3], f64::INFINITY, 10).is_err());
+        assert!(QGrid::lattice([L; 3], f64::NAN, 10).is_err());
+        assert!(QGrid::lattice([L; 3], -0.5, 10).is_err());
+    }
+
+    /// q_max cuts this last bin to a sliver that few sample points hit.
+    #[test]
+    fn a_narrow_last_bin_survives_any_cap() {
+        let q_max = 0.054_190_196_758_008_29;
+        let small = QGrid::lattice([6900.0; 3], q_max, 16).unwrap();
+        let large = QGrid::lattice([6900.0; 3], q_max, 200).unwrap();
+        assert_eq!(small.q(), large.q());
     }
 
     /// 0.01 mM with N = 2000 gives L ≈ 6900 Å: ~10⁸ vectors below 0.5 Å⁻¹.
