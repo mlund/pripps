@@ -453,6 +453,11 @@ pub fn read_formfactors(path: &Path) -> Result<FormFactorMap> {
     Ok(formfactor)
 }
 
+/// Form factors from YAML text, for callers without a filesystem (WASM).
+pub(crate) fn formfactors_from_yaml_str(text: &str) -> Result<FormFactorMap> {
+    finalize_specs(yaml_serde::from_str(text)?)
+}
+
 /// Read and merge several YAML form-factor files into one table.
 ///
 /// Files are parsed in the given order and their species merged by name.
