@@ -85,6 +85,11 @@ pub(crate) fn build_model(
         &sampler.formfactors,
         cfg.bulk_electron_density,
     )?;
+    let excluded_deriv_dummies = cfg.excluded.unit_scale_derivative_dummies(
+        structure,
+        &sampler.formfactors,
+        cfg.bulk_electron_density,
+    )?;
     let hydration_dummies = cfg.hydration.dummies(structure, &sampler.formfactors)?;
 
     let terms = sampler
@@ -100,7 +105,7 @@ pub(crate) fn build_model(
             hydration_dummies.form_factors_at(q, &mut hydration_ff)?;
 
             let atom_ff = atom_ff.as_slice();
-            Ok(DebyeTerms {
+            let mut terms = DebyeTerms {
                 atoms: self_intensity_at_q(&structure.pos, atom_ff, q),
                 excluded: self_intensity_at_q(excluded_dummies.positions(), &excluded_ff, q),
                 hydration: self_intensity_at_q(hydration_dummies.positions(), &hydration_ff, q),
@@ -125,7 +130,35 @@ pub(crate) fn build_model(
                     &hydration_ff,
                     q,
                 ),
-            })
+                ..DebyeTerms::default()
+            };
+
+            // First-order Taylor width-correction terms, only for the
+            // Gaussian excluded variants that expose a `C1` basis.
+            if let Some(deriv_dummies) = &excluded_deriv_dummies {
+                let mut deriv_ff = Vec::new();
+                deriv_dummies.form_factors_at(q, &mut deriv_ff)?;
+                let deriv_pos = deriv_dummies.positions();
+                terms.excluded_deriv = self_intensity_at_q(deriv_pos, &deriv_ff, q);
+                terms.excluded_cross = cross_intensity_at_q(
+                    excluded_dummies.positions(),
+                    &excluded_ff,
+                    deriv_pos,
+                    &deriv_ff,
+                    q,
+                );
+                terms.atom_excluded_deriv =
+                    cross_intensity_at_q(&structure.pos, atom_ff, deriv_pos, &deriv_ff, q);
+                terms.excluded_deriv_hydration = cross_intensity_at_q(
+                    deriv_pos,
+                    &deriv_ff,
+                    hydration_dummies.positions(),
+                    &hydration_ff,
+                    q,
+                );
+            }
+
+            Ok(terms)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -181,16 +214,31 @@ struct DebyeTerms {
     atom_excluded: f64,
     atom_hydration: f64,
     excluded_hydration: f64,
+    // First-order Taylor width-correction pair sums (all zero when the
+    // excluded variant has no analytic derivative basis `C1`).
+    /// S(C0, C1) — base × derivative excluded.
+    excluded_cross: f64,
+    /// S(C1, C1) — derivative excluded self.
+    excluded_deriv: f64,
+    /// S(atoms, C1) — atom × derivative excluded.
+    atom_excluded_deriv: f64,
+    /// S(C1, hydration) — derivative excluded × hydration.
+    excluded_deriv_hydration: f64,
 }
 
 impl DebyeTerms {
     fn combine(self, volume_scale: f64, contrast_density: f64) -> f64 {
+        let (f0, f1) = crate::solvent::taylor_coefficients(volume_scale);
         self.atoms
-            + volume_scale * volume_scale * self.excluded
+            + f0 * f0 * self.excluded
+            + 2.0 * f0 * f1 * self.excluded_cross
+            + f1 * f1 * self.excluded_deriv
             + contrast_density * contrast_density * self.hydration
-            - 2.0 * volume_scale * self.atom_excluded
+            - 2.0 * f0 * self.atom_excluded
+            - 2.0 * f1 * self.atom_excluded_deriv
             + 2.0 * contrast_density * self.atom_hydration
-            - 2.0 * volume_scale * contrast_density * self.excluded_hydration
+            - 2.0 * f0 * contrast_density * self.excluded_hydration
+            - 2.0 * f1 * contrast_density * self.excluded_deriv_hydration
     }
 }
 
@@ -247,4 +295,151 @@ fn cross_intensity_at_q(
         }
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formfactor::FormFactor;
+    use crate::solvent::ExcludedVolume;
+    use crate::{AtomKind, Structure};
+
+    const RHO: f64 = 0.334;
+
+    /// Four carbons with a displaced volume and a flat form factor.
+    fn structure_and_map() -> (Structure, FormFactorMap) {
+        let mut kind = AtomKind::new("C");
+        kind.displaced_volume = Some(16.0);
+        let map = FormFactorMap::from_entries(vec![(kind, FormFactor::Constant(6.0))]);
+        let structure = Structure {
+            pos: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(3.8, 0.0, 0.0),
+                Vector3::new(0.0, 4.1, 0.0),
+                Vector3::new(1.2, 2.0, 3.0),
+            ],
+            ids: vec![0, 0, 0, 0],
+            box_sides: None,
+        };
+        (structure, map)
+    }
+
+    fn fraser_cfg() -> SolventConfig {
+        SolventConfig {
+            excluded: ExcludedVolume::Fraser { volume_scale: 1.0 },
+            ..Default::default()
+        }
+    }
+
+    /// Exact Debye `|A − C(c1)|²` with `C` the fully `c1`-scaled Fraser
+    /// dummies (the `c1^(2/3)` width baked in) — the ground truth the
+    /// first-order model approximates. `excl_scale` multiplies the
+    /// (already-built) dummy amplitudes: 1.0 for the exact set, `c1` for
+    /// the unit-scale constant-width set.
+    fn debye_atoms_minus_excluded(
+        structure: &Structure,
+        map: &FormFactorMap,
+        excluded: &crate::solvent::DummySet,
+        excl_scale: f64,
+        q: f64,
+    ) -> f64 {
+        let atom_ff = formfactor::formfactor_by_index(map, q, &structure.ids).unwrap();
+        let mut pos = structure.pos.clone();
+        pos.extend_from_slice(excluded.positions());
+        let mut ff: Vec<f64> = atom_ff.as_slice().to_vec();
+        let mut excl_ff = Vec::new();
+        excluded.form_factors_at(q, &mut excl_ff).unwrap();
+        ff.extend(excl_ff.iter().map(|f| -excl_scale * f));
+        self_intensity_at_q(&pos, &ff, q)
+    }
+
+    #[test]
+    fn first_order_beats_constant_width_and_converges_quadratically() {
+        let (structure, map) = structure_and_map();
+        let cfg = fraser_cfg();
+        let sampler = QSampler::linear(map.clone(), 0.0, 0.6, 16);
+        let model = build_model(&sampler, &structure, &cfg).unwrap();
+
+        // Unit base C0 dummies (constant-width reference basis).
+        let base = ExcludedVolume::Fraser { volume_scale: 1.0 }
+            .dummies(&structure, &map, RHO)
+            .unwrap();
+
+        let residuals = |c1: f64| -> (f64, f64, f64) {
+            // Exact dummies carry c1 in prefactor AND width.
+            let exact = ExcludedVolume::Fraser { volume_scale: c1 }
+                .dummies(&structure, &map, RHO)
+                .unwrap();
+            let first_order = model.intensity(c1, 0.0).total;
+            let mut err_fo = 0.0;
+            let mut err_cw = 0.0;
+            let mut max_fo = 0.0f64;
+            for (i, &q) in sampler.q_values.iter().enumerate() {
+                let i_exact = debye_atoms_minus_excluded(&structure, &map, &exact, 1.0, q);
+                let i_cw = debye_atoms_minus_excluded(&structure, &map, &base, c1, q);
+                err_fo += (first_order[i] - i_exact).powi(2);
+                err_cw += (i_cw - i_exact).powi(2);
+                max_fo = max_fo.max((first_order[i] - i_exact).abs());
+            }
+            (err_fo, err_cw, max_fo)
+        };
+
+        // At a realistic fit offset the first-order model must track the
+        // exact width response better than freezing it.
+        let (err_fo, err_cw, _) = residuals(1.05);
+        assert!(
+            err_fo < err_cw,
+            "first-order residual {err_fo:.3e} should beat constant-width {err_cw:.3e}"
+        );
+
+        // First-order error is O((c1−1)²): halving the offset should
+        // quarter the max error (allow a generous band).
+        let (_, _, e2) = residuals(1.02);
+        let (_, _, e4) = residuals(1.04);
+        let ratio = e4 / e2;
+        assert!(
+            (3.0..=5.0).contains(&ratio),
+            "expected ≈4× error growth for 2× offset, got {ratio:.2}"
+        );
+    }
+
+    #[test]
+    fn correction_vanishes_at_q_zero() {
+        let (structure, map) = structure_and_map();
+        let sampler = QSampler::linear(map.clone(), 0.0, 0.5, 8);
+        let model = build_model(&sampler, &structure, &fraser_cfg()).unwrap();
+        // q=0 is the first grid point; C1(0)=0 ⇒ every derivative term is 0.
+        let t0 = model.terms[0];
+        assert_eq!(t0.excluded_deriv, 0.0);
+        assert_eq!(t0.excluded_cross, 0.0);
+        assert_eq!(t0.atom_excluded_deriv, 0.0);
+        assert_eq!(t0.excluded_deriv_hydration, 0.0);
+    }
+
+    #[test]
+    fn zero_volume_scale_removes_excluded_contribution() {
+        let (structure, map) = structure_and_map();
+        let sampler = QSampler::linear(map.clone(), 0.0, 0.5, 8);
+        let model = build_model(&sampler, &structure, &fraser_cfg()).unwrap();
+        // c1=0 ⇒ f0=f1=0 ⇒ intensity is atoms-only (no hydration here).
+        let total = model.intensity(0.0, 0.0).total;
+        let atoms: Vec<f64> = model.terms.iter().map(|t| t.atoms).collect();
+        for (got, want) in total.iter().zip(&atoms) {
+            assert!((got - want).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn fit_bound_extremes_stay_finite() {
+        let (structure, map) = structure_and_map();
+        let sampler = QSampler::linear(map.clone(), 0.0, 0.6, 16);
+        let model = build_model(&sampler, &structure, &fraser_cfg()).unwrap();
+        // First-order Taylor can overshoot at the c1 bounds (0.5, 2.0);
+        // it must not produce NaN/Inf even where it does.
+        for c1 in [0.5, 2.0] {
+            for &v in &model.intensity(c1, 0.05).total {
+                assert!(v.is_finite(), "non-finite intensity at c1={c1}");
+            }
+        }
+    }
 }

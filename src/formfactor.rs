@@ -153,6 +153,14 @@ pub enum FormFactor {
     /// each atom gets its own single-term Gaussian sized by its
     /// displaced volume.
     SingleGaussian { a: f64, b: f64 },
+    /// 𝐹(𝑞) = 𝑎 · 𝑞² · exp(−𝑏𝑞²). The `q²`-weighted sibling of
+    /// [`SingleGaussian`](Self::SingleGaussian). This is the derivative
+    /// (`C1`) basis of the first-order Taylor expansion of the Fraser
+    /// excluded-volume dummy in the volume scale `c1`: with
+    /// `C0 = a₀·exp(−bq²)` the exact dummy expands as
+    /// `c1·C0 − (2/3)c1(c1−1)·C1`, where `C1 = a₀·b·q²·exp(−bq²)`.
+    /// Only ever built internally (never parsed from YAML).
+    SingleGaussianQ2 { a: f64, b: f64 },
 }
 
 impl FormFactor {
@@ -162,13 +170,21 @@ impl FormFactor {
         Self::SingleGaussian { a, b }
     }
 
+    /// Build a `q²`-weighted single-Gaussian form factor,
+    /// `F(q) = a·q²·exp(−b q²)`. Convenience constructor for the
+    /// first-order Taylor derivative (`C1`) dummies (see
+    /// [`crate::ExcludedVolume::Fraser`]).
+    pub const fn single_gaussian_q2(a: f64, b: f64) -> Self {
+        Self::SingleGaussianQ2 { a, b }
+    }
+
     /// Inclusive `(qmin, qmax)` range over which `F(q)` is valid. `Constant`
     /// and `SingleGaussian` are valid for all `q ≥ 0`; `Table` uses the first
     /// and last tabulated q.
     pub fn qrange(&self) -> (f64, f64) {
         use FormFactor::*;
         match self {
-            Constant(_) | SingleGaussian { .. } => (0.0, f64::INFINITY),
+            Constant(_) | SingleGaussian { .. } | SingleGaussianQ2 { .. } => (0.0, f64::INFINITY),
             Gaussian { qrange, .. } => *qrange,
             Polynomial { qrange, .. } => *qrange,
             Table(table) => (table[0].0, table[table.len() - 1].0),
@@ -194,6 +210,7 @@ impl FormFactor {
         Ok(match self {
             Constant(c) => *c,
             SingleGaussian { a, b } => a * (-b * q * q).exp(),
+            SingleGaussianQ2 { a, b } => a * q * q * (-b * q * q).exp(),
             Gaussian { ab, c, .. } => eval_gaussian(q, ab, *c),
             Polynomial { coeff, .. } => eval_polynomium(coeff, q),
             Table(table) => interpolate(table, q),
@@ -705,6 +722,17 @@ mod tests {
         };
         assert_relative_eq!(ff.eval(0.0).unwrap(), 1.0);
         assert_relative_eq!(ff.eval(1.0).unwrap(), 15.0);
+    }
+
+    #[test]
+    fn single_gaussian_q2_evaluates_a_q2_exp() {
+        let ff = FormFactor::single_gaussian_q2(2.0, 0.5);
+        // q=0 → 0 (the q² prefactor).
+        assert_eq!(ff.eval(0.0).unwrap(), 0.0);
+        // q=1 → 2·1·exp(−0.5) = 2·e^-0.5.
+        assert_relative_eq!(ff.eval(1.0).unwrap(), 2.0 * (-0.5f64).exp());
+        // Valid for all q ≥ 0.
+        assert_eq!(ff.qrange(), (0.0, f64::INFINITY));
     }
 
     #[test]

@@ -220,6 +220,11 @@ pub(crate) fn build_model(
     let excluded_dummies =
         cfg.excluded
             .unit_scale_dummies(structure, formfactors, cfg.bulk_electron_density)?;
+    let excluded_deriv_dummies = cfg.excluded.unit_scale_derivative_dummies(
+        structure,
+        formfactors,
+        cfg.bulk_electron_density,
+    )?;
     let hydration_dummies = cfg.hydration.dummies(structure, formfactors)?;
 
     let rows = directions
@@ -235,6 +240,15 @@ pub(crate) fn build_model(
             excluded_dummies.form_factors_at(qnorm, &mut excluded_ff)?;
             let excluded = complex_amplitude(&q, excluded_dummies.positions(), &excluded_ff);
 
+            let excluded_deriv = match &excluded_deriv_dummies {
+                Some(dummies) => {
+                    let mut deriv_ff = Vec::new();
+                    dummies.form_factors_at(qnorm, &mut deriv_ff)?;
+                    complex_amplitude(&q, dummies.positions(), &deriv_ff)
+                }
+                None => Complex::new(0.0, 0.0),
+            };
+
             let mut hydration_ff = Vec::new();
             hydration_dummies.form_factors_at(qnorm, &mut hydration_ff)?;
             let hydration = complex_amplitude(&q, hydration_dummies.positions(), &hydration_ff);
@@ -243,6 +257,7 @@ pub(crate) fn build_model(
                 qnorm,
                 atoms,
                 excluded,
+                excluded_deriv,
                 hydration,
             })
         })
@@ -261,11 +276,12 @@ pub struct DirectModel {
 impl DirectModel {
     /// Compute `I(q)` for the given solvent fit knobs.
     pub fn intensity(&self, volume_scale: f64, contrast_density: f64) -> Intensity {
+        let (f0, f1) = crate::solvent::taylor_coefficients(volume_scale);
         let table = self
             .rows
             .iter()
             .map(|row| {
-                let total = (row.atoms - volume_scale * row.excluded
+                let total = (row.atoms - (f0 * row.excluded + f1 * row.excluded_deriv)
                     + contrast_density * row.hydration)
                     .norm_sqr();
                 (
@@ -292,6 +308,9 @@ struct DirectTerms {
     qnorm: f64,
     atoms: Complex<f64>,
     excluded: Complex<f64>,
+    /// First-order Taylor derivative (`C1`) amplitude of the excluded
+    /// volume; `0` when the variant has no analytic width correction.
+    excluded_deriv: Complex<f64>,
     hydration: Complex<f64>,
 }
 
