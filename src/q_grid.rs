@@ -463,7 +463,8 @@ mod tests {
         let start = std::time::Instant::now();
         let small = QGrid::lattice([l; 3], 0.5, 16).unwrap();
         let large = QGrid::lattice([l; 3], 0.5, 200).unwrap();
-        assert!(start.elapsed().as_secs_f64() < 5.0, "{:?}", start.elapsed());
+        // Debug CI runners take ~5 s; enumerating would take minutes.
+        assert!(start.elapsed().as_secs_f64() < 60.0, "{:?}", start.elapsed());
         assert_eq!(small.q(), large.q());
         assert!(small.q().windows(2).all(|w| w[0] < w[1]));
         let counts = small.vectors_per_bin();
